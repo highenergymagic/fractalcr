@@ -1,0 +1,9 @@
+[submodule "boot"]
+	path = boot
+	url = https://github.com/highenergymagic/fractalcr-rommon.git
+[submodule "service"]
+	path = service
+	url = https://github.com/highenergymagic/fractalcr-supervisor.git
+[submodule "os/meta-fractal"]
+	path = os/meta-fractal
+	url = https://github.com/highenergymagic/meta-fractalcr.git

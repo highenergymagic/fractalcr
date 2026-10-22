@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""Serial and SSH AAA/CLI acceptance against the actual immutable appliance."""
+import argparse, hashlib, json, re, shutil, socket, subprocess, sys, time
+from pathlib import Path
+import pexpect
+SRC=Path(__file__).resolve().parents[2]
+sys.path.insert(0,str(SRC/'boot/tests'))
+from qemu_process import stop_qemu
+p=argparse.ArgumentParser();p.add_argument('--artifacts',type=Path,required=True);p.add_argument('--output',type=Path,required=True)
+a=p.parse_args();art=a.artifacts.resolve();out=a.output.resolve();out.mkdir(parents=True,exist_ok=False)
+result=dict(case='aaa',passed=False,accel='kvm',checks=[],system_sha256=hashlib.sha256((art/'system.bin').read_bytes()).hexdigest(),rommon_sha256=hashlib.sha256((art/'rommon.efi').read_bytes()).hexdigest())
+with socket.socket() as s:s.bind(('127.0.0.1',0));port=s.getsockname()[1]
+flash=out/'flash.img';data=out/'data.img';variables=out/'vars.fd'
+subprocess.run(['python3',str(SRC/'boot/tools/make-flash.py'),'--efi',str(art/'rommon.efi'),'--system',str(art/'system.bin'),'--output',str(flash),'--size-mib','1024','--no-tampered-fixture'],check=True,stdout=subprocess.DEVNULL)
+subprocess.run(['python3',str(SRC/'os/tools/make-data.py'),'--output',str(data)],check=True,stdout=subprocess.DEVNULL)
+shutil.copyfile(art/'OVMF_VARS-trusted.fd',variables)
+log=(out/'serial.log').open('w');child=None;clients=[]
+def check(text):result['checks'].append(text);print('PASS '+text,flush=True)
+def spawn(recovery=False):
+    c=pexpect.spawn('qemu-system-x86_64',['-machine','q35,smm=on','-accel','kvm','-cpu','host,vmx=off,svm=off','-m','4096','-smp','2',
+        '-global','driver=cfi.pflash01,property=secure,value=on','-drive',f'if=pflash,format=raw,unit=0,readonly=on,file={art/"OVMF_CODE_4M.secboot.fd"}',
+        '-drive',f'if=pflash,format=raw,unit=1,file={variables}','-drive',f'if=virtio,format=raw,file={flash}','-drive',f'if=virtio,format=raw,file={data}',
+        '-netdev',f'user,id=net0,hostfwd=tcp:127.0.0.1:{port}-:22','-device','virtio-net-pci,netdev=net0',
+        '-display','none','-chardev','stdio,id=serial0,signal=off','-serial','chardev:serial0','-monitor','none','-no-reboot'],encoding='utf-8',timeout=180)
+    c.logfile_read=log
+    if recovery:
+        c.expect_exact('Autoboot in 5 seconds');c.sendcontrol('c');c.expect(r'rommon \d+ > ')
+        c.sendline('confreg 0x2142');c.expect(r'rommon \d+ > ');c.sendline('boot')
+    c.expect_exact('%FCR-5-SYSTEM_READY');c.expect_exact('Press RETURN to get started!');c.sendline('');return c
+def prompt(c,config=False,user=False):c.expect(r'ctr(?:-test)?(?:\(config[^)]*\))?'+('> ' if user else '# '),timeout=90)
+def command(c,text,user=False):
+    c.sendline(text);prompt(c,user=user);return c.before
+def login(c,user,password):
+    c.sendline(user);c.expect_exact('Password: ');c.sendline(password);prompt(c,user=user=='reader')
+    assert password not in c.before,'password echoed'
+def ssh_login(user,password):
+    c=pexpect.spawn('ssh',['-tt','-p',str(port),'-o','StrictHostKeyChecking=accept-new','-o',f'UserKnownHostsFile={out/"known_hosts"}',
+                          '-o','PubkeyAuthentication=no','-o','PreferredAuthentications=password',f'{user}@127.0.0.1'],encoding='utf-8',timeout=30)
+    c.logfile_read=(out/f'ssh-{user}-{len(clients)}.log').open('w');clients.append(c)
+    c.expect('password:');c.sendline(password);c.expect_exact('Press RETURN to get started!');c.sendline('');prompt(c,user=user=='reader')
+    command(c,'terminal width 512',user=user=='reader');command(c,'terminal length 0',user=user=='reader')
+    return c
+ADMIN='Qualification-admin-410!';READER='Qualification-reader-410!';ENABLE='Qualification-enable-410!'
+try:
+    child=spawn();prompt(child);command(child,'terminal length 0');command(child,'terminal width 512')
+    for line in ['conf t',f'username admin privilege 15 secret {ADMIN}',f'username reader privilege 1 secret {READER}',f'enable secret {ENABLE}',
+                 'aaa new-model','aaa authentication login default local','aaa authorization exec default local','aaa accounting exec default start-stop local',
+                 'ip ssh version 2','line console 0','login local','exec-timeout 10 0','exit','line vty 0 15','login local','transport input ssh','exec-timeout 10 0','exit']:
+        command(child,line)
+    child.sendline('commit');child.expect_exact('Username: ');login(child,'admin',ADMIN)
+    command(child,'terminal length 0');command(child,'write memory')
+    check('local AAA configured; bootstrap privilege revoked; serial password hidden; startup configuration saved')
+    child.sendline('logout');child.expect_exact('Username: ');login(child,'reader',READER)
+    assert 'privilege level is 1' in command(child,'sh priv',user=True)
+    for text in ['conf t','request container-engine run anything','request platform debug service-container enter','show running-config']:
+        response=command(child,text,user=True);assert 'Invalid input' in response or 'Authorization failed' in response,response
+    child.send('sh?');child.expect_exact('show');prompt(child,user=True);child.sendcontrol('u');prompt(child,user=True)
+    child.sendline('show version | include ^Platform');prompt(child,user=True)
+    assert 'Platform kernel:' in child.before and 'FractalCR Software' not in child.before,child.before
+    child.sendline('enable');child.expect_exact('Password: ');time.sleep(2);child.sendline(ENABLE);prompt(child)
+    assert 'privilege level is 15' in command(child,'show privilege')
+    command(child,'disable',user=True)
+    check('user EXEC authorization, inline help, output filter, enable password and disable work over serial')
+    admin=ssh_login('admin',ADMIN);reader=ssh_login('reader',READER)
+    assert 'privilege level is 1' in command(reader,'show privilege',user=True)
+    command(admin,'conf t');command(admin,'hostname staged-elsewhere')
+    assert 'Platform kernel:' in command(reader,'show version',user=True)
+    command(admin,'abort')
+    check('SSH and serial share the CLI semantics; simultaneous sessions retain independent candidates and privileges')
+    admin_peer=ssh_login('admin',ADMIN)
+    command(admin_peer,'conf t')
+    for line in ['conf t','line console 0','exec-timeout 11 0','exit','commit','end']:command(admin,line)
+    assert 'changed' in command(admin_peer,'commit').lower()
+    command(admin_peer,'abort')
+    check('a stale candidate cannot overwrite another session\'s committed configuration')
+    # SSH exec and subsystems are denied even for a privilege 15 account.
+    denied=pexpect.spawn('ssh',['-p',str(port),'-o',f'UserKnownHostsFile={out/"known_hosts"}','-o','PubkeyAuthentication=no',f'admin@127.0.0.1','id'],encoding='utf-8',timeout=30)
+    denied.expect('password:');denied.sendline(ADMIN);denied.expect(pexpect.EOF);denied.close();assert denied.exitstatus!=0
+    check('SSH arbitrary exec requests cannot open a Unix shell')
+    for line in ['conf t','line vty 0 15','exec-timeout 0 5','exit','commit','end']:command(admin,line)
+    reader.expect(pexpect.EOF,timeout=15)
+    check('idle VTY sessions expire and close their SSH transport')
+    admin=ssh_login('admin',ADMIN)
+    for line in ['conf t','line vty 0 15','exec-timeout 10 0','exit','commit','end']:command(admin,line)
+    reader=ssh_login('reader',READER)
+    for line in ['conf t',f'username reader privilege 2 secret {READER}','commit','end']:command(admin,line)
+    reader.expect(pexpect.EOF,timeout=10)
+    for line in ['conf t',f'username reader privilege 1 secret {READER}','commit','end']:command(admin,line)
+    reader=ssh_login('reader',READER)
+    check('changing an account\'s secret or assigned privilege revokes its active session')
+    for line in ['conf t','no username reader','commit','end']:command(admin,line)
+    reader.expect(pexpect.EOF,timeout=10)
+    check('deleting a local account revokes its existing VTY session')
+    # The serial reader was revoked by the earlier account change as well.
+    # Consume that challenge before testing a separate management restart.
+    child.expect_exact('Username: ');login(child,'admin',ADMIN)
+    command(admin,'terminal width 512')
+    for line in ['conf t',f'username streamer privilege 15 secret {READER}','commit','end']:command(admin,line)
+    streamer=ssh_login('streamer',READER)
+    streamer.sendline('request container-engine events');time.sleep(2)
+    for line in ['conf t','no username streamer','commit','end']:command(admin,line)
+    streamer.expect(pexpect.EOF,timeout=10)
+    check('account revocation also terminates a VTY occupied by a streaming native client')
+    admin.sendline('request platform software service management restart')
+    admin.expect(pexpect.EOF,timeout=30)
+    if child.expect_exact(['Username: ','Press RETURN to get started!'],timeout=30)==1:
+        child.sendline('');child.expect_exact('Username: ')
+    login(child,'admin',ADMIN)
+    admin=ssh_login('admin',ADMIN)
+    check('management service restart requires console reauthentication and restores authenticated SSH')
+    command(admin,'terminal length 0');command(admin,'terminal width 512')
+    accounting=command(admin,'show logging aaa')
+    assert 'authentication' in accounting or '"event":"login"' in accounting
+    assert '"transport":"ssh"' in accounting and '"event":"command"' in accounting
+    assert all(secret not in accounting for secret in [ADMIN,READER,ENABLE])
+    check('persistent AAA accounting records identities and command classes without plaintext secrets')
+    command(admin,'write memory')
+    admin.sendline('reload');child.expect(pexpect.EOF,timeout=180);stop_qemu(child)
+    child=spawn();child.expect_exact('Username: ');login(child,'admin',ADMIN)
+    check('AAA configuration and SSH host identity persist across a complete reboot')
+    admin2=ssh_login('admin',ADMIN);assert 'privilege level is 15' in command(admin2,'show privilege')
+    admin2.sendline('reload');child.expect(pexpect.EOF,timeout=180);stop_qemu(child)
+    child=spawn(recovery=True);prompt(child)
+    for line in ['terminal length 0','terminal width 512','conf t','do copy startup-config candidate-config',f'username admin privilege 15 secret {ADMIN}-recovered']:
+        command(child,line)
+    child.sendline('commit');child.expect_exact('Username: ');login(child,'admin',ADMIN+'-recovered')
+    command(child,'write memory');child.sendline('reload');child.expect(pexpect.EOF,timeout=180);stop_qemu(child)
+    child=spawn();child.expect_exact('Username: ');login(child,'admin',ADMIN+'-recovered')
+    admin3=ssh_login('admin',ADMIN+'-recovered');assert 'privilege level is 15' in command(admin3,'show privilege')
+    check('physical ROMMON recovery restores a forgotten administrator secret, preserves configuration and returns to authenticated normal boot')
+    result['passed']=True
+except Exception as error:result['error']=str(error);raise
+finally:
+    for c in clients:
+        try:c.close(force=True)
+        finally:c.logfile_read.close()
+    stop_qemu(child);log.close();(out/'result-os-aaa.json').write_text(json.dumps(result,indent=2)+'\n')

@@ -1,0 +1,232 @@
+package appliance
+
+import (
+	"encoding/json"
+	"fmt"
+	"fractalcr/internal/cli"
+	"fractalcr/internal/config"
+	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
+)
+
+type managementRequest struct {
+	Command   string `json:"command"`
+	User      string `json:"user,omitempty"`
+	Transport string `json:"transport,omitempty"`
+	Verifier  string `json:"verifier,omitempty"`
+}
+type loginSession struct {
+	cli                              *cli.Session
+	user, stage, transport, verifier string
+	authenticated                    bool
+	userPrivilege                    int
+	last                             time.Time
+}
+type loginFailure struct {
+	count int
+	until time.Time
+}
+
+var loginFailures = map[string]loginFailure{}
+var auditPath = "/datastore/data0/log/aaa.jsonl"
+
+func audit(user, transport, event, command string) error {
+	if err := checkDatastore(); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(auditPath), 0700); err != nil {
+		return err
+	}
+	lock, err := os.OpenFile(auditPath+".lock", os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0600)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	if st, e := os.Lstat(auditPath); e == nil {
+		if !st.Mode().IsRegular() {
+			return fmt.Errorf("invalid accounting file")
+		}
+		if st.Size() > 4*1024*1024 {
+			if err := os.Rename(auditPath, auditPath+".1"); err != nil {
+				return err
+			}
+		}
+	}
+	f, err := os.OpenFile(auditPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND|syscall.O_NOFOLLOW, 0600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	// Record command classes, never passwords, tokens, environment or native argv.
+	words, _ := cli.Words(command)
+	if len(words) > 2 {
+		words = words[:2]
+	}
+	err = json.NewEncoder(f).Encode(map[string]any{"time": time.Now().UTC().Format(time.RFC3339Nano), "user": user, "transport": transport, "event": event, "command": strings.Join(words, " ")})
+	if err != nil {
+		return err
+	}
+	return f.Sync()
+}
+func (s *loginSession) challenge() reply {
+	prompt := "Username: "
+	secret := false
+	if s.stage == "password" || s.stage == "enable" {
+		prompt = "Password: "
+		secret = true
+	}
+	return reply{Prompt: prompt, Challenge: true, Secret: secret}
+}
+func (s *loginSession) logout() {
+	s.authenticated = false
+	s.stage = "username"
+	s.user = ""
+	s.verifier = ""
+	s.cli.Mode = ""
+	s.cli.Object = ""
+	s.cli.Privilege = 0
+	s.cli.Candidate = s.cli.Running.Clone()
+}
+
+// The request arrives on a root-only Unix socket. Only the SSH service can
+// supply a verified VTY principal; SSH env/exec/subsystem requests are refused.
+func (s *loginSession) authenticate(r managementRequest, c config.Config, now time.Time) (reply, bool) {
+	s.cli.Running = c
+	if r.Command == "__connect" {
+		s.logout()
+		s.transport = "console"
+		s.last = now
+		if r.Transport == "ssh" {
+			s.transport = "ssh"
+			u, ok := c.AAA.Users[r.User]
+			if !c.AAA.Enabled || !c.AAA.SSH || !ok || r.Verifier != u.Secret {
+				return reply{Close: true, Error: "SSH authorization failed."}, true
+			}
+			s.user = r.User
+			s.verifier = u.Secret
+			s.userPrivilege = u.Privilege
+			s.cli.Privilege = u.Privilege
+			s.authenticated = true
+		} else if !c.AAA.Enabled {
+			s.user = "console"
+			s.cli.Privilege = 15
+			s.authenticated = true
+		}
+		if s.authenticated {
+			if c.AAA.Enabled {
+				if e := audit(s.user, s.transport, "login", ""); e != nil {
+					s.logout()
+					return reply{Close: true, Error: "Accounting unavailable."}, true
+				}
+			}
+			s.cli.Username = s.user
+			return reply{Prompt: s.cli.Prompt()}, true
+		}
+		return s.challenge(), true
+	}
+	timeout := c.AAA.ConsoleTimeout
+	if s.transport == "ssh" {
+		timeout = c.AAA.VTYTimeout
+	}
+	if c.AAA.Enabled && s.authenticated && timeout > 0 && now.Sub(s.last) >= time.Duration(timeout)*time.Second {
+		_ = audit(s.user, s.transport, "idle-timeout", "")
+		s.logout()
+		if s.transport == "ssh" {
+			return reply{Close: true, Error: "Session timed out."}, true
+		}
+		return s.challenge(), true
+	}
+	if s.authenticated && c.AAA.Enabled {
+		u, ok := c.AAA.Users[s.user]
+		if !ok || u.Secret != s.verifier || u.Privilege != s.userPrivilege {
+			_ = audit(s.user, s.transport, "authorization-revoked", "")
+			s.logout()
+			if s.transport == "ssh" {
+				return reply{Close: true}, true
+			}
+			return s.challenge(), true
+		}
+	}
+	if r.Command == "__tick" {
+		if s.stage == "enable" {
+			return s.challenge(), true
+		}
+		if s.authenticated {
+			return reply{Prompt: s.cli.Prompt()}, true
+		}
+		return s.challenge(), true
+	}
+	s.last = now
+	if !s.authenticated || s.stage == "enable" {
+		if strings.HasPrefix(r.Command, "__") {
+			return s.challenge(), true
+		}
+		if s.stage == "username" {
+			if len(r.Command) > 63 {
+				return s.challenge(), true
+			}
+			s.user = r.Command
+			s.stage = "password"
+			return s.challenge(), true
+		}
+		key := s.transport + ":" + s.user
+		if _, known := c.AAA.Users[s.user]; !known {
+			key = s.transport + ":<unknown>"
+		}
+		failure := loginFailures[key]
+		if now.Before(failure.until) {
+			r := s.challenge()
+			r.Error = "Authentication temporarily locked. Try again later."
+			return r, true
+		}
+		u, exists := c.AAA.Users[s.user]
+		verifier := u.Secret
+		if s.stage == "enable" {
+			verifier = c.AAA.EnableSecret
+			exists = verifier != ""
+		}
+		if !exists || !config.CheckSecret(verifier, r.Command) {
+			failure.count++
+			if failure.count >= 3 {
+				failure.until = now.Add(30 * time.Second)
+				failure.count = 0
+			}
+			loginFailures[key] = failure
+			_ = audit(s.user, s.transport, "authentication-failed", "")
+			s.stage = "username"
+			if s.authenticated {
+				s.stage = ""
+				return reply{Prompt: s.cli.Prompt(), Error: "Access denied."}, true
+			}
+			answer := s.challenge()
+			answer.Error = "Authentication failed."
+			return answer, true
+		}
+		delete(loginFailures, key)
+		event := "login"
+		if s.stage == "enable" {
+			s.cli.Privilege = 15
+			event = "enable"
+		} else {
+			s.cli.Privilege = u.Privilege
+			s.verifier = u.Secret
+			s.userPrivilege = u.Privilege
+		}
+		if err := audit(s.user, s.transport, event, ""); err != nil {
+			s.logout()
+			return reply{Close: true, Error: "Accounting unavailable."}, true
+		}
+		s.authenticated = true
+		s.stage = ""
+		s.cli.Username = s.user
+		return reply{Prompt: s.cli.Prompt()}, true
+	}
+	return reply{}, false
+}

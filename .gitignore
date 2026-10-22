@@ -1,0 +1,14 @@
+/out/
+/state/
+/build/
+/sources/
+*.key
+*.encrypted.pem
+*.p12
+*.pfx
+*.qcow2
+*.vhdx
+__pycache__/
+*.py[cod]
+release-trust/
+.venv/

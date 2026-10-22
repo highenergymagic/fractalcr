@@ -1,0 +1,37 @@
+package appliance
+
+import (
+	"encoding/json"
+	"fractalcr/internal/cli"
+	"fractalcr/internal/config"
+	"io"
+	"strings"
+)
+
+// Recovery uses the same parser without a management socket, configuration
+// transaction, datastore or Docker dependency.
+func Recovery(line string, out io.Writer) error {
+	if c, err := loadRunning(); err != nil || c.AAA.Enabled {
+		return json.NewEncoder(out).Encode(reply{Error: "Management unavailable; authenticated recovery requires restoring the management service or ROMMON recovery.", Close: true})
+	}
+	s := &cli.Session{Running: config.Default(), Recovery: true}
+	r := reply{Prompt: "ctr# "}
+	switch {
+	case line == "__connect" || line == "__end":
+	case strings.HasPrefix(line, "__help "):
+		r.Output = s.ContextHelp(strings.TrimPrefix(line, "__help "))
+	case strings.HasPrefix(line, "__complete "):
+		value, output := s.Complete(strings.TrimPrefix(line, "__complete "))
+		r.Completion, r.Output = &value, output
+	default:
+		words, local, err := s.Resolve(line)
+		if err != nil {
+			r.Error = err.Error()
+		} else if local {
+			r.Local = cli.Join(words)
+		} else if len(words) > 0 {
+			r.Error = "Management service unavailable."
+		}
+	}
+	return json.NewEncoder(out).Encode(r)
+}
