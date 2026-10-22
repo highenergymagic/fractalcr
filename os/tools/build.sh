@@ -13,5 +13,6 @@ install -d -o builder -g builder /work/sources
 chown -R builder:builder /work/sources
 runuser -u builder -- python3 /src/os/tools/fetch.py
 bash /src/os/tools/setup.sh
-runuser -u builder -- bash /src/os/tools/bitbake.sh linux-fractal-cip
+# Request the image's complete task graph too, including its assembled SPDX.
+runuser -u builder -- bash /src/os/tools/bitbake.sh fractal-system linux-fractal-cip
 bash /src/os/tools/package.sh

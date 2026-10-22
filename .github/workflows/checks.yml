@@ -19,10 +19,14 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: '1.26.9'
+          go-version: '1.26.10'
           cache: false
       - run: go test -mod=vendor -race ./...
       - run: go vet -mod=vendor ./...
+      - name: Exercise command and configuration parsers
+        run: |
+          go test -mod=vendor ./internal/cli -run='^$' -fuzz=FuzzResolveAndHelp -fuzztime=30s -parallel=2
+          go test -mod=vendor ./internal/config -run='^$' -fuzz=FuzzDecodeRoundTrip -fuzztime=30s -parallel=2
       - name: Verify vendored dependencies
         run: |
           go mod download
@@ -70,11 +74,20 @@ jobs:
           path: os/meta-fractal
           ssh-key: ${{ secrets.LAYER_READ_KEY }}
           persist-credentials: false
-      - run: python3 -m unittest discover -s tools/tests -v
-      - name: Compile and test C services
+      - name: Install integration dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libjson-c-dev libblkid-dev libssl-dev
+          sudo apt-get install -y libjson-c-dev libblkid-dev libssl-dev python3-cryptography
+      - run: /usr/bin/python3 -m unittest discover -s tools/tests -v
+      - name: Compile and test C services
+        run: |
           sudo ln -s "$GITHUB_WORKSPACE" /src
           sudo bash tools/check-services.sh
           sudo env FCR_SANITIZE=1 bash tools/check-services.sh
+      - name: Reject forged and retired image envelopes
+        run: |
+          sudo mkdir -p /work/build
+          sudo ln -s "$GITHUB_WORKSPACE/boot" /work/boot
+          sudo bash boot/tools/make-dev-keys.sh >/dev/null 2>&1
+          sudo /usr/bin/python3 boot/tests/test-verifier.py
+          sudo env FCR_SANITIZE=1 /usr/bin/python3 boot/tests/test-verifier.py

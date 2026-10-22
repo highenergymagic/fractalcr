@@ -265,7 +265,7 @@ def configuration_cli():
     command("system container-isolation install runtime kata-containers", mode="")
     command("commit", "Running configuration committed.", mode="")
     command("end", mode="exec")
-    command("show container-isolation detail", 'Semver = "4.2.0"', mode="exec")
+    command("show container-isolation detail", 'Semver = "4.3.1"', mode="exec")
     command("config", mode="")
     command("system container-isolation enable", mode="")
     command("commit", "% KVM is unavailable", mode="")
@@ -341,7 +341,7 @@ def cli_semantics():
 
 def container_tools():
     prefix="request container-engine "
-    execute(prefix+"version", "29.3.0")
+    execute(prefix+"version", "29.9.2")
     execute(prefix+"compose version", "5.6.1")
     execute(prefix+"buildx version", "0.38.1")
     execute("request container-build --version", "0.34.1")

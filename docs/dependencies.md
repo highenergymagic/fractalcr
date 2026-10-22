@@ -10,11 +10,17 @@ python3 tools/dependencies.py vendor-go
 ```
 
 The discovery command checks the current CIP 6.12 line, Buildroot 2025.02 LTS,
-OE Wrynose/BitBake 2.18 branches and the upstream container-tool releases. It
+OE Wrynose/BitBake 2.18 branches, ROMMON OpenSSL 3.5, Go 1.26, Docker 29, containerd 2.2, runc 1.5
+and the upstream container-tool releases. It
 produces a report; it does not install discovered software. The archive updater
 downloads and hashes the actual archive before changing pins, refuses
 downgrades, and updates both kernel consumers together. A failed download leaves
 the pins unchanged. Review both component diffs before committing their gitlinks.
+
+Buildroot updates also verify the upstream clearsigned checksum document against
+the maintainer key and fingerprint pinned in `boot/upstream-trust`. The key's
+initial provenance is documented there; it is not fetched and trusted afresh
+for every update.
 
 Discovery reads the CIP checksum listing over HTTPS. **It does not verify the
 listing's PGP signature or the developer's release signature.** Before accepting
@@ -30,6 +36,28 @@ then commit `go.mod`, `go.sum` and `vendor` together. Dependabot opens Go and
 Actions updates. Component gitlinks are updated explicitly after integration
 review; private cross-repository Dependabot authentication is not configured.
 CI checks that vendoring matches the module files.
+For upstream Go applications, `tools/security/refresh-vendor.py` operates on a
+clean checkout at an explicitly reviewed full commit. Supply exact module
+versions and the approved Go executable. It verifies modules against the Go
+checksum database, generates the vendor tree, and exports a frozen patch plus
+hash manifest. For projects without checked-in vendoring, use `--vendor-archive`.
+The generated patch includes deleted and ignored vendor files; its regression
+test covers both. Review and apply the patch to a pristine upstream tree before
+building. Never run this network-dependent refresh inside an image build.
+For Rust VMM dependencies, retain the upstream commit, refreshed Cargo.lock,
+offline vendor archive and the manifest from `tools/security/freeze-cargo.py`.
+Review OSV results against the selected Linux feature tree; a whole-workspace
+lockfile includes packages that may not be built. The exact compiler is a pinned
+upstream binary build input and is not independently source-bootstrapped here.
+
+The CIP kernel additionally carries stable security backports recorded in
+`boot/kernel/security/kernel-security.json`, mirrored in the OE kernel recipe.
+Verify the derived patch bodies against the downloaded upstream `.xz` updates
+with `tools/security/verify-kernel-backports.py`. The base version remains visible;
+these are distribution backports, not an official newer CIP release. A kernel
+pin update must review or retire this patch series and update both copies. The
+build rejects a mismatched base or hash. ROMMON applies updates to a fresh copy
+of archive-verified source, preserving the original cache for validation.
 Kata updates also need guest kernel/image filename review in the OE recipe;
 blind version replacement would be unsafe. Builder snapshot changes are explicit
 updates to `boot/debian.sources`, followed by builder and image qualification.

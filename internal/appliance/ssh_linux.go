@@ -21,12 +21,37 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+var sshHostKeyPath = "/datastore/data0/config/ssh_host_ed25519_key"
+
+func readHostKey(path string) ([]byte, error) {
+	// Open first, then validate that same descriptor. A pre-read Lstat can race
+	// replacement; ReadFile can block forever on an attacker-supplied FIFO.
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	owner, ok := st.Sys().(*syscall.Stat_t)
+	if !ok || !st.Mode().IsRegular() || st.Mode().Perm()&0077 != 0 || owner.Uid != uint32(os.Geteuid()) || owner.Nlink != 1 || st.Size() > 16384 {
+		return nil, errors.New("SSH host key must be an owned, private regular file below 16 KiB")
+	}
+	b, err := io.ReadAll(io.LimitReader(f, 16385))
+	if len(b) > 16384 {
+		return nil, errors.New("SSH host key exceeds size limit")
+	}
+	return b, err
+}
+
 func sshHostKey() (ssh.Signer, error) {
-	path := "/datastore/data0/config/ssh_host_ed25519_key"
+	path := sshHostKeyPath
 	if err := checkDatastore(); err != nil {
 		return nil, err
 	}
-	b, err := os.ReadFile(path)
+	b, err := readHostKey(path)
 	if os.IsNotExist(err) {
 		_, key, e := ed25519.GenerateKey(rand.Reader)
 		if e != nil {
@@ -42,10 +67,6 @@ func sshHostKey() (ssh.Signer, error) {
 		}
 	} else if err != nil {
 		return nil, err
-	}
-	st, err := os.Lstat(path)
-	if err != nil || !st.Mode().IsRegular() || st.Mode().Perm()&0077 != 0 {
-		return nil, errors.New("SSH host key must be a private regular file")
 	}
 	return ssh.ParsePrivateKey(b)
 }

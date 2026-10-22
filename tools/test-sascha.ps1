@@ -14,7 +14,7 @@ $remote = "/machines/fractalcr/test-runs/$id"
 $output = Join-Path $repo "out\sascha\$id"
 New-Item -ItemType Directory -Force $output | Out-Null
 $archive = Join-Path $output "source.tar.gz"
-& tar -czf $archive -C $repo --exclude=.git --exclude=__pycache__ --exclude=*.pyc boot os service tools internal cmd vendor go.mod go.sum README.md LICENSE
+& python (Join-Path $PSScriptRoot 'workspace-archive.py') --output $archive
 if ($LASTEXITCODE) { throw "Source archive failed" }
 & ssh -o BatchMode=yes $TestHost "mkdir -p $remote/source $remote/artifacts; test -r /dev/kvm -a -w /dev/kvm"
 if ($LASTEXITCODE) { throw "Test directory or KVM unavailable" }

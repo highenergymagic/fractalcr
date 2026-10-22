@@ -5,6 +5,14 @@ deploy=build/tmp/deploy/images/fractal-x86-64
 kernel="$deploy/bzImage-initramfs-fractal-x86-64.bin"
 test -f "$kernel" || { echo "Bundled kernel missing: $kernel"; ls -l "$deploy"; exit 1; }
 mkdir -p artifacts
+cp /src/boot/kernel/security/kernel-security.json artifacts/kernel-security.json
+spdx="$deploy/fractal-system-fractal-x86-64.spdx.json"
+test -s "$spdx" || { echo "Image SPDX missing; build fractal-system before packaging." >&2; exit 1; }
+cp "$spdx" artifacts/system.spdx.json
+vex="$deploy/fractal-system-fractal-x86-64.vex.json"
+test -s "$vex" || { echo "Image VEX/source advisory metadata missing." >&2; exit 1; }
+python3 /src/tools/security/merge-oe-vex.py "$vex" \
+    build/tmp/deploy/cve/linux-fractal-cip_cve.json artifacts/system.oe-vex.json
 if [[ "${FCR_SIGNING_MODE:-development}" == external ]]; then
     test -f /boot-work/build/keys/trust.json
     test ! -e /boot-work/build/keys/firmware.key

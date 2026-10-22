@@ -40,14 +40,13 @@ switch ($Action) {
         $archive = Join-Path ([IO.Path]::GetTempPath()) "fractalcr-$job.tar.gz"
         $trustStage = Join-Path ([IO.Path]::GetTempPath()) "fractalcr-public-$job"
         try {
-            $extra = @()
             if ($SigningMode -eq "external") {
                 New-Item -ItemType Directory -Path (Join-Path $trustStage 'release-trust') -Force | Out-Null
                 foreach ($name in @('firmware.crt','release.pub','trust.json')) { Copy-Item -LiteralPath (Join-Path $PublicTrustDirectory $name) -Destination (Join-Path $trustStage "release-trust/$name") }
-                $extra = @('-C', $trustStage, 'release-trust')
             }
-            & tar -czf $archive -C $repoRoot --exclude=.git --exclude=__pycache__ --exclude=*.pyc `
-                boot os service tools internal cmd vendor go.mod go.sum .dockerignore README.md LICENSE @extra
+            $snapshotArgs = @('--output', $archive)
+            if ($SigningMode -eq 'external') { $snapshotArgs += @('--public-trust', (Join-Path $trustStage 'release-trust')) }
+            & python (Join-Path $PSScriptRoot 'workspace-archive.py') @snapshotArgs
             if ($LASTEXITCODE -ne 0) { throw "Source archive failed." }
             Invoke-Remote "mkdir -p FractalCR-build/snapshots/$job"
             & scp -q $archive "${BuildHost}:FractalCR-build/snapshots/$job/source.tar.gz"

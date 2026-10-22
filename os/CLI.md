@@ -89,7 +89,7 @@ Container settings include `memory 32M`, `pids-limit 32`, `read-only`,
 
 ## Kata
 
-The image includes checksum-pinned Kata 4.2.0 Go shim, Cloud Hypervisor,
+The image includes a source-built Kata 4.3.1 Go shim, checksum-pinned Cloud Hypervisor,
 virtiofsd, the upstream guest kernel and CBL-Mariner 3.0 guest. Unused VMMs and
 guest images are excluded. The host remains CIP SLTS. Upstream dependency
 versions remain in `/opt/kata/versions.yaml`.
@@ -119,7 +119,7 @@ Existing containers keep their creation-time runtime.
 VM factory and arbitrary guest OS imports are rejected. TCG acceptance checks
 artifact availability and rejection without KVM; it cannot validate Kata guest
 execution or the configured guest memory limit.
-Sources: [Kata release](https://github.com/kata-containers/kata-containers/releases/tag/4.2.0),
+Sources: [Kata release](https://github.com/kata-containers/kata-containers/releases/tag/4.3.1),
 [Docker runtimes](https://docs.docker.com/engine/daemon/alternative-runtimes/).
 
 ## Storage and recovery

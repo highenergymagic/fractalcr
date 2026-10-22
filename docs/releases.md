@@ -36,7 +36,8 @@ or publishes appliance images. Initial GitHub repositories contain source only.
 
 Outstanding release gates include independent review, a complete image SBOM and
 dependency vulnerability disposition, source/license compliance for upstream
-binary bundles, fresh-builder reproduction, and hardware coverage. Format v1
-does not enforce per-release anti-rollback. Key revocation is not a substitute
-for a monotonic release-version policy. A/B power-loss-safe installation is also
+binary bundles, fresh-builder reproduction, and hardware coverage. Format v2
+enforces a signed security epoch against the minimum embedded in ROMMON.
+Retiring an epoch requires a new ROMMON floor and firmware-key revocation;
+this is not an automatic per-boot monotonic counter. A/B power-loss-safe installation is also
 not yet implemented. These limits must accompany any development prerelease.

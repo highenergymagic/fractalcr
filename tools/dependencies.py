@@ -8,7 +8,10 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import sys
+import tempfile
 import time
+import tomllib
 import urllib.error
 import urllib.request
 
@@ -64,20 +67,74 @@ def discover():
             raise ValueError('invalid upstream revision')
         result.append(dict(name=repo['name'], current=repo['revision'], candidate=revision,
                            evidence=repo['url'], branch=branch))
-    for name, repository, current in [('kata', 'kata-containers/kata-containers', '4.2.0'),
+    for name, repository, current in [('kata', 'kata-containers/kata-containers', '4.3.1'),
                                      ('compose', 'docker/compose', 'v5.6.1'),
                                      ('buildx', 'docker/buildx', 'v0.38.1'),
-                                     ('buildkit', 'moby/buildkit', 'v0.34.1')]:
+                                     ('buildkit', 'moby/buildkit', 'v0.34.1'),
+                                     ('cni', 'containernetworking/plugins', 'v1.9.1')]:
         # Read the installed versions from recipes, so this report cannot drift
-        # after an update. Recipes deliberately pin prebuilt upstream inputs.
+        # after an update. Source revisions and vendor patches remain locked.
         recipes = ROOT / 'os/meta-fractal/recipes-containers'
         if name == 'kata':
             current = next((recipes / 'fractal-kata').glob('fractal-kata_*.bb')).stem.split('_', 1)[1]
         else:
             recipe = (recipes / 'fractal-container-tools/fractal-container-tools_1.0.bb').read_text()
-            current = re.search(re.escape(repository) + r'/releases/download/([^/]+)/', recipe)[1]
+            match = re.search(r'^FCR_' + name.upper() + r'_VERSION = "([^"]+)"$', recipe, re.M)
+            if not match:
+                raise ValueError('missing tool version pin: ' + name)
+            current = 'v' + match[1]
         release = json.loads(read_url('https://api.github.com/repos/' + repository + '/releases/latest'))
         result.append(dict(name=name, current=current, candidate=release['tag_name'], evidence=release['html_url']))
+    # Stay on the selected maintenance lines; a new major/minor runtime is a
+    # separate compatibility decision. Read current pins from the layer.
+    recipes = ROOT / 'os/meta-fractal/recipes-containers'
+    for name, repository, recipe_path, variable, prefix, pattern in [
+        ('containerd', 'containerd/containerd', 'containerd/containerd_%.bbappend', 'CONTAINERD_VERSION', 'v', r'v2\.2\.\d+'),
+        ('runc', 'opencontainers/runc', 'runc/runc_%.bbappend', 'RUNC_VERSION', 'v', r'v1\.5\.\d+'),
+        ('docker', 'moby/moby', 'docker/docker-moby_%.bbappend', 'DOCKER_VERSION', 'docker-', r'docker-v29\.\d+\.\d+'),
+    ]:
+        match = re.search(r'^' + variable + r' = "([^"]+)"$', (recipes/recipe_path).read_text(), re.M)
+        if not match:
+            raise ValueError('missing runtime version pin: ' + name)
+        releases = json.loads(read_url('https://api.github.com/repos/' + repository + '/releases?per_page=100'))
+        candidates = [r for r in releases if not r['prerelease'] and not r['draft'] and re.fullmatch(pattern, r['tag_name'])]
+        if not candidates:
+            raise ValueError('no supported maintenance release found: ' + name)
+        latest = max(candidates, key=lambda r: version_key(r['tag_name']))
+        result.append(dict(name=name, current=prefix+match[1], candidate=latest['tag_name'], evidence=latest['html_url']))
+    go_recipe = next((ROOT/'os/meta-fractal/recipes-devtools/go').glob('go-1.26.*.inc'))
+    current = go_recipe.stem.removeprefix('go-')
+    releases = json.loads(read_url('https://go.dev/dl/?mode=json'))
+    candidates = [r for r in releases if r['stable'] and re.fullmatch(r'go1\.26\.\d+', r['version'])]
+    if not candidates:
+        raise ValueError('Go 1.26 is absent from supported releases; review the supported compiler series')
+    latest = max(candidates, key=lambda r: version_key(r['version']))
+    result.append(dict(name='go', current='go'+current, candidate=latest['version'], evidence='https://go.dev/dl/'))
+    rust_recipe = next((ROOT/'os/meta-fractal/recipes-devtools/rust').glob('fractal-rust-native_*.bb'))
+    current = rust_recipe.stem.split('_', 1)[1]
+    rust = tomllib.loads(read_url('https://static.rust-lang.org/dist/channel-rust-stable.toml'))
+    result.append(dict(name='rust-build-tools', current=current,
+                       candidate=rust['pkg']['rust']['version'].split()[0],
+                       evidence='https://static.rust-lang.org/dist/channel-rust-stable.toml'))
+    vmm_recipes = ROOT/'os/meta-fractal/recipes-containers/fractal-vmm'
+    current = next(vmm_recipes.glob('fractal-cloud-hypervisor_*.bb')).stem.split('_', 1)[1]
+    release = json.loads(read_url('https://api.github.com/repos/cloud-hypervisor/cloud-hypervisor/releases/latest'))
+    result.append(dict(name='cloud-hypervisor', current='v'+current, candidate=release['tag_name'], evidence=release['html_url']))
+    current = next(vmm_recipes.glob('fractal-virtiofsd_*.bb')).stem.split('_', 1)[1]
+    listing = subprocess.check_output(['git','ls-remote','--tags','https://gitlab.com/virtio-fs/virtiofsd.git'],text=True,timeout=90)
+    versions = set(re.findall(r'refs/tags/(v\d+\.\d+\.\d+)(?:\^\{\})?\s*$',listing,re.M))
+    if not versions:
+        raise ValueError('no virtiofsd releases found')
+    result.append(dict(name='virtiofsd',current='v'+current,candidate=max(versions,key=version_key),
+                       evidence='https://gitlab.com/virtio-fs/virtiofsd/-/tags'))
+    override = (ROOT/'boot/buildroot/security-overrides.mk').read_text()
+    current = re.search(r'^override LIBOPENSSL_VERSION = ([0-9.]+)$', override, re.M)[1]
+    releases = json.loads(read_url('https://api.github.com/repos/openssl/openssl/releases?per_page=100'))
+    candidates = [r for r in releases if not r['prerelease'] and not r['draft'] and re.fullmatch(r'openssl-3\.5\.\d+', r['tag_name'])]
+    if not candidates:
+        raise ValueError('no OpenSSL 3.5 maintenance release found')
+    latest = max(candidates, key=lambda r: version_key(r['tag_name']))
+    result.append(dict(name='rommon-openssl', current='openssl-'+current, candidate=latest['tag_name'], evidence=latest['html_url']))
     for item in result:
         item['update_available'] = item['current'] != item['candidate']
     return dict(schema=1, checked_at=datetime.datetime.now(datetime.timezone.utc).isoformat(), dependencies=result)
@@ -94,12 +151,18 @@ def update_archive(name, version, checksum):
     prefix = 'https://cdn.kernel.org/pub/linux/kernel/projects/cip/6.12/linux-cip-' if name == 'linux' else 'https://buildroot.org/downloads/buildroot-'
     url = prefix + version + '.tar.xz'
     # Stream the actual archive before changing either repository's pins.
-    digest = hashlib.sha256()
-    with urllib.request.urlopen(url, timeout=120) as response:
-        while chunk := response.read(1024 * 1024):
-            digest.update(chunk)
-    if digest.hexdigest() != checksum:
-        raise ValueError('archive does not match reviewed checksum; no pins changed')
+    with tempfile.TemporaryDirectory() as directory:
+        archive = Path(directory) / 'source.tar.xz'
+        digest = hashlib.sha256()
+        with urllib.request.urlopen(url, timeout=120) as response, archive.open('xb') as output:
+            while chunk := response.read(1024 * 1024):
+                digest.update(chunk)
+                output.write(chunk)
+        if digest.hexdigest() != checksum:
+            raise ValueError('archive does not match reviewed checksum; no pins changed')
+        if name == 'buildroot':
+            subprocess.run([sys.executable, str(ROOT/'tools/security/verify-buildroot-release.py'),
+                            '--version', version, '--archive', str(archive)], check=True)
     if name == 'linux':
         directory = ROOT / 'os/meta-fractal/recipes-kernel/linux'
         old = directory / f"linux-fractal-cip_{pins[name]['version']}.bb"

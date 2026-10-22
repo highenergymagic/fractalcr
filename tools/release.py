@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import struct
 import subprocess
 import tempfile
@@ -21,8 +22,8 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.x509.oid import NameOID
 
-DOMAIN=b'FractalCR system image v1\n'
-MAGIC=b'FCRBIN01'
+DOMAIN=b'FractalCR system image v2\n'
+MAGIC=b'FCRBIN02'
 ROOT=Path(__file__).resolve().parents[1]
 def digest(b):return hashlib.sha256(b).hexdigest()
 def public_id(key):return digest(key.public_bytes(serialization.Encoding.DER,serialization.PublicFormat.SubjectPublicKeyInfo))
@@ -30,15 +31,25 @@ def write(path,data,mode=0o600):
     path=Path(path);path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
     fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,mode)
     with os.fdopen(fd,'wb') as f:f.write(data);f.flush();os.fsync(f.fileno())
+
+def private_file(path, maximum=65536):
+    # Validate the descriptor we read, and never wait for a FIFO or follow a
+    # substituted symlink. Vault input is small and must have a single owner.
+    fd=os.open(path,os.O_RDONLY|os.O_CLOEXEC|os.O_NOFOLLOW|os.O_NONBLOCK)
+    with os.fdopen(fd,'rb') as f:
+        info=os.fstat(f.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_mode&0o077 or info.st_uid!=os.geteuid() or info.st_nlink!=1 or info.st_size>maximum:
+            raise ValueError('vault input must be an owned, private regular file within its size limit')
+        value=f.read(maximum+1)
+        if len(value)>maximum:raise ValueError('vault input exceeds size limit')
+        return value
 def password(args):
     if args.password_file:
-        p=args.password_file;st=p.lstat()
-        if not p.is_file() or p.is_symlink() or st.st_mode&0o077:raise ValueError('password file must be a private regular file (0600)')
-        value=p.read_bytes().rstrip(b'\r\n')
+        value=private_file(args.password_file,4096).rstrip(b'\r\n')
     else:value=getpass.getpass('Offline vault passphrase: ').encode()
     if len(value)<20:raise ValueError('vault passphrase must contain at least 20 bytes')
     return value
-def trust(directory):
+def trust(directory,allow_legacy=False):
     directory=Path(directory)
     for path in directory.iterdir():
         if path.name not in ('firmware.crt','release.pub','trust.json'):raise ValueError('unexpected file in public trust bundle')
@@ -47,8 +58,11 @@ def trust(directory):
     profile=json.loads((directory/'trust.json').read_text())
     cert=x509.load_pem_x509_certificate((directory/'firmware.crt').read_bytes())
     key=serialization.load_pem_public_key((directory/'release.pub').read_bytes())
-    if not isinstance(key,rsa.RSAPublicKey) or key.key_size!=2048:raise ValueError('release format v1 requires RSA-2048')
+    if not isinstance(key,rsa.RSAPublicKey) or key.key_size!=2048:raise ValueError('release format v2 requires RSA-2048')
     if profile.get('schema')!=1 or profile.get('firmware_sha256')!=digest(cert.public_bytes(serialization.Encoding.DER)) or profile.get('release_sha256')!=public_id(key):raise ValueError('trust fingerprint mismatch')
+    floor=profile.get('minimum_security_epoch')
+    legacy=allow_legacy and profile.get('format')==1 and floor is None
+    if not legacy and (profile.get('format')!=2 or type(floor) is not int or not 1<=floor<2**64):raise ValueError('trust profile must specify a v2 security epoch floor; rotate legacy trust profiles')
     if cert.not_valid_after.replace(tzinfo=dt.timezone.utc)<=dt.datetime.now(dt.timezone.utc):raise ValueError('firmware certificate expired')
     return profile,cert,key
 def pe_digest(data):
@@ -68,11 +82,14 @@ def pe_digest(data):
     return digest(data[:opt+64]+data[opt+68:security]+data[security+8:end]+alignment)
 def audit(vault,record):
     path=vault/'signing-audit.jsonl'
-    fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_APPEND|os.O_NOFOLLOW,0o600)
+    fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_APPEND|os.O_NOFOLLOW|os.O_NONBLOCK,0o600)
     with os.fdopen(fd,'a') as f:
+        info=os.fstat(f.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_mode&0o077 or info.st_uid!=os.geteuid() or info.st_nlink!=1:raise ValueError('signing audit must be an owned, private regular file')
         fcntl.flock(f,fcntl.LOCK_EX);record['time']=dt.datetime.now(dt.timezone.utc).isoformat();f.write(json.dumps(record,sort_keys=True)+'\n');f.flush();os.fsync(f.fileno())
 def initialize(args):
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,62}',args.name):raise ValueError('invalid release identity')
+    if not 1<=args.minimum_security_epoch<2**64:raise ValueError('invalid minimum security epoch')
     secret=password(args);args.vault.mkdir(mode=0o700,parents=True,exist_ok=False)
     firmware=rsa.generate_private_key(public_exponent=65537,key_size=3072)
     release=rsa.generate_private_key(public_exponent=65537,key_size=2048)
@@ -84,15 +101,14 @@ def initialize(args):
     public=args.vault/'public';public.mkdir(mode=0o700)
     write(public/'firmware.crt',cert.public_bytes(serialization.Encoding.PEM),0o644)
     write(public/'release.pub',release.public_key().public_bytes(serialization.Encoding.PEM,serialization.PublicFormat.SubjectPublicKeyInfo),0o644)
-    profile=dict(schema=1,name=args.name,firmware_sha256=digest(cert.public_bytes(serialization.Encoding.DER)),release_sha256=public_id(release.public_key()),format=1)
+    profile=dict(schema=1,name=args.name,firmware_sha256=digest(cert.public_bytes(serialization.Encoding.DER)),release_sha256=public_id(release.public_key()),format=2,minimum_security_epoch=args.minimum_security_epoch)
     write(public/'trust.json',(json.dumps(profile,indent=2)+'\n').encode(),0o644)
     audit(args.vault,dict(event='initialize',**profile));print(json.dumps(profile))
 def inspect_vault(args):
     profile,cert,pub=trust(args.vault/'public');secret=password(args)
     for name,expected in [('firmware',cert.public_key()),('release',pub)]:
         path=args.vault/(name+'.encrypted.pem')
-        if not path.is_file() or path.is_symlink() or path.stat().st_mode&0o077:raise ValueError('vault keys must be private regular files')
-        key=serialization.load_pem_private_key(path.read_bytes(),secret)
+        key=serialization.load_pem_private_key(private_file(path),secret)
         if public_id(key.public_key())!=public_id(expected):raise ValueError('vault key does not match public trust')
     print(json.dumps(dict(verified=True,trust=profile)))
 def prepare(args):
@@ -106,7 +122,7 @@ def prepare(args):
             if target.read_bytes()!=data:raise ValueError('trust cannot change inside an existing build directory')
         else:write(target,data,0o644)
     pem_text=(args.public/'release.pub').read_text()
-    header='/* Production public trust only. */\nstatic const char release_key_pem[] =\n'+''.join(json.dumps(line+'\n')+'\n' for line in pem_text.splitlines())+';\n'
+    header=f'/* Production public trust only. */\n#define FCR_MIN_SECURITY_EPOCH {profile["minimum_security_epoch"]}ULL\nstatic const char release_key_pem[] =\n'+''.join(json.dumps(line+'\n')+'\n' for line in pem_text.splitlines())+';\n'
     target=args.destination/'release-key.h'
     if target.exists():
         if target.read_text()!=header:raise ValueError('embedded trust header differs')
@@ -114,8 +130,10 @@ def prepare(args):
     print(json.dumps(profile))
 def sign(args):
     profile,cert,pub=trust(args.vault/'public');secret=password(args)
-    firmware=serialization.load_pem_private_key((args.vault/'firmware.encrypted.pem').read_bytes(),secret)
-    release=serialization.load_pem_private_key((args.vault/'release.encrypted.pem').read_bytes(),secret)
+    epoch=args.security_epoch if args.security_epoch is not None else profile['minimum_security_epoch']
+    if not profile['minimum_security_epoch']<=epoch<2**64:raise ValueError('image security epoch is below trust policy or outside uint64')
+    firmware=serialization.load_pem_private_key(private_file(args.vault/'firmware.encrypted.pem'),secret)
+    release=serialization.load_pem_private_key(private_file(args.vault/'release.encrypted.pem'),secret)
     if public_id(firmware.public_key())!=public_id(cert.public_key()) or public_id(release.public_key())!=public_id(pub):raise ValueError('vault keys do not match public trust')
     source=args.input.read_bytes();original=pe_digest(source)
     if digest(source)!=args.expected_sha256:raise ValueError('input does not match the reviewed SHA-256')
@@ -132,27 +150,33 @@ def sign(args):
             payload=signed.read_bytes()
             if pe_digest(payload)!=original:raise ValueError('PE signer changed the authenticated payload')
             subprocess.run(['sbverify','--cert',str(args.vault/'public/firmware.crt'),str(signed)],check=True)
-            if args.kind=='system':payload+=release.sign(DOMAIN+payload,padding.PKCS1v15(),hashes.SHA256())+MAGIC
+            if args.kind=='system':
+                payload+=epoch.to_bytes(8,'big')
+                payload+=release.sign(DOMAIN+payload,padding.PKCS1v15(),hashes.SHA256())+MAGIC
             write(args.output,payload,0o644)
             record=dict(event='sign',kind=args.kind,input_sha256=digest(source),output_sha256=digest(payload),trust=profile)
+            if args.kind=='system':record['security_epoch']=epoch
             audit(args.vault,record);write(Path(str(args.output)+'.receipt.json'),(json.dumps(record,indent=2)+'\n').encode(),0o644)
             print(json.dumps(record))
     finally:os.close(fd)
 def verify(args):
     profile,_,pub=trust(args.public);payload=args.input.read_bytes()
     if args.kind=='system':
-        if len(payload)<=264 or payload[-8:]!=MAGIC:raise ValueError('invalid system envelope')
-        pub.verify(payload[-264:-8],DOMAIN+payload[:-264],padding.PKCS1v15(),hashes.SHA256());payload=payload[:-264]
+        if len(payload)<=272 or payload[-8:]!=MAGIC:raise ValueError('invalid v2 system envelope')
+        pub.verify(payload[-264:-8],DOMAIN+payload[:-264],padding.PKCS1v15(),hashes.SHA256())
+        if int.from_bytes(payload[-272:-264],'big')<profile['minimum_security_epoch']:raise ValueError('image security epoch is below trust policy')
+        payload=payload[:-272]
     if pe_digest(payload)!=pe_digest(args.unsigned.read_bytes()):raise ValueError('signed artifact differs from the reviewed unsigned build')
     with tempfile.TemporaryDirectory() as tmp:
         path=Path(tmp)/'image.efi';path.write_bytes(payload)
         subprocess.run(['sbverify','--cert',str(args.public/'firmware.crt'),str(path)],check=True)
     print(json.dumps(dict(verified=True,sha256=digest(args.input.read_bytes()),trust=profile)))
 def rotation(args):
-    old,cert,_=trust(args.vault/'public');new,_,_=trust(args.new_public)
+    old,cert,_=trust(args.vault/'public',allow_legacy=True);new,_,_=trust(args.new_public)
     if old['firmware_sha256']==new['firmware_sha256'] or old['release_sha256']==new['release_sha256']:raise ValueError('rotation requires new firmware and release keys')
+    if new['minimum_security_epoch']<old.get('minimum_security_epoch',0):raise ValueError('rotation must not lower the security epoch floor')
     secret=password(args)
-    key=serialization.load_pem_private_key((args.vault/'firmware.encrypted.pem').read_bytes(),secret)
+    key=serialization.load_pem_private_key(private_file(args.vault/'firmware.encrypted.pem'),secret)
     if public_id(key.public_key())!=public_id(cert.public_key()):raise ValueError('old vault key mismatch')
     args.output.mkdir(parents=True,exist_ok=False,mode=0o700)
     fd=os.memfd_create('fractal-rotation-key',os.MFD_CLOEXEC|os.MFD_ALLOW_SEALING)
@@ -182,10 +206,10 @@ def rotation(args):
     finally:os.close(fd)
 def main():
     parser=argparse.ArgumentParser();sub=parser.add_subparsers(dest='command',required=True)
-    q=sub.add_parser('init');q.add_argument('--vault',type=Path,required=True);q.add_argument('--name',required=True);q.add_argument('--password-file',type=Path);q.set_defaults(action=initialize)
+    q=sub.add_parser('init');q.add_argument('--vault',type=Path,required=True);q.add_argument('--name',required=True);q.add_argument('--password-file',type=Path);q.add_argument('--minimum-security-epoch',type=int,default=1);q.set_defaults(action=initialize)
     q=sub.add_parser('verify-vault');q.add_argument('--vault',type=Path,required=True);q.add_argument('--password-file',type=Path);q.set_defaults(action=inspect_vault)
     q=sub.add_parser('prepare-trust');q.add_argument('--public',type=Path,required=True);q.add_argument('--destination',type=Path,required=True);q.set_defaults(action=prepare)
-    q=sub.add_parser('sign');q.add_argument('--vault',type=Path,required=True);q.add_argument('--password-file',type=Path);q.add_argument('--input',type=Path,required=True);q.add_argument('--expected-sha256',required=True);q.add_argument('--output',type=Path,required=True);q.add_argument('--kind',choices=['rommon','system'],required=True);q.set_defaults(action=sign)
+    q=sub.add_parser('sign');q.add_argument('--vault',type=Path,required=True);q.add_argument('--password-file',type=Path);q.add_argument('--input',type=Path,required=True);q.add_argument('--expected-sha256',required=True);q.add_argument('--output',type=Path,required=True);q.add_argument('--kind',choices=['rommon','system'],required=True);q.add_argument('--security-epoch',type=int);q.set_defaults(action=sign)
     q=sub.add_parser('verify');q.add_argument('--public',type=Path,required=True);q.add_argument('--unsigned',type=Path,required=True);q.add_argument('--input',type=Path,required=True);q.add_argument('--kind',choices=['rommon','system'],required=True);q.set_defaults(action=verify)
     q=sub.add_parser('rotation');q.add_argument('--vault',type=Path,required=True);q.add_argument('--new-public',type=Path,required=True);q.add_argument('--password-file',type=Path);q.add_argument('--output',type=Path,required=True);q.set_defaults(action=rotation)
     args=parser.parse_args();args.action(args)

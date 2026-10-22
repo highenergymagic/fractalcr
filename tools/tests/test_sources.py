@@ -22,6 +22,29 @@ repositories = module('repositories', 'os/tools/fetch.py')
 
 
 class SourceTests(unittest.TestCase):
+    def test_toolchain_change_invalidates_outputs_but_preserves_keys_and_downloads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            external = work/'external'
+            (external/'configs').mkdir(parents=True)
+            (external/'patches').mkdir()
+            (external/'configs/fractalcr_rommon_defconfig').write_text('old toolchain')
+            override = external/'security-overrides.mk'
+            override.write_text('old override')
+            archives.prepare_configuration(external, work)
+            for name in ('rommon-root', 'kernel-rommon', 'kernel-witness', 'keys'):
+                (work/'build'/name).mkdir(parents=True)
+                (work/'build'/name/'retained').write_text('fixture')
+            (work/'downloads').mkdir()
+            (work/'downloads/archive').write_text('cached archive')
+            self.assertFalse(archives.prepare_configuration(external, work))
+            override.write_text('new override')
+            self.assertTrue(archives.prepare_configuration(external, work))
+            for name in ('rommon-root', 'kernel-rommon', 'kernel-witness'):
+                self.assertFalse((work/'build'/name).exists())
+            self.assertEqual((work/'build/keys/retained').read_text(), 'fixture')
+            self.assertEqual((work/'downloads/archive').read_text(), 'cached archive')
+
     def archive(self, work, content, filename='linux/version'):
         path = work / 'downloads/linux.tar.xz'
         path.parent.mkdir(exist_ok=True)
@@ -57,6 +80,50 @@ class SourceTests(unittest.TestCase):
                 archives.prepare('linux', bad, work, download=False)
             self.assertEqual((work / 'sources/linux/version').read_bytes(), b'good')
             self.assertFalse((work / 'sources/escape').exists())
+
+    def test_extracted_archive_cache_rejects_modified_and_untracked_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            pin = self.archive(work, b'good')
+            archives.prepare('linux', pin, work, download=False)
+            source = work/'sources/linux/version'
+            source.write_bytes(b'evil')
+            with self.assertRaisesRegex(ValueError, 'modified source cache'):
+                archives.prepare('linux', pin, work, download=False)
+            source.write_bytes(b'good')
+            (source.parent/'extra.c').write_bytes(b'untracked')
+            with self.assertRaisesRegex(ValueError, 'untracked'):
+                archives.prepare('linux', pin, work, download=False)
+
+    def test_buildroot_cache_accepts_final_directory_mode_and_migrates_downloads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            (work/'downloads').mkdir()
+            archive = work/'downloads/buildroot.tar.xz'
+            with tarfile.open(archive, 'w:xz') as tar:
+                for mode in (0o775, 0o755):
+                    info = tarfile.TarInfo('buildroot-1/docs')
+                    info.type, info.mode = tarfile.DIRTYPE, mode
+                    tar.addfile(info)
+                info = tarfile.TarInfo('buildroot-1/implicit/nested/file')
+                info.size = 4
+                tar.addfile(info, io.BytesIO(b'good'))
+            pin = dict(version='1', url='https://example.invalid/buildroot.tar.xz', sha256=archives.digest(archive))
+            archives.prepare('buildroot', pin, work, download=False)
+            legacy = work/'sources/buildroot/dl/package'
+            legacy.mkdir(parents=True)
+            (legacy/'source.tar').write_bytes(b'cached')
+            self.assertFalse(archives.prepare('buildroot', pin, work, download=False))
+            self.assertEqual((work/'downloads/buildroot-packages/package/source.tar').read_bytes(), b'cached')
+            self.assertFalse((work/'sources/buildroot/dl').exists())
+            (work/'sources/buildroot/dl').mkdir()
+            self.assertFalse(archives.prepare('buildroot', pin, work, download=False))
+            self.assertFalse((work/'sources/buildroot/dl').exists())
+            (work/'sources/buildroot/dl').mkdir()
+            (work/'sources/buildroot/dl/conflicting.tar').write_bytes(b'preserve')
+            with self.assertRaisesRegex(ValueError, 'ambiguous legacy'):
+                archives.prepare('buildroot', pin, work, download=False)
+            self.assertEqual((work/'sources/buildroot/dl/conflicting.tar').read_bytes(), b'preserve')
 
     def test_dirty_checkout_and_wrong_origin_are_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:

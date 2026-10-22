@@ -40,11 +40,14 @@ func audit(user, transport, event, command string) error {
 	if err := os.MkdirAll(filepath.Dir(auditPath), 0700); err != nil {
 		return err
 	}
-	lock, err := os.OpenFile(auditPath+".lock", os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0600)
+	lock, err := os.OpenFile(auditPath+".lock", os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0600)
 	if err != nil {
 		return err
 	}
 	defer lock.Close()
+	if !privateAccountingFile(lock) {
+		return fmt.Errorf("invalid accounting lock file")
+	}
 	if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
 		return err
 	}
@@ -59,11 +62,14 @@ func audit(user, transport, event, command string) error {
 			}
 		}
 	}
-	f, err := os.OpenFile(auditPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND|syscall.O_NOFOLLOW, 0600)
+	f, err := os.OpenFile(auditPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0600)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
+	if !privateAccountingFile(f) {
+		return fmt.Errorf("invalid accounting file descriptor")
+	}
 	// Record command classes, never passwords, tokens, environment or native argv.
 	words, _ := cli.Words(command)
 	if len(words) > 2 {
@@ -75,6 +81,16 @@ func audit(user, transport, event, command string) error {
 	}
 	return f.Sync()
 }
+
+func privateAccountingFile(f *os.File) bool {
+	st, err := f.Stat()
+	if err != nil || !st.Mode().IsRegular() || st.Mode().Perm()&0077 != 0 {
+		return false
+	}
+	owner, ok := st.Sys().(*syscall.Stat_t)
+	return ok && owner.Uid == uint32(os.Geteuid()) && owner.Nlink == 1
+}
+
 func (s *loginSession) challenge() reply {
 	prompt := "Username: "
 	secret := false

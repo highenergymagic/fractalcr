@@ -7,6 +7,7 @@ stage=${1:?boot or os}
 : "${FCR_BUILDER_ID:?Launch through remote-build so the immutable builder ID is recorded}"
 case "$stage" in boot|os) ;; *) exit 2 ;; esac
 export SOURCE_DATE_EPOCH=1792454400
+export BR2_DL_DIR=/work/downloads/buildroot-packages
 mkdir -p /work/reproducibility /work/artifacts
 rm -f /work/artifacts/reproducibility.json
 python3 /src/tools/build-inputs.py "$stage" > /work/reproducibility/inputs.json
@@ -25,7 +26,7 @@ for pass in 1 2; do
         fi
     else
         bash /src/os/tools/setup.sh
-        runuser -u builder -- bash /src/os/tools/bitbake.sh -c cleansstate fractal-init fractal-management fractal-kata fractal-container-tools fractal-system linux-fractal-cip
+        runuser -u builder -- bash /src/os/tools/bitbake.sh -c cleansstate fractal-init fractal-management fractal-kata fractal-kata-runtime fractal-cloud-hypervisor fractal-virtiofsd fractal-container-tools fractal-system linux-fractal-cip
     fi
     bash "/src/$stage/tools/build.sh"
     if [[ "$stage" == os ]]; then

@@ -2,17 +2,21 @@
 set -euo pipefail
 cd /work
 mkdir -p build/conf downloads sstate-cache artifacts
-rsync -a --delete --exclude=.git --exclude=__pycache__ /src/os/meta-fractal/ meta-fractal/
-rsync -a --exclude=.git --exclude=__pycache__ /src/service/ meta-fractal/recipes-core/fractal-init/files/
+rsync -ac --delete --exclude=.git --exclude=__pycache__ /src/os/meta-fractal/ meta-fractal/
+rsync -ac --exclude=.git --exclude=__pycache__ /src/service/ meta-fractal/recipes-core/fractal-init/files/
 management_source=/work/meta-fractal/recipes-core/fractal-management/files/source
 mkdir -p "$management_source"
-rsync -a --delete /src/internal/ "$management_source/internal/"
-rsync -a --delete /src/cmd/ "$management_source/cmd/"
+rsync -ac --delete /src/internal/ "$management_source/internal/"
+rsync -ac --delete /src/cmd/ "$management_source/cmd/"
 cp /src/go.mod "$management_source/"
 cp /src/go.sum "$management_source/"
-rsync -a --delete /src/vendor/ "$management_source/vendor/"
+rsync -ac --delete /src/vendor/ "$management_source/vendor/"
 ln -sfn /work/sources/bitbake /work/sources/openembedded-core/bitbake
 cp /boot-work/build/keys/firmware.crt meta-fractal/recipes-kernel/linux/files/firmware.crt
+# Deterministic archives reuse mtimes across different source revisions.
+# BitBake caches local checksums and parsed recipes by mtime, not file contents.
+# Force revalidation without discarding content-addressed compiler/sstate caches.
+find /work/meta-fractal -type f -exec touch {} +
 cat > build/conf/bblayers.conf <<'EOF'
 POKY_BBLAYERS_CONF_VERSION = "2"
 BBPATH = "${TOPDIR}"

@@ -212,7 +212,7 @@ The exported datastore and interactive disks are not modified by this test.
 
 ## Remaining layers
 
-Kata 4.2.0, Cloud Hypervisor and the Mariner guest are image-bundled. The host
+Kata 4.3.1, Cloud Hypervisor and the Mariner guest are image-bundled. The host
 includes KVM/vsock/tun and traffic-control prerequisites. Carbon exposes no
 `/dev/kvm`; its TCG tests do not establish nested-KVM operation. Use
 `tools/test-sascha.ps1` for the additional KVM scenarios, including guest

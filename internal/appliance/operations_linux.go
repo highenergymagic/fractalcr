@@ -86,7 +86,7 @@ func Operations(w []string, c config.Config) (string, error) {
 	case "show system resources":
 		return resources()
 	case "show capabilities":
-		return "Management: transactional JSON configuration, local AAA, console/SSH EXEC, privilege authorization, persistent accounting, output filters\nContainers: Docker Engine, Compose, Buildx, BuildKit, Swarm; memory/PID/swap cgroup limits\nDatastore: data0, Btrfs single/raid1; explicit initialization of unused disks\nKata: 4.2.0 / Cloud Hypervisor / CBL-Mariner; requires KVM\nDebug service-container: privileged Debian container, enabled explicitly", nil
+		return "Management: transactional JSON configuration, local AAA, console/SSH EXEC, privilege authorization, persistent accounting, output filters\nContainers: Docker Engine, Compose, Buildx, BuildKit, Swarm; memory/PID/swap cgroup limits\nDatastore: data0, Btrfs single/raid1; explicit initialization of unused disks\nKata: 4.3.1 / Cloud Hypervisor / CBL-Mariner; requires KVM\nDebug service-container: privileged Debian container, enabled explicitly", nil
 	}
 	if len(w) == 4 && w[0] == "show" && w[1] == "container" && config.Name.MatchString(w[2]) {
 		switch w[3] {
