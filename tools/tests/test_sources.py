@@ -99,6 +99,26 @@ class SourceTests(unittest.TestCase):
                     with self.assertRaises(archives.UnsafeArchive):
                         archives.extract_source(tar, Path(tmp) / 'extracted')
 
+    @unittest.skipIf(__import__('os').name == 'nt', 'absolute Unix skeleton link')
+    def test_allowed_skeleton_link_cannot_be_followed_by_a_later_member(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            outside = root / 'outside'
+            outside.mkdir()
+            archive = root / 'links.tar'
+            with tarfile.open(archive, 'w') as tar:
+                link = tarfile.TarInfo('source/link')
+                link.type = tarfile.SYMTYPE
+                link.linkname = str(outside)
+                tar.addfile(link)
+                file = tarfile.TarInfo('source/link/escape')
+                file.size = 1
+                tar.addfile(file, io.BytesIO(b'x'))
+            with tarfile.open(archive) as tar:
+                with self.assertRaises(archives.UnsafeArchive):
+                    archives.extract_source(tar, root / 'extracted', {('source/link', str(outside))})
+            self.assertFalse((outside / 'escape').exists())
+
     def test_rommon_and_system_kernel_pins_match(self):
         pin = json.loads((ROOT / 'boot/sources.json').read_text())['linux']
         recipes = list((ROOT / 'os/meta-fractal/recipes-kernel/linux').glob('linux-fractal-cip_*.bb'))

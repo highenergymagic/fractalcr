@@ -76,4 +76,5 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libjson-c-dev libblkid-dev libssl-dev
           sudo ln -s "$GITHUB_WORKSPACE" /src
-          bash tools/check-services.sh
+          sudo bash tools/check-services.sh
+          sudo env FCR_SANITIZE=1 bash tools/check-services.sh

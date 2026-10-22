@@ -52,7 +52,7 @@ def main():
                     files={name: hashlib.sha256(data).hexdigest() for name, data, _ in files})
     files.append(('source-manifest.json', (json.dumps(manifest, indent=2) + '\n').encode(), 0o644))
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    with args.output.open('xb') as output, gzip.GzipFile(fileobj=output, filename='', mtime=0) as zipped:
+    with args.output.open('xb') as output, gzip.GzipFile(fileobj=output, filename='', mode='wb', mtime=0) as zipped:
         with tarfile.open(fileobj=zipped, mode='w') as tar:
             for name, data, mode in files:
                 info = tarfile.TarInfo(name)
