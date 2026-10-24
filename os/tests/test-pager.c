@@ -28,6 +28,9 @@ int main(void)
     start(&p,&f,"-omit\n  ",3,80,0);
     pager_write(&p,"one\ntwo\nomit\nkeep\nomit-again\nlast\n");
     assert(strstr(f.output,"keep\nlast\n") && !strstr(f.output,"omit-again\n"));
+    start(&p,&f,"+keep\n/last\n",3,80,0);
+    pager_write(&p,"one\ntwo\nkeep-a\nkeep-b\nlast-drop\nkeep-skipped\nkeep-last\n");
+    assert(strstr(f.output,"keep-last\n") && !strstr(f.output,"last-drop\n") && !strstr(f.output,"keep-skipped\n") && p.filter_active);
     start(&p,&f,"/missing\n",3,80,0);
     pager_write(&p,"one\ntwo\nthree\nfour\n");pager_finish(&p);
     assert(!strstr(f.output,"three\n") && !p.aborted);
