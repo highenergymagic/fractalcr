@@ -144,7 +144,7 @@ they must not be hidden behind accepted no-op keywords:
   conformance work.
   Type 5 imports now authenticate and persist, but automatic conversion to
   convoluted type 9 (`$14$`) is not implemented; imported type 5 remains type 5.
-  External RADIUS/TACACS+ services remain outside the previously agreed
+  External RADIUS/TACACS+ services remain outside the documented
   [local AAA scope](../os/docs/aaa-and-management.md); they are not implemented.
   Configurable privileges now cover the appliance parser modes and native
   workload operation paths. The documented `all` example is matched. Exact ISR
@@ -180,7 +180,7 @@ they must not be hidden behind accepted no-op keywords:
 
 ## Running the checks
 
-Run Go and C compilation on `carbon`, not on the Windows workstation. With the
+Run Go and C compilation on a Linux development host. With the
 submodules checked out, use the application package roots (the OE layer contains
 Go files compiled as part of the separate Kata upstream module):
 

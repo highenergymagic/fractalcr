@@ -6,7 +6,13 @@ SSH sessions, enable/disable, timeouts and output filters. Routing protocols,
 Cisco binary compatibility and external TACACS+/RADIUS services are not part
 of this scope. Normal configuration commands update running state immediately; `write memory`
 persists the JSON startup configuration. `configure candidate` explicitly stages
-a transaction when needed.
+a transaction when needed. This guide assumes an initialized datastore and
+management interface; see [getting started](../../docs/getting-started.md).
+
+## Configure local accounts and SSH
+
+Replace the secret placeholders below with your own values. Do not use the
+placeholder text as a password. These are appliance commands, not shell commands.
 
 The initial physical console permits bootstrap configuration. SSH has no
 listener until local AAA and SSH are enabled. Configure an administrator first:
@@ -46,11 +52,11 @@ selects IOS type 8 PBKDF2-SHA256; `algorithm-type scrypt secret` selects type 9.
 Existing FractalCR PBKDF2 verifiers remain readable. Both `username NAME privilege LEVEL password 0 TEXT`
 and `username NAME privilege LEVEL secret 0 TEXT` accept plaintext input that is
 immediately hashed. Keywords accept unique prefixes, including
-`user freya priv 15 password 0 TEXT`. The `0` is optional. Omitting `privilege`
+`user admin priv 15 password 0 TEXT`. The `0` is optional. Omitting `privilege`
 retains an existing account's level or uses level 1 for a new account;
 `username NAME privilege LEVEL` changes an existing user's level without
 replacing its password. `secret 8` and `secret 9` import validated encoded
-verifiers. `password 7` imports a reversible IOS password and immediately hashes
+verifiers; `secret 5` accepts legacy MD5-crypt imports. `password 7` imports a reversible IOS password and immediately hashes
 it as type 9; the reversible representation is not retained. Other Cisco secret
 encodings remain unsupported. The input
 may contain 1..256 characters. `security passwords min-length 12` enforces an explicit minimum for newly configured passwords. Password prompts do not echo or
@@ -142,7 +148,9 @@ Authentication also fails closed when configuration cannot be read. The local
 fallback parser does not grant privileged access when AAA is configured or its
 configuration is unreadable. Restarting management does not bypass AAA.
 
-For physical-console password recovery, interrupt ROMMON autoboot, enter
+## Physical-console password recovery
+
+Interrupt ROMMON autoboot, enter
 `confreg 0x2142`, then `boot`. Without `sync`, this affects only the current
 monitor session. ROMMON still verifies both image signatures; it supplies only
 the fixed `fcr.ignore_startup=1` recovery flag. The OS leaves startup-config in

@@ -2,7 +2,7 @@
 
 An HSM is optional. FractalCR already supports an encrypted software key vault,
 public-only builders, offline signing of a reviewed hash, and UEFI key rotation.
-See the [key-management procedure](../boot/docs/release-key-management.md).
+See the [key-management procedure](https://github.com/highenergymagic/fractalcr-rommon/blob/main/docs/release-key-management.md).
 Keep production private keys and their passphrases off GitHub and build hosts.
 
 GrapheneOS's documented workflow separates building from signing, uses encrypted

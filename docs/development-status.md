@@ -27,6 +27,12 @@ maintainer's host names are examples, not services available to contributors.
 
 ## Tested source and images
 
+The iteration numbers below are internal test-run labels, not release versions
+or downloadable image names. Source-build IDs identify build contents. The local
+launcher mentioned here belongs to the maintainer's evaluation environment; a
+new user must build or obtain a separately published image as described in
+[getting started](getting-started.md).
+
 - Source checkpoint `00f3c2359ca35edf7da7069c03e660c2374c9a3e` passed the
   application Go race tests and vet on Linux. Native supervisor and dependency
   graph tests, including sanitizer checks, passed. Its ROMMON build completed;

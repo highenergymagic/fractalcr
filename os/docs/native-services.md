@@ -67,14 +67,13 @@ use APIs rather than utility execution and command-output parsing.
 - Keep backend helper dependencies in the system image without exposing a host
   shell or a general-purpose utility execution command through the appliance CLI.
 
-The blanket system-image script rejection and interpreter removal were removed
-to follow this boundary. BusyBox remains available to backend implementations;
+BusyBox remains available to backend implementations;
 its presence does not add a CLI entry point. ROMMON's native recovery remains
 independent of BusyBox.
 
 ## Validation
 
-All Go execution for this work runs on carbon. The management/CLI/config suites
+The following describes historical implementation tests on a Linux build host. The management/CLI/config suites
 pass with the race detector. Native ROMMON tests pass for empty and exact-block
 transfers, duplicates, error responses, final-ACK retransmissions and 16-bit
 block rollover, plus loopback ICMP. ROMMON compiles with its musl toolchain;
@@ -82,13 +81,14 @@ platform and manager compile with warnings treated as errors. DHCP discovery
 and renewal pass a real UDP fixture test without changing host interfaces.
 Native Git and Engine stream integration tests pass with executable creation
 blocked. Compose lifecycle, Buildx builds, Compose Bake and BuildKit-only secret
-mounts passed against carbon's Engine. Storage tests format only disposable
+mounts passed against the build host's Engine. Storage tests format only disposable
 regular-file fixtures, reject overwrite and malformed protocol messages, and
 verify the execution guard. Real block-device provisioning still needs VM tests.
 The native container transport reached a real BuildKit v0.34.1 worker under the
 exec guard. Native SSH tests verify stream-local-only requests, half-close,
 known-host mismatch rejection, private-key permissions and cancellation cleanup.
 
-These are source-level and protocol checks. A new firmware image has not yet
-been built, VM-qualified or promoted for these changes. The current default
-image remains the previously qualified v21 image.
+These are source-level and protocol checks, not a qualification of every image.
+See [current status](../../docs/development-status.md) and the
+[image qualification record](cli-and-container-qualification.md) for image-bound
+evidence. Internal candidate labels are not release versions.

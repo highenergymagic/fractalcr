@@ -1,4 +1,12 @@
-# CLI behavior and container-stack qualification
+# CLI behavior and container-stack qualification history
+
+This engineering record contains dated tests and implementation investigations.
+It is not an installation guide, a list of current downloads, or certification of
+the latest source. Use [getting started](../../docs/getting-started.md), the
+[current CLI reference](../CLI.md), and [current status](../../docs/development-status.md).
+Historical host names `carbon` and `sascha` identify the maintainer's Linux builder
+and KVM test host; readers do not need access to them. Source-build identifiers
+are content hashes from build manifests, not necessarily Git commit IDs.
 
 Research and implementation: 2026-10-21. This is an independently implemented
 container appliance. It does not contain Cisco firmware or implement the IOS
@@ -185,7 +193,8 @@ Cisco's [password minimum-length command](https://www.cisco.com/c/en/us/td/docs/
 is an explicit policy. `security passwords min-length N` now enforces this for
 new passwords; `no security passwords min-length` removes it. The old hidden
 12-character minimum is gone. Empty passwords remain invalid, the maximum is
-256 bytes, and accepted passwords are always stored as salted PBKDF2 verifiers.
+256 bytes, and accepted passwords were stored as salted PBKDF2 verifiers at that stage.
+Current secret encodings are described in [AAA](aaa-and-management.md).
 Changing the policy does not invalidate existing accounts.
 
 ## Interrupted-build recovery
@@ -208,30 +217,32 @@ entries in the next vulnerability report. Individual recipe reports are retained
 
 ## Native container tools
 
-The complete installed Docker client is available through
+The linked Docker client is available through
 `request container-engine <arguments>`. Examples:
 
 ```
-request container-engine compose -p app up -d
+request compose project-name app up detach enable
 request container-engine buildx build load enable tag app:latest data0:
 request container-engine swarm init advertise-addr 192.0.2.10
-request container-engine exec -it app /bin/sh
+request container-engine exec interactive enable tty enable arguments app /bin/sh
 request container-engine service ls
 ```
 
-The prefix follows appliance abbreviation rules. Native arguments retain Docker
-syntax, including flags; they are passed directly as an argv array, never to a
-host shell. Use native `--help` for these arguments. Interactive clients get a
+In the exec example, `/bin/sh` runs inside the named application container;
+it does not grant a shell in the appliance host.
+
+The current prefix follows appliance abbreviation rules and uses keyword/value
+settings, not Unix flags. Use `?` or `help` to discover supported operations.
+Arguments reach linked clients as values and are not interpreted by a host shell. Interactive clients get a
 PTY, and streaming output is not truncated by the management RPC response limit.
 The working directory is `/datastore/data0/projects`; client state is under
 `/datastore/data0/client`. Projects and build contexts must be placed there
 before use (Docker `cp` is available). Native Docker changes are Docker-managed
 state, not automatically imported into the appliance running configuration.
 
-Pinned components: Docker Engine 29.3.0, Compose 5.6.1, Buildx 0.38.1 and
-BuildKit 0.34.1. The additional tools use SHA-256-pinned official upstream release
-binaries. This reproduces appliance assembly; it is not a claim of independently
-rebuilding those upstream binaries from source. See the [Docker CLI reference](https://docs.docker.com/reference/cli/docker/).
+That earlier qualification used Docker Engine 29.3.0, Compose 5.6.1, Buildx
+0.38.1 and BuildKit 0.34.1. Dependency pins and source-build coverage have since
+changed; see [building](../../docs/building.md) and the current OE recipes. See the [Docker CLI reference](https://docs.docker.com/reference/cli/docker/).
 
 Standalone BuildKit is a disabled-by-default supervised service:
 
@@ -311,7 +322,7 @@ not treated as proof of the 4331 boot sequence.
 ## Acceptance and limits
 
 `os/tests/qemu-system.py` records image hashes, accelerator, serial transcripts
-and checks for each scenario. It accepts `--artifacts PATH --accel kvm` on sascha.
+and checks for each scenario. It accepts `--artifacts PATH --accel kvm` on a Linux KVM host.
 Core cases cover persistence, service recovery, malformed configuration,
 missing storage, explicit RAID1 initialization and optional firmware Secure
 Boot. Additional cases exercise the actual serial editor, client builds,
@@ -338,5 +349,5 @@ The three-node suite requires bounded manager demotion and worker removal,
 followed by dissolving the final single-manager swarm. Forced removal from a
 multi-manager cluster timed out in a stress run and remains unqualified.
 Private development signing keys must be replaced using the implemented
-[release-key custody and rotation process](../../boot/docs/release-key-management.md)
+[release-key custody and rotation process](https://github.com/highenergymagic/fractalcr-rommon/blob/main/docs/release-key-management.md)
 before distribution as a production appliance.

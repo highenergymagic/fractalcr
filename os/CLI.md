@@ -1,5 +1,10 @@
 # Appliance CLI
 
+This reference describes the current source tree. Start with [getting started](../docs/getting-started.md)
+for first boot, and check [development status](../docs/development-status.md) for
+changes not yet qualified in an image. Examples use illustrative addresses and
+interface names: select actual ports with `show interfaces`.
+
 The serial console talks to a separately supervised management service over a
 root-only local socket. PID 1 continues supervising services while commands run.
 The bootstrap recovery subset remains available if management is stopped;
@@ -68,8 +73,8 @@ forms. Changing line history size does not reenable disabled history. EXEC
 `terminal` overrides last for that session; a new login uses the saved line
 settings. `show line vty 4` also reports the configured defaults of an idle line.
 
-Local accounts accept `user freya priv 15 password 0 TEXT` and
-`username freya privilege 15 secret 0 TEXT`. Both hash the plaintext input;
+Local accounts accept `user admin priv 15 password 0 TEXT` and
+`username admin privilege 15 secret 0 TEXT`. Both hash the plaintext input;
 passwords may contain 1..256 characters. Use `security passwords min-length 12` to enforce a minimum on newly configured passwords. Use `username NAME ?` or
 `username NAME privilege 15 ?` to see the available account settings.
 `show version` includes the source-build identifier of the running image.
@@ -105,8 +110,7 @@ confirms file-operation parameters; `file prompt quiet` suppresses confirmation,
 including overwrite confirmation, while still requesting missing information.
 `no file prompt` and `default file prompt` restore the default. Like other global
 settings, save the policy with `write memory` to retain it after reload. Ctrl-C
-cancels a pending file dialog. Passwords and filenames beginning with `__` are
-ordinary input; console control events are framed separately from typed text.
+cancels a pending file dialog.
 
 `reload` asks whether to save modified running configuration, then asks for
 confirmation. Return confirms; Ctrl-C cancels. `reload in 10 maintenance` schedules
@@ -140,22 +144,22 @@ old address before applying its replacement.
 ## Interfaces, Docker networks and time
 
 ```
-ctr(config)# interface eth0
+ctr# configure terminal
+ctr(config)# interface GigabitEthernet0
 ctr(config-if)# role management
 ctr(config-if)# ip address dhcp
 ctr(config-if)# exit
-ctr(config)# interface eth1
+ctr(config)# interface GigabitEthernet1
 ctr(config-if)# role container
 ctr(config-if)# no ip address
 ctr(config-if)# exit
 ctr(config)# network external
 ctr(config-network)# driver macvlan
-ctr(config-network)# parent eth1
+ctr(config-network)# parent GigabitEthernet1
 ctr(config-network)# subnet 192.0.2.0/24
 ctr(config-network)# gateway 192.0.2.1
 ctr(config-network)# exit
 ctr(config)# ntp server time.example.net
-ctr(config)# commit
 ctr(config)# end
 ctr# request network external create
 ctr# show networks
@@ -175,7 +179,7 @@ and `show ip route` report actual runtime state, including acquired leases.
 Docker network drivers are `bridge`, `overlay`, `macvlan` and `ipvlan`.
 `internal` and `attachable` are optional. Overlay creation requires an initialized
 Swarm. Network definitions are staged inventory: explicit `request network NAME
-create` and `remove` control their lifecycle; commit never destroys an existing
+create` and `remove` control their lifecycle; applying a definition never destroys an existing
 network. `request network NAME connect CONTAINER` and `disconnect CONTAINER`
 manage membership. Within container configuration, `network NAME` selects the
 network used by `request container NAME create`. Native Engine network options
@@ -184,31 +188,32 @@ remain available through `request container-engine network ...`.
 The `networking` service owns DHCP clients and configured addresses. The
 `time-sync` service runs chronyd with reduced privileges, a syscall filter and
 local-only command access. No NTP server or remote command port is opened.
-`show clock` reports UTC; `show ntp status` reports synchronization separately
-from service readiness. With no NTP servers configured, the clock remains
-unsynchronized. `no ntp server NAME` removes a source.
+`show clock` uses the configured timezone (UTC by default); `show clock detail`
+includes the time source. `show ntp status` reports network synchronization
+separately from service readiness. `no ntp server NAME` removes a source. Replace
+`time.example.net` in the example with a reachable NTP server.
 
-The version-1 schema accepts the earlier hostname/network files and adds
-datastores, isolation and container definitions. Unknown fields, duplicate JSON
-keys, symlinks, nonregular files and files over 64 KiB are rejected.
+Startup configuration is stored as validated JSON. Unknown fields, duplicate
+keys, symlinks, nonregular files and files over 256 KiB are rejected.
 Configure one management interface and additional container interfaces. Interfaces
 support DHCP or static IPv4, secondary IPv4 addresses, IPv6, MTU, and static routes.
 The appliance currently uses one datastore, `data0`.
-DHCP, IPv6 configuration and multiple management interfaces are not implemented.
+Only one interface can have the management role. DHCPv4 and static IPv6
+configuration are supported; DHCPv6 is not implemented.
 
 ## Containers
 
 ```
 edge# request image pull alpine:3.22
-edge# config
+edge# configure terminal
 edge(config)# container example
 edge(config-container)# image alpine:3.22
 edge(config-container)# command sleep infinity
 edge(config-container)# environment MESSAGE "hello world"
 edge(config-container)# restart-policy unless-stopped
 edge(config-container)# no container-isolation
-edge(config-container)# commit
 edge(config-container)# end
+edge# write memory
 edge# request container example create
 edge# request container example start
 edge# show container example detail
@@ -238,7 +243,7 @@ versions remain in `/opt/kata/versions.yaml`.
 
 ```
 edge# show container-isolation capabilities
-edge# config
+edge# configure terminal
 edge(config)# system container-isolation install runtime kata-containers
 edge(config)# system container-isolation enable
 edge(config)# system container-isolation kata-containers default-runtime clh
@@ -247,7 +252,8 @@ edge(config)# system container-isolation kata-containers base-os Microsoft/CBL-M
 edge(config)# system container-isolation kata-containers apply-to all-containers
 edge(config)# container native-exception
 edge(config-container)# no container-isolation
-edge(config-container)# commit
+edge(config-container)# end
+edge# write memory
 ```
 
 Install selects artifacts authenticated inside the OS image. Enable requires
@@ -337,8 +343,10 @@ containing filesystems or partition tables need a separate erase/reprovision
 workflow, not implemented here. Format labels the filesystem `FRDATA` and
 starts services. After readiness, save with `write memory`.
 
-Malformed startup-config leaves management available. Build a valid candidate,
-commit and save it. `show logging configuration` shows the original parse error.
+Malformed startup configuration fails closed for authentication. Follow
+[physical recovery](docs/aaa-and-management.md#physical-console-password-recovery)
+to create and save a replacement. A damaged file does not grant unauthenticated
+management access.
 
 ## Debug service container
 

@@ -3,6 +3,11 @@
 Fractal Microsystems — Copyright (c) 2025–2026.
 Technical support: https://www.fractalmicro.org/techsupport
 
+This guide describes generated release artifacts, not a promise that a downloadable
+release already exists. Check the [releases page](https://github.com/highenergymagic/fractalcr/releases)
+and [current status](../../docs/development-status.md). For source builds, start
+with [building](../../docs/building.md).
+
 Images are x86-64 UEFI firmware with a serial console at 115200 8N1. These
 releases are **development signed**. Image signatures remain mandatory even
 when firmware Secure Boot is disabled. There is no default password or SSH
@@ -12,8 +17,10 @@ private key in an image.
 
 Verify SHA256SUMS before decompressing the selected `usb-*.img.gz`. Write the
 decompressed image as a whole disk using your normal disk-imaging application;
-this replaces the destination disk's contents. Use a USB drive of at least
-16 GiB (a nominal 16 GB drive is too small). The image has a 1 GiB FAT32 ESP
+this replaces the destination disk's contents. Use a device at least as large as the uncompressed image; the release-workflow
+default is 16 GiB, so a nominal 16 GB drive is too small. The manual
+`tools/make-media.ps1` path defaults to 7 GiB instead. Check the image manifest
+before selecting a device. The image has a 1 GiB FAT32 ESP
 containing the EFI loader and authenticated OS, and a Btrfs single-disk datastore.
 The serial setup dialog configures accounts and networking on first boot.
 
@@ -84,8 +91,8 @@ not automatically expand its GPT partition or Btrfs filesystem.
    needed. There is no release-signing runner, vault, or release-key secret.
    Docker, Python 3, sufficient build storage, at least 16 GiB RAM, and KVM are
    needed. Media tests can use TCG, but the serial/SSH management gate requires
-   KVM and will fail rather than skip qualification. The three existing
-   private-component read-key secrets authorize source checkout only.
+   KVM and will fail rather than skip qualification. Public component checkouts
+   require no deploy-key secrets.
 4. Run **Release firmware images** manually on the release branch first. Inspect
    its build tests, NoCloud cold-boot/reboot SSH test, serial IOS and AAA reports,
    and uploaded firmware.

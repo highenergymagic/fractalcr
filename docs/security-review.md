@@ -9,9 +9,10 @@ checks, **not an independent or exhaustive security audit**. Existing VM
 qualification describes the previously exported image hashes; this review does
 not recertify those images after changing build infrastructure.
 
-## Development checkpoint — October 22
+## Historical development checkpoint — October 22
 
-This commit preserves the remediation work on private `main`; it does not
+The October 22 checkpoint preserved remediation work while repositories were
+private; it did not
 approve a release or replace the previously exported interactive images.
 All 24 Linux tooling tests pass. Both refreshed Rust VMMs compile from frozen
 source inputs and pass OE packaging QA. The two kernel backport bodies reproduce
@@ -19,16 +20,17 @@ exactly from their checksum-pinned upstream updates with the recorded exclusions
 Earlier Go race/vet, bounded fuzzing, C sanitizer and signing tests are described
 below with their scope limitations.
 
-At this checkpoint carbon is building the OS from `candidate-v25` and running
-ROMMON reproduction from `candidate-v24`. The offline image scan waits for the
-OS build to succeed. Logs are under `~/FractalCR-security/`:
+At that checkpoint, the Linux build host was building the OS and testing ROMMON
+reproduction. `candidate-v25` and `candidate-v24` below are internal evidence labels,
+not downloadable releases or commands to run. Logs were retained by the maintainer
+under `~/FractalCR-security/`:
 
 - `image-v25.log` and `image-v25-exit-code`
 - `boot-reproduce-v24.log` (completion status: `~/FractalCR-build/exit-code`)
 - `image-v25-audit.log` and `image-v25-audit-exit-code`
 
 Packaging/signing/export of the OS, final image advisory disposition, both-image
-reproducibility and the new Sascha VM qualification remain pending. No automatic
+reproducibility and new KVM VM qualification were pending at that checkpoint. No automatic
 promotion is queued. The network-namespace advisory remains open for review;
 the proposed isolated runtime probe was not run and is not included in this
 checkpoint. Source review notes are retained in
@@ -155,7 +157,8 @@ binary paths unreachable, or authorize suppressing the advisory in other images.
 The rebuilt ROMMON with the internal musl toolchain passed all 13 boot/recovery
 scenarios. Its signed EFI SHA-256 is
 `a41cacd4ce7c781d5e5a8ccae1b5c3c74940ef62ada6680a5fe4efbd20187a70`.
-The subsequent forced two-pass rebuild is still under qualification. OS
+The subsequent forced two-pass rebuild was not yet qualified when this record
+was written. Consult [current status](development-status.md) for later evidence. OS
 reproduction now explicitly rebuilds the Kata runtime and both source-built
 VMM packages in addition to the appliance packages, rootfs and kernel; dependency
 toolchain caches remain retained.

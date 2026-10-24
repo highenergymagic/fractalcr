@@ -1,100 +1,58 @@
 # FractalCR
 
-Fractal Microsystems — Copyright (c) 2025–2026.
-[Technical support](https://www.fractalmicro.org/techsupport).
+FractalCR is a serial-managed container appliance from **Fractal Microsystems**.
+It combines an immutable Linux system image, a recovery monitor, persistent
+storage, and an IOS-style CLI for containers and host management.
 
-A serial-managed container appliance: “Cisco IOS, but for containers.”
+**Development preview.** No production-supported 1.0 firmware release is
+available. Read [current status and known issues](docs/development-status.md)
+before deploying. The startup/reload fix still requires image qualification.
+FractalCR is an independent project, not Cisco software.
 
-**Development preview — not a production-supported 1.0 release.**
-See the [current checkpoint and known issues](docs/development-status.md) before
-building or deploying. Source on `main` can be newer than the last qualified image.
+## Start here
 
-The integration repository pins ROMMON, supervisor and OE layer
-repositories at exact commits. Clone with `--recurse-submodules`; GitHub's source
-zip does not include those components. Start with [repository architecture](docs/architecture.md),
-[portable builds](docs/building.md), [dependency maintenance](docs/dependencies.md),
-[release policy](docs/releases.md), and the [security review](docs/security-review.md).
-See [USB/VPS image releases and initial SSH provisioning](os/docs/releases.md).
-Current images are development-signed. This is not yet an independently audited
-production release.
+- [Getting started](docs/getting-started.md): requirements, builds, first boot,
+  administrator setup and a first container.
+- [Documentation index](docs/README.md): operator guides, developer references
+  and historical engineering evidence.
+- [CLI reference](os/CLI.md): configuration, networking, storage and workloads.
+- [Troubleshooting](docs/troubleshooting.md): boot, connectivity and recovery.
 
-Development starts at the boot chain:
-
-1. Buildroot ROM Monitor, signed EFI image, embedded verification keys.
-2. Signed CIP kernel with embedded initramfs, verified and booted by ROMMON.
-3. OE-built appliance OS: read-only root, persistent datastore, networking,
-   Docker and first-class Kata support.
-4. Appliance management CLI, JSON startup configuration, and a debug container.
-
-Builds run in Docker on `carbon` over SSH, using passwordless `doas`.
-Docker Desktop is not required. Start the boot → OS build and acceptance tests:
-
-```powershell
-.\tools\remote-build.ps1
-.\tools\remote-build.ps1 -Action Status
-.\tools\remote-build.ps1 -Action Logs
-# Once finished:
-.\tools\remote-build.ps1 -Action Export
+```sh
+git clone --recurse-submodules https://github.com/highenergymagic/fractalcr.git
+cd fractalcr
 ```
 
-The remote job survives SSH disconnects. It uses a separate source snapshot,
-retains compiler/download caches in named volumes, and rejects overlapping
-builds. `Exit code: 0` means the requested build/test sequence completed.
-Exports live in `out/carbon/boot` and `out/carbon/os`, preserving the earlier
-Docker Desktop artifacts. Development signing keys stay in the remote boot
-volume; a fresh volume generates a new, internally consistent development
-trust chain. Do not mix its firmware variables, ROMMON, or OS with older keys.
+The three component repositories are pinned by this checkout. GitHub's automatic
+source ZIP omits them; use a recursive clone. Builds require a Linux x86-64 Docker
+host. Windows users can build over SSH and run the VM with QEMU/WHPX.
+See [building](docs/building.md) for commands and resource requirements.
 
-**The boot milestone is built and tested in Docker and native Windows QEMU:**
-signed ROMMON verifies and boots a signed CIP kernel with an embedded initramfs,
-and the negative signature/Secure Boot tests pass.
-The witness is not the container host OS. The Go management service under
-`cmd/fractal-management/` and `internal/` is built into the OE image.
-`cmd/ctr` remains an offline configuration compiler.
+## What it provides
 
-See [boot/README.md](boot/README.md) for the build and QEMU test procedure and
-[boot/FORMAT.md](boot/FORMAT.md) for the image format and trust chain.
+- A Buildroot recovery monitor with serial, USB and IPv4/TFTP recovery.
+- An OpenEmbedded system with a CIP kernel and embedded, read-only userspace.
+- A native supervisor with health checks and dependency-aware restarts.
+- Local users, privileges, SSH, persistent configuration and appliance networking.
+- Docker Engine, Compose, Buildx/BuildKit, Swarm and Kata container interfaces.
 
-The ROMMON recovery implementation adds numbered serial prompts, saved boot
-variables, ordered autoboot, USB mass storage and Ethernet/TFTP recovery.
-[ISR4331 research](boot/docs/isr4331-research.md) records the source evidence
-and the recovery behavior implemented here.
+The initial target is x86-64 UEFI with a **115200 baud, 8N1 serial console**.
+There is no local monitor/keyboard setup. Ordinary containers do not require KVM;
+Kata requires working KVM, including nested virtualization when the host is a VM.
+Features and external providers have different qualification coverage; see the
+[conformance record](docs/ios-management-conformance.md).
 
-**The underlying container OS now boots and passes Linux and Windows QEMU tests:**
-a pinned OpenEmbedded build supplies the CIP kernel, glibc,
-Docker/containerd/runc, and a small platform supervisor. Tests passed for
-container isolation, bridge networking and port publishing, image/data
-persistence across reboot, and diagnostic startup with missing storage or
-malformed configuration. Reports bind results to image hashes in
-`out/carbon/os/result-os-*.json`.
+Firmware verifies the recovery monitor when Secure Boot is enabled. The monitor
+always authenticates the system image. Development builds create their own keys;
+keep each build's ROMMON, system image and public trust files together.
+[Signing policy](docs/releases.md) explains operator-managed production keys.
 
-See [os/README.md](os/README.md) for the tested platform and startup schema.
-After exporting, run `.\os\run.ps1 -NoSecureBoot -UpdateImage` for its serial
-appliance console using Windows WHPX while retaining the interactive datastore.
-Omit `-NoSecureBoot` to use the Secure Boot firmware under TCG.
-The custom supervisor and operational console are described in
-[os/BOOT-UX.md](os/BOOT-UX.md). [The CLI reference](os/CLI.md) covers live
-configuration, containers, explicit storage initialization, Kata and debugging.
+## Contributing and security
 
-Secure Boot is required by default. ROMMON also supports
-`SECURE_BOOT=optional`, saved with `sync`; outer image and inner kernel signatures
-remain mandatory. Use `-NoSecureBoot` with either VM launcher to select separate
-firmware/bootflash fixtures. Without firmware verification, authenticity of
-ROMMON itself is not established.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before changing a component or its pin.
+Report vulnerabilities through the private channel in [SECURITY.md](SECURITY.md).
+First-party code is covered by [LICENSE](LICENSE); upstream components retain
+their own licenses.
 
-ROMMON and the OS now share the [service supervisor and dependency graph](service/README.md).
-That document covers service boundaries, restart ordering, degraded recovery,
-and the forced two-build reproducibility check for both image stages.
-
-The [CLI and container qualification contract](os/docs/cli-and-container-qualification.md)
-records Cisco behavior, native Docker/Compose/Buildx/BuildKit access, test cases
-and remaining production acceptance work. KVM and nested Kata tests run on
-`freyja@sascha`, using disposable disk images under `/machines/fractalcr`.
-
-[Appliance management and AAA](os/docs/aaa-and-management.md) documents local
-users, privileges, SSH VTY, accounting, filters and physical password recovery.
-[Three-node Swarm qualification](os/docs/swarm-qualification.md) covers encrypted
-networking, secrets/configs, scheduling, manager failure and quorum recovery.
-[Release key management](boot/docs/release-key-management.md) covers encrypted
-offline custody, public-only builds, reviewed-image signing, and staged UEFI
-key rotation and revocation.
+Fractal Microsystems — Copyright (c) 2025–2026.
+[Technical support](https://www.fractalmicro.org/techsupport).

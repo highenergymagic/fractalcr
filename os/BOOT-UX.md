@@ -40,7 +40,7 @@ fail closed until explicit physical ROMMON configuration recovery.
 
 ## Supervisor
 
-The shared [service implementation](../service/README.md) is compiled into both
+The shared [service implementation](https://github.com/highenergymagic/fractalcr-supervisor/blob/main/README.md) is compiled into both
 ROMMON and the system image. It implements stopped, starting, running, stopping,
 backoff, failed and completed-job states. Platform, logging, datastore,
 configuration, networking, local syslog, container engine, BuildKit, SSH, diagnostics
@@ -50,8 +50,12 @@ supervised processes. Their dependency graph gates startup and orders shutdown.
 Readiness uses the Docker API, with a 60-second startup deadline. Three failed
 one-second health probes trigger recovery. Unexpected exits use exponential
 backoff; four failures without 60 seconds of sustained health latch the service
-failed until an explicit start. Stop/restart sends TERM to the owned process group, then KILL
-after ten seconds. PID 1 reaps adopted children. This is process-group ownership;
+failed until an explicit start. Most services receive TERM for their process
+group, followed by KILL after a ten-second grace period. Docker receives TERM
+on its leader so it can shut down containerd, with a 60-second stop deadline.
+A stop requested during Docker initialization waits for readiness or the original
+startup deadline; the [reload regression](../docs/development-status.md) still
+needs image qualification. Other long-running jobs have service-specific deadlines. PID 1 reaps adopted children. This is process-group ownership;
 processes deliberately escaping that group are not a security boundary.
 
 Logs live in volatile `/run/log`, with a 256 KiB active file and one rotated

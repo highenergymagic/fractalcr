@@ -41,7 +41,9 @@ states for orphaned tasks. Failover assertions therefore require current desired
 task placements on live nodes and successful traffic, rather than trusting only
 the aggregate replica count.
 
-Run through `tools/test-sascha.ps1 -Cases swarm-multinode`, or directly on Linux:
+Run directly on a Linux KVM host with QEMU, OVMF and the Python test dependencies:
+The script creates disposable VMs and needs sufficient storage for their disks.
+Use a new output directory.
 
 ```
 python3 os/tests/qemu-swarm.py --artifacts /path/to/images --output /path/to/new-test-directory

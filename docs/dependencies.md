@@ -34,7 +34,7 @@ branch heads in the report; all layers must remain on the compatible series.
 For Go updates, edit `go.mod` through a reviewed dependency PR, run `vendor-go`,
 then commit `go.mod`, `go.sum` and `vendor` together. Dependabot opens Go and
 Actions updates. Component gitlinks are updated explicitly after integration
-review; private cross-repository Dependabot authentication is not configured.
+review. Automatic component-pin updates are not configured.
 CI checks that vendoring matches the module files.
 For upstream Go applications, `tools/security/refresh-vendor.py` operates on a
 clean checkout at an explicitly reviewed full commit. Supply exact module

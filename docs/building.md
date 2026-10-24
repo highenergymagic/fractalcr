@@ -1,25 +1,78 @@
-# Locked builds and reproducibility
+# Building from source
 
 Clone recursively as described in [architecture](architecture.md). Linux x86-64,
-Docker, Git, Python 3.11+ and Bash are required. Allow at least 16 GiB RAM and
-200 GiB disk for a comfortable OE build. Four compiler jobs are used on the
-current builder. The Windows wrapper snapshots the same source to an SSH host.
+Docker, Git, Python 3.11+ with the `cryptography` package, and Bash are required.
+On Debian/Ubuntu, `python3-cryptography` supplies that package for the host-side
+tooling tests. Allow at least 16 GiB RAM and
+200 GiB free disk for a comfortable OE build. Run commands from the integration
+checkout root. No maintainer machine is required. Builds create development keys
+in Docker volumes; retain those volumes to preserve your signing identity.
+
+## Build on Linux
+
+The default wrapper uses passwordless `doas` for Docker. Use
+`FCR_DOCKER_DIRECT=1` if your account already has Docker access. `all All` builds
+and tests ROMMON before the system image. First builds can take hours. An image
+that compiled successfully is not necessarily qualified.
 
 ```sh
 # Linux with ordinary Docker group access:
 FCR_DOCKER_DIRECT=1 bash tools/build.sh all All
 # Linux with passwordless doas:
 bash tools/build.sh all All
-# Repeat appliance/rootfs/kernel generation and compare bytes:
-bash tools/build.sh all Reproduce
 ```
 
+This runs in the foreground. Volumes `fractalcr-boot-work` and
+`fractalcr-os-work` retain downloads and outputs. Job status is under
+`~/FractalCR-build`. Do not overlap builds against these volumes.
+
+## Build over SSH from Windows
+
+Use PowerShell 7, Python 3.11+, Git and OpenSSH. Configure key-based SSH to a
+Linux Docker host with passwordless `doas`; verify
+`ssh YOUR_BUILD_HOST 'doas -n docker info'` first. Replace `YOUR_BUILD_HOST` with
+an SSH alias or `user@hostname`. The default alias `carbon` is a maintainer-local
+name, not a service provided by this project.
+
 ```powershell
-# Existing SSH build host; Docker Desktop is not involved:
-.\tools\remote-build.ps1 -BuildHost carbon
-.\tools\remote-build.ps1 -Action Status
-.\tools\remote-build.ps1 -Action Export
+.\tools\remote-build.ps1 -BuildHost YOUR_BUILD_HOST
+.\tools\remote-build.ps1 -BuildHost YOUR_BUILD_HOST -Action Status
+.\tools\remote-build.ps1 -BuildHost YOUR_BUILD_HOST -Action Logs
+# After the job completes successfully:
+.\tools\remote-build.ps1 -BuildHost YOUR_BUILD_HOST -Action Export
 ```
+
+Jobs survive SSH disconnects. Pass `-BuildHost` on every invocation; it is not
+remembered. `-Stage boot` or `-Stage os` selects one component;
+`-BuildAction Build`, `Test` or `All` selects its work. The `boot/build.ps1` and
+`os/build.ps1` convenience wrappers instead accept `-Action Build|Test|All|Export`.
+
+## Export build artifacts
+
+Windows export copies artifacts to `out/carbon/boot` and `out/carbon/os` even
+when another host was selected. These are generated local paths, not source
+files. Export overwrites artifacts there; use a separate `-ArtifactDirectory`
+for an interactive VM.
+
+After a local Linux build/test finishes, export system artifacts from its volume.
+Run in Bash with direct Docker access:
+
+```sh
+set -euo pipefail
+mkdir -p out/export/os
+docker run --rm --mount type=volume,source=fractalcr-os-work,target=/work,readonly fractalcr-os-builder tar -C /work/artifacts -cf - . | tar -C out/export/os -xf -
+```
+
+Use `doas -n docker` if required by your host. For ROMMON, use
+`fractalcr-boot-work`, `fractalcr-boot-builder` and a separate output directory.
+Keep outputs from a single trust identity together. Test datastores may contain
+test configuration; generate [blank VM templates](getting-started.md#2-prepare-a-blank-vm)
+or [USB/VPS media](../os/docs/releases.md) for a new installation.
+
+## Pinned inputs and reproducibility
+
+After an initial build, `FCR_DOCKER_DIRECT=1 bash tools/build.sh all Reproduce`
+forces image regeneration and byte comparisons using existing builder images.
 
 The build never resolves a newer kernel or moving OE branch. Archive versions
 and SHA-256 values live in `boot/sources.json`; the OE kernel recipe must agree.

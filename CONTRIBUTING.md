@@ -9,11 +9,24 @@ then update the corresponding gitlink in an integration branch. Include both
 links in the integration PR. Do not merge a component change into a release
 until the integration revision containing it passes relevant tests.
 
-Run `go test -mod=vendor ./...`, `go vet -mod=vendor ./...`, and
-`python3 -m unittest discover -s tools/tests`. Linux-specific management tests
-must also run on Linux. `bash tools/check-services.sh` runs C tests in a builder
+Run the application checks on Linux with the Go version in `go.mod`:
+
+```sh
+go test -mod=vendor ./cmd/... ./internal/... ./pkg/...
+go vet -mod=vendor ./cmd/... ./internal/... ./pkg/...
+python3 -m unittest discover -s tools/tests
+```
+
+Avoid recursive `./...` over the integration checkout: the OE layer contains Go
+sources for separate upstream modules. `bash tools/check-services.sh` runs C tests in a builder
 with the checkout mounted at `/src`. Use the VM qualification tools for runtime
 changes. Keep generated keys, artifacts, caches and interactive disks out of Git.
+
+The Python tooling suite needs `cryptography`; see [host prerequisites](docs/building.md).
+For documentation changes, check relative links both in a recursive checkout
+and on GitHub: links crossing a submodule boundary need the destination
+repository URL. Use example accounts and explicit host placeholders rather than
+maintainer-specific machines. Keep dated test evidence separate from user steps.
 
 Use small commits describing the resulting behavior. Tests should cover the
 failure or trust boundary being changed. Runtime claims must identify exact
