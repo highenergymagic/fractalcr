@@ -61,6 +61,9 @@ they must not be hidden behind accepted no-op keywords:
   assignment, level-specific enable secrets, legacy Cisco password encodings,
   RADIUS/TACACS+, and every line/login setting need separate implementation and
   conformance work.
+- Authentication input still shares reserved `__` control strings with the
+  management protocol. Literal passwords beginning with that prefix require
+  separate response framing; arbitrary password-text parity is not established.
 - Reload warning broadcasts and reload-history output have not been matched.
   Scheduled reloads are not retained across a complete machine reboot.
 - All `show users` variants, interface counters/variants, NTP command options, clock
