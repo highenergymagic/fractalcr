@@ -22,8 +22,7 @@ Start with [architecture](architecture.md), [build instructions](building.md),
 git clone --recurse-submodules https://github.com/highenergymagic/fractalcr.git
 ```
 
-The repositories currently require access. GitHub's automatic source ZIP does
-not include submodules. Build instructions support a Linux Docker host; the
+GitHub's automatic source ZIP does not include submodules. Build instructions support a Linux Docker host; the
 maintainer's host names are examples, not services available to contributors.
 
 ## Tested source and images
@@ -77,8 +76,7 @@ development signing; production signing is an operator-managed workflow.
 3. Continue the documented conformance and release gates as separately bounded
    work. Do not treat a successful source build as image qualification.
 
-No new build, release, image promotion or visibility change is queued by this
-checkpoint. Before publishing the repositories, review all four repositories'
-history for private material and establish the private reporting channel
-described in [SECURITY.md](../SECURITY.md). Public source can be labelled a
-development preview independently of deciding when firmware is ready for 1.0.
+No new firmware build, release or image promotion is queued by this checkpoint.
+Source publication is separate from firmware qualification. See the
+[publication review](publication-review.md) for the history scan and reporting
+setup used to make the repositories public as a development preview.

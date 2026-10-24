@@ -23,14 +23,12 @@ jobs:
           repository: highenergymagic/fractalcr-rommon
           ref: ${{ steps.pins.outputs.boot }}
           path: boot
-          ssh-key: ${{ secrets.ROMMON_READ_KEY }}
           persist-credentials: false
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: highenergymagic/meta-fractalcr
           ref: ${{ steps.pins.outputs.layer }}
           path: os/meta-fractal
-          ssh-key: ${{ secrets.LAYER_READ_KEY }}
           persist-credentials: false
       - run: python3 tools/dependencies.py discover --output out/dependency-report.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

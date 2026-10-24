@@ -19,7 +19,6 @@ component commits followed by an integration commit updating their gitlinks.
 GitHub's automatically generated source zip does not include submodules.
 
 ```sh
-gh auth setup-git
 git clone --recurse-submodules https://github.com/highenergymagic/fractalcr.git
 cd fractalcr
 git submodule update --init --recursive
