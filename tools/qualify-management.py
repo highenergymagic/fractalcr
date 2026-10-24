@@ -8,6 +8,11 @@ import re
 import subprocess
 import sys
 
+HARNESS_FILES = ('tools/qualify-management.py', 'tools/prepare-launcher.py',
+                 'os/tests/qemu-ios-workflow.py', 'os/tests/qemu-aaa.py',
+                 'os/tests/ios_prompts.py', 'os/tools/make-data.py',
+                 'boot/tools/make-flash.py', 'boot/tests/qemu_process.py')
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -27,8 +32,12 @@ def main():
         rommon = hashlib.file_digest(stream, 'sha256').hexdigest()
     output.mkdir(parents=True, exist_ok=False)
     root = Path(__file__).resolve().parents[1]
+    harness = {}
+    for name in HARNESS_FILES:
+        with (root / name).open('rb') as stream:
+            harness[name] = hashlib.file_digest(stream, 'sha256').hexdigest()
     result = {'passed': False, 'source_build': source, 'system_sha256': image,
-              'rommon_sha256': rommon, 'checks': {}}
+              'rommon_sha256': rommon, 'harness_sha256': harness, 'checks': {}}
     try:
         subprocess.run([sys.executable, str(root / 'tools/prepare-launcher.py'),
                         '--artifacts', str(artifacts), '--output', str(output / 'templates')], check=True)

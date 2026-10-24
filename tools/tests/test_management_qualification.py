@@ -18,6 +18,11 @@ class ManagementQualificationTests(unittest.TestCase):
         for failure in ('process', 'ios-image', 'ios-source', 'aaa-rommon', 'aaa-failed', None):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
+                source_root = root / 'source'
+                for name in qualify.HARNESS_FILES:
+                    fixture = source_root / name
+                    fixture.parent.mkdir(parents=True, exist_ok=True)
+                    fixture.write_text('qualification fixture: ' + name)
                 artifacts = root / 'artifacts'
                 artifacts.mkdir()
                 (artifacts / 'system.bin').write_bytes(b'signed-image-fixture')
@@ -48,6 +53,7 @@ class ManagementQualificationTests(unittest.TestCase):
                     return subprocess.CompletedProcess(argv, 0)
 
                 with patch.object(qualify.sys, 'argv', ['qualify', '--artifacts', str(artifacts), '--output', str(output)]), \
+                     patch.object(qualify, '__file__', str(source_root / 'tools/qualify-management.py')), \
                      patch.object(qualify.Path, 'is_char_device', return_value=True), \
                      patch.object(qualify.subprocess, 'run', side_effect=execute):
                     if failure is None:
@@ -59,6 +65,7 @@ class ManagementQualificationTests(unittest.TestCase):
                 self.assertEqual(result['passed'], failure is None)
                 self.assertEqual(result['system_sha256'], image)
                 self.assertEqual(result['rommon_sha256'], rommon)
+                self.assertEqual(set(result['harness_sha256']), set(qualify.HARNESS_FILES))
                 if failure is None:
                     self.assertEqual(set(result['checks']), {'ios', 'aaa'})
                 else:
