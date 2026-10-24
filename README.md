@@ -5,7 +5,11 @@ Fractal Microsystems — Copyright (c) 2025–2026.
 
 A serial-managed container appliance: “Cisco IOS, but for containers.”
 
-The private integration repository pins ROMMON, supervisor and OE layer
+**Development preview — not a production-supported 1.0 release.**
+See the [current checkpoint and known issues](docs/development-status.md) before
+building or deploying. Source on `main` can be newer than the last qualified image.
+
+The integration repository pins ROMMON, supervisor and OE layer
 repositories at exact commits. Clone with `--recurse-submodules`; GitHub's source
 zip does not include those components. Start with [repository architecture](docs/architecture.md),
 [portable builds](docs/building.md), [dependency maintenance](docs/dependencies.md),

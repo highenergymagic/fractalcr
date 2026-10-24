@@ -1,5 +1,9 @@
 # Security review and remediation
 
+For the current development checkpoint, see [development status](development-status.md).
+The dated review and build notes below are historical evidence, not a statement
+that those jobs are still running or that later images inherit their results.
+
 Date: October 22, 2026 UTC. Status: targeted first-party review and automated
 checks, **not an independent or exhaustive security audit**. Existing VM
 qualification describes the previously exported image hashes; this review does
