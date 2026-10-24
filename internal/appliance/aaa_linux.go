@@ -34,7 +34,7 @@ func (r managementRequest) validate() error {
 	switch r.Action {
 	case "", "help", "complete", "output":
 		return nil
-	case "connect", "tick", "cancel", "end":
+	case "connect", "tick", "cancel", "end", "stream-check", "stream-end":
 		if r.Command == "" {
 			return nil
 		}
@@ -61,6 +61,8 @@ type loginSession struct {
 	terminal                         terminalState
 	noticeSequence                   uint64
 	pendingOutput                    *cli.Filter
+	outputCommand                    []string
+	streamCommand                    []string
 }
 type loginFailure struct {
 	count int
@@ -146,6 +148,8 @@ func (s *loginSession) logout() {
 	s.pendingReload = nil
 	s.pendingCopy = nil
 	s.pendingOutput = nil
+	s.outputCommand = nil
+	s.streamCommand = nil
 	s.setup = nil
 	s.authenticated = false
 	s.bootstrap = false
@@ -165,7 +169,7 @@ func (s *loginSession) logout() {
 // Command execution is activity, not time spent idle at the prompt. Heartbeats
 // must never renew the idle deadline, including while a native client streams.
 func (s *loginSession) commandCompleted(r managementRequest, now time.Time) {
-	if s.authenticated && r.Action != "tick" {
+	if s.authenticated && r.Action != "tick" && r.Action != "stream-check" {
 		s.last = now
 	}
 }
@@ -250,6 +254,16 @@ func (s *loginSession) authenticate(r managementRequest, c config.Config, now ti
 			}
 			return s.challenge(), true
 		}
+	}
+	if r.Action == "stream-check" || r.Action == "stream-end" {
+		allowed := s.authenticated && len(s.streamCommand) > 0 && s.cli.AllowedEXEC(s.streamCommand)
+		if r.Action == "stream-end" || !allowed {
+			s.streamCommand = nil
+		}
+		if !allowed {
+			return reply{Error: "Authorization failed."}, true
+		}
+		return reply{Stream: true}, true
 	}
 	if r.Action == "tick" {
 		if s.stage == "enable" {

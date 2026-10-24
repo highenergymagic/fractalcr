@@ -48,16 +48,17 @@ func NormalizeSSHKey(value string) (string, error) {
 }
 
 type AAA struct {
-	Enabled           bool            `json:"enabled"`
-	Users             map[string]User `json:"users,omitempty"`
-	EnableSecret      string          `json:"enable_secret,omitempty"`
-	EnableSecrets     map[int]string  `json:"enable_secrets,omitempty"`
-	SSH               bool            `json:"ssh"`
-	SSHPort           int             `json:"ssh_port,omitempty"`
-	ConsoleTimeout    int             `json:"console_timeout_seconds"`
-	VTYTimeout        int             `json:"vty_timeout_seconds"`
-	VTY               map[int]VTYLine `json:"vty,omitempty"`
-	PasswordMinLength int             `json:"password_min_length,omitempty"`
+	Enabled           bool               `json:"enabled"`
+	Users             map[string]User    `json:"users,omitempty"`
+	EnableSecret      string             `json:"enable_secret,omitempty"`
+	EnableSecrets     map[int]string     `json:"enable_secrets,omitempty"`
+	CommandPrivileges []CommandPrivilege `json:"command_privileges,omitempty"`
+	SSH               bool               `json:"ssh"`
+	SSHPort           int                `json:"ssh_port,omitempty"`
+	ConsoleTimeout    int                `json:"console_timeout_seconds"`
+	VTYTimeout        int                `json:"vty_timeout_seconds"`
+	VTY               map[int]VTYLine    `json:"vty,omitempty"`
+	PasswordMinLength int                `json:"password_min_length,omitempty"`
 }
 
 const VTYCount = 16
@@ -137,6 +138,9 @@ func CheckSecret(encoded, password string) bool {
 	return err == nil && subtle.ConstantTimeCompare(want, got) == 1
 }
 func (a AAA) Validate() error {
+	if err := validateCommandPrivileges(a.CommandPrivileges); err != nil {
+		return err
+	}
 	if len(a.Users) > 64 {
 		return errors.New("at most 64 local users")
 	}

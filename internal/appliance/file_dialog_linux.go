@@ -56,7 +56,7 @@ func (s *loginSession) performFile() reply {
 	d := s.pendingFile
 	s.pendingFile = nil
 	r := reply{Prompt: s.cli.Prompt()}
-	if s.cli.Privilege != 15 {
+	if !s.cli.AllowedEXEC(d.words) {
 		r.Error = "Authorization failed."
 		return r
 	}
@@ -70,7 +70,7 @@ func (s *loginSession) performFile() reply {
 
 func (s *loginSession) answerFile(answer string) reply {
 	d := s.pendingFile
-	if s.cli.Privilege != 15 {
+	if !s.cli.AllowedEXEC(d.words) {
 		s.pendingFile = nil
 		return reply{Prompt: s.cli.Prompt(), Error: "Authorization failed."}
 	}

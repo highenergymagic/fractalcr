@@ -27,6 +27,7 @@ Consulted 2026-10-24:
 - [ISR 4000 console and SSH handling](https://www.cisco.com/c/en/us/td/docs/routers/access/isr4400/software/configuration/xe-17/isr4400-sw-config-xe-17/console_port_telnet_and_ssh_handling.html): line numbering and status displays.
 - [Terminal services command reference](https://www.cisco.com/c/en/us/td/docs/ios/termserv/command/reference/tsv_book/tsv_s1.html): terminal detail fields.
 - [Security: enable commands](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/security/d1/sec-d1-cr-book/sec-cr-e1.html): level-specific enable authentication.
+- [Security: privilege commands](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/security/m1/sec-m1-cr-book/ppp_accounting_through_quit.html): command levels, implicit parents, `all`, submodes and reset behavior.
 - [Protecting secrets](https://www.cisco.com/c/en/us/about/trust-center/resilient-infrastructure/protecting-secrets.html): type 8 and 9 password verifiers.
 - [Basic System Management: A through M](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/bsm/command/bsm-cr-book/bsm-cr-a1.html): software/hardware clocks, timezone offsets and summer-time transitions.
 - [Basic System Management: N through T](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/bsm/command/bsm-cr-book/m_bsm-cr-n1.html): opt-in periodic NTP calendar updates.
@@ -40,6 +41,8 @@ Consulted 2026-10-24:
 | --- | --- | --- |
 | Context help | Word-boundary filesystem placeholder and mounted prefixes; partial filesystem help preserves the typed prefix; unique Tab completion | `TestIOSFilesystemHelpAndReloadGrammar`; `qemu-ios-workflow.py` |
 | Privilege | Console enable without a configured secret; remote sessions require a secret; explicit levels; disable never raises privilege; removable enable secret; cancel an enable challenge; configuration commands reach the configuration transaction | `TestIOSEnableConsoleAndVTY`; `TestIOSEnableDispatchDoesNotConsumeConfiguration`; serial/SSH AAA workflow |
+| Command privileges | `privilege mode [all] {level level \| reset} command-string` and `no` reset; parent-keyword assignments; descendant/submode assignment; privilege-filtered configuration help and execution; deterministic saved-policy replay | `TestCommandPrivilegeDelegationAndReplay`; `TestCommandPrivilegeParentsResetAndZero`; `TestPrivilegeAllIncludesSubmodesAndRevokesLive` |
+| Command revocation | File, reload and output confirmations recheck current command policy; native client streams recheck the parsed operation, including after global options, without renewing idle deadlines | `TestDelegatedFileConfirmationRevokesOnPolicyChange`; `TestDelegatedCopySaveAndRevocation`; `TestReloadAndOutputRecheckCommandPolicy`; `TestNativeStreamGrantRevocationAndIdleDeadline`; expanded SSH qualification |
 | Directory | `/all`, `/recursive`, both orders, `all-filesystems`, individual files, IOS prefix wildcard matching, timestamp offsets, capacity footer, output filters | `TestIOSDirectoryOptionsAndConfinement` |
 | Filesystem display | Default bootflash marker, `flash:` alias, logical flash/NVRAM types, actual capacity and access flags | `TestIOSDirectoryOptionsAndConfinement` |
 | Current directory | `cd`, `pwd`, relative file operands, volume changes, parent traversal confined to the volume, separate session defaults | `TestIOSWorkingDirectoryIsolation`; serial workflow |
@@ -93,12 +96,16 @@ they must not be hidden behind accepted no-op keywords:
   supports local writable volumes, with a 1 MiB response limit and a 64 MiB
   existing-file limit for append. Copy's durable configuration representation
   is the appliance JSON model.
-- Local AAA is not all IOS AAA: CLI views, arbitrary per-command privilege
-  assignment, additional Cisco password encodings (including type 5/6/14),
+- Local AAA is not all IOS AAA: CLI views,
+  additional Cisco password encodings (including type 5/6/14),
   and additional line/login settings need separate implementation and
   conformance work.
   External RADIUS/TACACS+ services remain outside the previously agreed
   [local AAA scope](../os/docs/aaa-and-management.md); they are not implemented.
+  Configurable privileges now cover the appliance parser modes and native
+  workload operation paths. Exact ISR rendering of expanded `all` policies and
+  argument-node policies still needs comparison with a device transcript;
+  per-option privilege overrides inside native workload clients are not exposed.
 - Reload warning cadence and reload-history output have not been fully matched.
   Scheduled reloads are not retained across a complete machine reboot.
 - Remaining `show users` variants, interface counters/variants, NTP command

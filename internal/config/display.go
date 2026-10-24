@@ -57,6 +57,9 @@ func (c Config) CLI() string {
 	if c.AAA.Enabled {
 		line("aaa new-model\naaa authentication login default local\naaa authorization exec default local")
 	}
+	for _, privilege := range c.AAA.PrivilegeCLI() {
+		line("%s", privilege)
+	}
 	if c.AAA.SSHAvailable() {
 		line("ip ssh version 2")
 	}

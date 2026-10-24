@@ -337,8 +337,9 @@ func parseReload(w []string, now time.Time, clocks ...config.Clock) (reloadPlan,
 }
 
 type reloadDialog struct {
-	plan reloadPlan
-	save bool
+	plan  reloadPlan
+	save  bool
+	words []string
 }
 
 func (d *reloadDialog) prompt() reply {
@@ -377,7 +378,7 @@ func (s *loginSession) beginReload(w []string, m *reloadManager, now time.Time) 
 		r.Error = "Cannot read startup configuration"
 		return r
 	}
-	s.pendingReload = &reloadDialog{plan: p, save: err != nil || string(startup.JSON()) != string(s.cli.Running.JSON())}
+	s.pendingReload = &reloadDialog{plan: p, save: err != nil || string(startup.JSON()) != string(s.cli.Running.JSON()), words: append([]string(nil), w...)}
 	r = s.pendingReload.prompt()
 	if p.Scheduled {
 		r.Output = fmt.Sprintf("Reload scheduled for %s (in %s)", p.At.Format("15:04:05 MST Mon Jan 2 2006"), reloadInterval(p.At.Sub(now)))
@@ -388,7 +389,11 @@ func (s *loginSession) beginReload(w []string, m *reloadManager, now time.Time) 
 func (s *loginSession) answerReload(answer string, m *reloadManager, now time.Time) reply {
 	d := s.pendingReload
 	r := reply{Prompt: s.cli.Prompt()}
-	if s.cli.Privilege != 15 {
+	words := d.words
+	if len(words) == 0 {
+		words = []string{"reload"}
+	}
+	if !s.cli.AllowedEXEC(words) {
 		s.pendingReload = nil
 		r.Error = "Authorization failed."
 		return r

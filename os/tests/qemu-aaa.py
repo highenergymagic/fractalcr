@@ -95,6 +95,40 @@ try:
     assert 'Platform kernel:' in command(reader,'show version',user=True)
     command(admin,'abort')
     check('SSH and serial share the CLI semantics; simultaneous sessions retain independent candidates and privileges')
+    for line in ['conf t', f'username operator privilege 5 secret {READER}',
+                 'privilege exec level 5 configure terminal', 'privilege configure level 5 hostname',
+                 'privilege exec level 5 delete', 'privilege exec all level 5 copy',
+                 'privilege exec level 5 request container-engine events', 'end']:
+        command(admin, line)
+    operator = ssh_login('operator', READER)
+    for line in ['conf t', 'hostname ctr', 'hostname ctr-test', 'end']: command(operator, line)
+    command(operator, 'conf t')
+    assert 'Invalid input' in command(operator, f'username forbidden privilege 15 secret {READER}')
+    command(operator, 'end')
+    assert 'Invalid input' in command(operator, 'request container-engine debug enable container rm argument forbidden')
+    check('Level-five command delegation permits hostname edits and one native operation, while denying account creation and sibling operations')
+    command(admin, 'show version | redirect data0:privilege-test.txt')
+    operator.sendline('delete data0:privilege-test.txt'); operator.expect_exact('Delete data0:privilege-test.txt? [confirm]')
+    for line in ['conf t', 'privilege exec reset delete', 'end']: command(admin, line)
+    operator.sendline(''); prompt(operator)
+    assert 'Authorization failed.' in operator.before
+    assert 'privilege-test.txt' in command(admin, 'dir data0:')
+    operator.sendline('copy running-config startup-config'); operator.expect_exact('Destination filename [startup-config]? ')
+    for line in ['conf t', 'privilege exec all reset copy', 'end']: command(admin, line)
+    operator.sendline(''); prompt(operator)
+    assert 'Authorization failed.' in operator.before
+    check('Changing command privileges revokes pending delete and configuration-copy confirmations before mutation')
+    operator.sendline('request container-engine events'); operator.expect_exact('request container-engine events')
+    command(admin, 'request container-engine network create argument privilege-fixture')
+    operator.expect('network create', timeout=15)
+    for line in ['conf t', 'privilege exec reset request container-engine events', 'end']: command(admin, line)
+    operator.expect_exact('% Command authorization revoked.', timeout=15); prompt(operator)
+    check('A running native Engine event stream terminates when its command grant is revoked')
+    command(admin, 'request container-engine network rm argument privilege-fixture')
+    for line in ['conf t', 'privilege exec reset configure terminal', 'privilege configure reset hostname',
+                 'no username operator', 'end']: command(admin, line)
+    operator.expect(pexpect.EOF, timeout=10)
+    command(admin, 'delete /force data0:privilege-test.txt')
     admin_peer=ssh_login('admin',ADMIN)
     command(admin_peer,'configure candidate')
     for line in ['conf t','line console 0','exec-timeout 11 0','exit','commit','end']:command(admin,line)

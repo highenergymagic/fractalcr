@@ -9,49 +9,50 @@ import (
 	"strings"
 )
 
-func (s *Session) Allowed(words []string) bool {
-	if !s.EnforcePrivilege || s.Privilege == 15 {
-		return true
-	}
+func defaultCommandLevel(mode string, words []string) int {
 	if len(words) > 0 && words[0] == "do" {
 		words = words[1:]
+		mode = ""
 	}
 	if len(words) == 0 {
-		return true
+		return 0
+	}
+	if mode != "" {
+		if len(words) == 1 && (words[0] == "exit" || words[0] == "end" || words[0] == "help") {
+			return 0
+		}
+		return 15
 	}
 	command := strings.Join(words, " ")
 	switch words[0] {
 	case "enable", "disable", "exit", "logout", "help":
-		return true
-	}
-	if s.Privilege < 1 {
-		return false
+		return 0
 	}
 	// IOS exposes these calendar transfers in user EXEC. Setting an arbitrary
 	// clock value remains privileged; keep the exceptions exact.
 	if command == "clock read-calendar" || command == "clock update-calendar" {
-		return true
+		return 1
 	}
 	if len(words) >= 2 && words[0] == "show" && words[1] == "interfaces" {
-		return true
+		return 1
 	}
 	if len(words) == 5 && words[0] == "show" && words[1] == "ip" && words[2] == "interface" && words[4] == "brief" {
-		return true
+		return 1
 	}
 	if words[0] == "terminal" || (len(words) >= 2 && words[0] == "show" && (words[1] == "users" || words[1] == "line")) {
-		return true
+		return 1
 	}
 	if words[0] == "dir" || words[0] == "cd" || command == "pwd" || command == "show file systems" || command == "show reload" || command == "show clock detail" || command == "show calendar" {
-		return true
+		return 1
 	}
 	// Configuration, logs, workload inspection and native clients may contain
 	// credentials or grant host control. Only explicit read-only views are public.
 	for _, prefix := range []string{"show version", "show privilege", "show users", "show terminal", "show history", "show interfaces", "show ip interface brief", "show ip route", "show platform", "show system resources", "show clock", "show ntp status", "show ntp associations"} {
 		if command == prefix {
-			return true
+			return 1
 		}
 	}
-	return false
+	return 15
 }
 func (s *Session) aaaCommand(w []string) (bool, string, error) {
 	if len(w) > 0 && (w[0] == "enable" || w[0] == "username") {

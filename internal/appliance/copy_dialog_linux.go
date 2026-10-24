@@ -59,7 +59,7 @@ func (d *copyDialog) defaultName() {
 func (s *loginSession) answerCopy(answer string) reply {
 	r := reply{Prompt: s.cli.Prompt()}
 	d := s.pendingCopy
-	if s.cli.Privilege != 15 {
+	if !s.cli.AllowedEXEC([]string{"copy", d.source, d.destination}) {
 		s.pendingCopy = nil
 		r.Error = "Authorization failed."
 		return r
@@ -104,14 +104,18 @@ func (s *loginSession) answerCopy(answer string) reply {
 		}
 		if d.source == "running-config" && (d.destination == "startup-config" || d.destination == "nvram:startup-config" || d.destination == "nvram:startup-config.json") {
 			s.pendingCopy = nil
-			var err error
-			command := "write memory"
-			if s.cli.Mode != "" {
-				command = "do write memory"
+			if !s.cli.AllowedEXEC([]string{"copy", d.source, d.destination}) {
+				r.Error = "Authorization failed."
+				return r
 			}
-			r.Output, err = s.cli.Execute(command)
-			if err != nil {
+			if s.cli.Save == nil {
+				r.Error = "Configuration storage is unavailable"
+				return r
+			}
+			if err := s.cli.Save(s.cli.Running); err != nil {
 				r.Error = err.Error()
+			} else {
+				r.Output = "Building configuration...\n[OK]"
 			}
 			return r
 		}
@@ -153,6 +157,10 @@ func (s *loginSession) answerCopy(answer string) reply {
 		}
 	}
 	s.pendingCopy = nil
+	if !s.cli.AllowedEXEC([]string{"copy", d.source, d.destination}) {
+		r.Error = "Authorization failed."
+		return r
+	}
 	if d.source == d.destination {
 		r.Error = "Source and destination are the same file"
 		return r

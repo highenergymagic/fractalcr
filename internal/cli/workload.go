@@ -84,6 +84,7 @@ func WorkloadArguments(words []string) (string, []string, bool) {
 
 type workloadPosition struct {
 	command   *workloadcatalog.Command
+	path      []string
 	value     *workloadcatalog.Flag
 	literal   bool
 	rest      bool
@@ -225,6 +226,7 @@ func walkWorkload(service string, args []string) (workloadPosition, []string, in
 			}
 			if child != nil {
 				p.native = append(p.native, child.Name)
+				p.path = append(p.path, child.Name)
 				p.command = child
 				continue
 			}
@@ -334,6 +336,9 @@ func (s *Session) workloadHelp(line string) (string, bool) {
 	if kind != "" {
 		return "", true
 	}
+	if !s.workloadPolicyAllows(canonical) {
+		return "", true
+	}
 	if p.terminal {
 		if full {
 			return "  <cr>", true
@@ -397,6 +402,9 @@ func (s *Session) workloadHelp(line string) (string, bool) {
 	}
 	keys := []string{}
 	for key := range items {
+		if !strings.HasPrefix(key, "<") && !s.workloadPolicyAllows(append(append([]string(nil), canonical...), key)) {
+			continue
+		}
 		if full || strings.HasPrefix(strings.ToLower(key), strings.ToLower(partial)) {
 			keys = append(keys, key)
 		}

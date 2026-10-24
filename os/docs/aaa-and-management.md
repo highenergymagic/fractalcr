@@ -58,7 +58,7 @@ enter command history. EXEC and configuration modes have separate history buffer
 configuration history includes commands as entered, including secret-setting
 commands. Logout and privilege downgrade clear both buffers.
 
-Privilege 0 provides session control, enable and help. Levels 1 through 14
+By default, privilege 0 provides session control, enable and help. Levels 1 through 14
 provide explicitly allowed read-only views and terminal settings; level 15
 provides configuration and operational control. Native Docker/BuildKit commands,
 workload logs, configuration files, service control and debug entry require
@@ -71,6 +71,33 @@ authorization rules as execution. SSH sessions have the same editor and pager
 as the physical console, with independent identities and privileges. Normal
 configuration commands use the latest running state, preserving other sessions'
 edits. Explicit candidate transactions reject stale commits.
+
+Command privileges can delegate individual operations and configuration modes:
+
+```
+configure terminal
+privilege exec level 5 configure terminal
+privilege configure level 5 hostname
+privilege exec level 5 request container-engine events
+username operator privilege 5
+end
+write memory
+```
+
+That account can change the hostname and observe Engine events. Account
+management and other Engine operations retain their default level. A command
+assignment also sets its parent keywords; set a parent explicitly afterward
+when it needs a different level. `all` assigns descendants and associated
+configuration submodes, for example `privilege configure all level 5 interface`.
+Use `privilege ... reset COMMAND` or `no privilege ... level LEVEL COMMAND`
+to remove an override; add `all` to reset descendants as well. The level in
+the `no` form does not need to match the previous assignment.
+
+Help, completion and execution use the current running policy. Pending file
+and reload dialogs recheck it before acting. Running native clients check their
+operation grant once per second and stop on revocation or loss of management;
+these checks do not extend the session's idle timeout. Saving with `write memory`
+persists the policy across a reboot.
 
 Three failed local attempts lock that account for 30 seconds. SSH additionally
 limits authentication attempts and concurrent connections. Zero `exec-timeout`

@@ -29,6 +29,7 @@ type reply struct {
 	Challenge   bool        `json:"challenge,omitempty"`
 	Secret      bool        `json:"secret,omitempty"`
 	Close       bool        `json:"close,omitempty"`
+	Stream      bool        `json:"stream,omitempty"`
 	Filter      *cli.Filter `json:"filter,omitempty"`
 	Notify      string      `json:"notify,omitempty"`
 	Privilege   *int        `json:"privilege,omitempty"`
@@ -122,6 +123,11 @@ func Serve() error {
 		}
 		login := sessions[peerPID]
 		newSession := login == nil
+		if newSession && (request.Action == "stream-check" || request.Action == "stream-end") {
+			json.NewEncoder(conn).Encode(reply{Error: "Authorization failed."})
+			conn.Close()
+			continue
+		}
 		if login == nil || request.Action == "connect" {
 			for pid, old := range sessions {
 				if syscall.Kill(int(pid), 0) != nil {
@@ -228,12 +234,14 @@ func Serve() error {
 					response.Error = err.Error()
 				}
 			}
+			login.outputCommand = nil
 			respond(response)
 			conn.Close()
 			continue
 		}
 		if request.Action == "" {
 			login.pendingOutput = nil
+			login.outputCommand = nil
 		}
 		if login.pendingCopy != nil {
 			respond(login.answerCopy(line))
@@ -254,7 +262,7 @@ func Serve() error {
 			response := reply{Prompt: session.Prompt()}
 			if recoveryErr != nil {
 				response.Error = "Configuration recovery must complete before setup."
-			} else if login.transport != "console" || session.Privilege != 15 {
+			} else if login.transport != "console" || !session.AllowedEXEC([]string{"setup"}) {
 				response.Error = "Setup requires privileged physical-console access."
 			} else {
 				if login.setup == nil {
@@ -301,6 +309,15 @@ func Serve() error {
 			var local bool
 			{
 				words, local, err = session.Resolve(request.Command)
+				if err == nil && !session.Allowed(words) {
+					err = fmt.Errorf("Authorization failed.")
+				}
+				if err == nil {
+					login.outputCommand = append([]string(nil), words...)
+					if len(login.outputCommand) > 0 && login.outputCommand[0] == "do" {
+						login.outputCommand = login.outputCommand[1:]
+					}
+				}
 				if err == nil {
 					words, filter, err = cli.SplitFilter(words)
 				}
@@ -312,9 +329,6 @@ func Serve() error {
 				}
 			}
 			if err == nil && !session.Allowed(words) {
-				err = fmt.Errorf("Authorization failed.")
-			}
-			if err == nil && filter.Redirect() && session.Privilege != 15 {
 				err = fmt.Errorf("Authorization failed.")
 			}
 			if err == nil && current.AAA.Enabled {
@@ -423,6 +437,9 @@ func Serve() error {
 			}
 		}
 		response := reply{Output: output, Prompt: session.Prompt(), Completion: completion, Local: localCommand, Argv: argv, Filter: filter}
+		if err == nil && (len(argv) > 0 || localCommand == "request platform debug service-container enter") {
+			login.streamCommand = append([]string(nil), login.outputCommand...)
+		}
 		if err != nil {
 			response.Error = err.Error()
 			var syntax *cli.SyntaxError

@@ -329,6 +329,7 @@ type node struct {
 	word, description     string
 	children              []*node
 	terminal, local, rest bool
+	defaultLevel, level   int
 }
 
 func (n *node) add(c Command) {
@@ -361,13 +362,10 @@ func (n *node) add(c Command) {
 	}
 }
 
-func (s *Session) grammar() *node {
+func (s *Session) rawGrammar() *node {
 	root := &node{}
 	if s.Mode == "" {
 		for _, c := range execCommands {
-			if !s.Allowed(strings.Fields(c.Syntax)) {
-				continue
-			}
 			if s.Recovery && !c.Local {
 				continue
 			}
@@ -393,23 +391,24 @@ func (s *Session) grammar() *node {
 			}
 		}
 	}
-	if s.EnforcePrivilege && s.Privilege < 15 {
-		var hideWrites func(*node)
-		hideWrites = func(n *node) {
-			if n.word == "|" {
-				children := n.children[:0]
-				for _, child := range n.children {
-					if child.word != "redirect" && child.word != "append" && child.word != "tee" {
-						children = append(children, child)
-					}
-				}
-				n.children = children
-			}
-			for _, child := range n.children {
-				hideWrites(child)
+	return root
+}
+
+func (s *Session) grammar() *node {
+	root := s.policyGrammar()
+	if s.privilegeTarget {
+		var targets func(*node)
+		targets = func(n *node) {
+			n.terminal = true
+			for _, c := range n.children {
+				targets(c)
 			}
 		}
-		hideWrites(root)
+		targets(root)
+		root.terminal = false
+	}
+	if s.EnforcePrivilege && s.Privilege < 15 {
+		prunePrivileges(root, s.Privilege)
 	}
 	return root
 }
@@ -554,6 +553,9 @@ func (s *Session) resolveHere(line string) ([]string, bool, error) {
 	// Retain the original appliance's exact shortcut without making "conf t"
 	// ambiguous with a second command keyword.
 	if len(words) == 1 && strings.EqualFold(words[0], "config") && s.Mode == "" {
+		if !s.Allowed([]string{"configure", "terminal"}) {
+			return nil, false, &SyntaxError{Kind: "invalid", Input: line, Column: 0}
+		}
 		return []string{"configure", "terminal"}, false, nil
 	}
 	n := s.grammar()
@@ -571,6 +573,14 @@ func (s *Session) resolveHere(line string) ([]string, bool, error) {
 		return nil, false, &SyntaxError{"incomplete", len(line), line}
 	}
 	words, err = canonicalWorkload(words, line, spans)
+	if err == nil {
+		if _, _, native := workloadInput(words); native && !s.workloadPolicyAllows(words) {
+			return nil, false, &SyntaxError{Kind: "invalid", Input: line, Column: spans[len(spans)-1]}
+		}
+	}
+	if err == nil {
+		words, err = s.resolvePrivilege(words, line, spans)
+	}
 	return words, n.local, err
 }
 
@@ -599,7 +609,10 @@ func (s *Session) helpNode(line string) (*node, string, int, bool) {
 }
 
 func (s *Session) ContextHelp(line string) string {
-	if help, ok := s.workloadHelp(line); ok {
+	if target, prefix, ok := s.privilegeHelpTarget(line); ok {
+		return target.ContextHelp(prefix)
+	}
+	if help, ok := s.workloadHelp(line); ok && !s.privilegeTarget {
 		return help
 	}
 	n, partial, _, full := s.helpNode(line)
@@ -696,7 +709,11 @@ func (s *Session) Complete(line string) (string, string) {
 }
 
 func (s *Session) completeHere(line string) (string, string) {
-	if help, ok := s.workloadHelp(line); ok {
+	if target, prefix, ok := s.privilegeHelpTarget(line); ok {
+		completed, feedback := target.completeHere(prefix)
+		return line[:len(line)-len(prefix)] + completed, feedback
+	}
+	if help, ok := s.workloadHelp(line); ok && !s.privilegeTarget {
 		if strings.HasSuffix(line, " ") || strings.HasSuffix(line, "\t") {
 			return line, "\a"
 		}

@@ -12,7 +12,7 @@ import (
 )
 
 func (s *loginSession) writeOutput(filter *cli.Filter, text string) (string, error) {
-	if s.cli.Privilege != 15 {
+	if (len(s.outputCommand) == 0 && s.cli.Privilege != 15) || (len(s.outputCommand) > 0 && !s.cli.AllowedEXEC(s.outputCommand)) {
 		return "", fmt.Errorf("Authorization failed.")
 	}
 	if len(text) > 1024*1024 {

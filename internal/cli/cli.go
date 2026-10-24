@@ -32,6 +32,7 @@ type Session struct {
 	Username         string
 	ConfigBase       string
 	Transactional    bool
+	privilegeTarget  bool
 }
 
 func New(state string) (*Session, error) {
@@ -159,6 +160,9 @@ func (s *Session) execute(line string) (string, error) {
 	}
 	if !s.Allowed(w) {
 		return "", errors.New("Authorization failed.")
+	}
+	if handled, err := s.privilegeCommand(w); handled {
+		return "", err
 	}
 	if handled, output, err := s.aaaCommand(w); handled {
 		return output, err
