@@ -26,6 +26,7 @@ install -m 0644 "$art/release.pub" "$out/release.pub"
 cp "$art/system.bin" "$out/system.bin"
 cp "$art/rommon.efi" "$out/rommon.efi"
 cp "$art/system.spdx.json" "$art/system.oe-vex.json" "$art/packages.manifest" "$out/"
+cp "$art/source-snapshot.json" "$out/firmware-source-snapshot.json"
 cp "$art/system-licenses.tar.gz" "$art/buildroot-packages.json" "$art/boot-sources.json" "$art/oe-sources.json" "$art/kernel-security.json" "$out/"
 dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\n' > "$out/builder-packages.txt"
 cp "$src/os/docs/releases.md" "$out/README.md"
@@ -36,10 +37,14 @@ src, out = map(pathlib.Path, sys.argv[1:])
 files = {p.relative_to(out).as_posix(): hashlib.file_digest(p.open('rb'),'sha256').hexdigest()
          for p in sorted(out.rglob('*')) if p.is_file()}
 manifest = {'version': (src/'VERSION').read_text().strip(), 'signing': 'development',
-            'builder_image':os.environ.get('FCR_BUILDER_ID','unrecorded'),
+            'packaging_builder_image':os.environ.get('FCR_BUILDER_ID','unrecorded'),
+            'firmware_build':json.loads((out/'firmware-source-snapshot.json').read_text()),
             'architecture':'x86_64', 'boot':'UEFI; serial 115200 8N1',
             'source_build': subprocess.check_output(['python3',str(src/'tools/build-identity.py')],text=True).strip(),
             'files':files}
 (out/'release-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
 PY
 (cd "$out"; find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
+# Disk creation deliberately starts at 0600. These are blank distributable
+# images and the explicit public artifact allowlist above, never live datastores.
+find "$out" -maxdepth 1 -type f -exec chmod 0644 {} +

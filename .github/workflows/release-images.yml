@@ -77,13 +77,15 @@ jobs:
           mkdir -p release-stage
           # Public trust files may retain the key generator's restrictive modes.
           # Read them as container root; source/artifacts stay read-only, with no
-          # network or capabilities. release-media exports public files as 0644.
-          docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
+          # network; only file-access capability is needed for the output bind.
+          # release-media exports public files as 0644.
+          docker run --rm --network none --cap-drop ALL --cap-add DAC_OVERRIDE --security-opt no-new-privileges \
             -e "FCR_BUILDER_ID=$(docker image inspect --format '{{.Id}}' fractalcr-os-builder)" \
             --mount "type=bind,source=$PWD,target=/src,readonly" \
             --mount "type=bind,source=$PWD/release-stage,target=/output" \
             --mount type=volume,source=fractalcr-os-work,target=/work,readonly \
             fractalcr-os-builder bash /src/tools/release-media.sh /src /work/artifacts /output/images
+          sudo chown -R "$(id -u):$(id -g)" release-stage/images
           cp "$RUNNER_TEMP/fractal-source.tar.gz" release-stage/images/source.tar.gz
       - name: Qualify single-disk NoCloud boot and SSH
         run: |
@@ -153,7 +155,7 @@ jobs:
           test "$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha)" = "$SOURCE_COMMIT"
           gh release create "$TAG" --draft --verify-tag --title "FractalCR $TAG — development signed" \
             --prerelease --notes-file README.md README.md *.img.gz *.qcow2 *.img.json system.bin rommon.efi firmware.crt release.pub \
-            SHA256SUMS release-manifest.json system.spdx.json system.oe-vex.json packages.manifest \
+            SHA256SUMS release-manifest.json firmware-source-snapshot.json system.spdx.json system.oe-vex.json packages.manifest \
             system-licenses.tar.gz buildroot-packages.json boot-sources.json oe-sources.json kernel-security.json builder-packages.txt \
             nocloud-examples.tar.gz source.tar.gz qualification.json usb-qualification.json
           gh release edit "$TAG" --draft=false
