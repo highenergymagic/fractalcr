@@ -18,7 +18,9 @@ func Operations(w []string, c config.Config) (string, error) {
 			return clockOperation(w, c)
 		case "copy":
 			return copyFile(w, c)
-		case "dir", "delete", "move", "rename", "mkdir", "rmdir":
+		case "dir":
+			return directoryOperation(w[1:], c.Clock)
+		case "delete", "move", "rename", "mkdir", "rmdir":
 			return fileOperation(w)
 		}
 	}

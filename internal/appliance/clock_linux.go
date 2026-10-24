@@ -53,20 +53,22 @@ func clockOperation(w []string, c config.Config) (string, error) {
 			return "", fmt.Errorf("Invalid clock command")
 		}
 		var now time.Time
-		now, err = config.ParseClockTime(w[2:], c.Clock.Location())
-		if err == nil {
-			now, err = config.ParseClockTime(w[2:], c.Clock.LocalTime(now).Location())
+		now, err = config.ParseClockTime(w[2:], time.UTC)
+		if err != nil {
+			return "", err
 		}
-		if err == nil {
-			if w[0] == "calendar" {
-				err = writeHardwareClock(now)
-			} else {
-				err = setSoftwareClock(now)
-			}
+		instants := c.Clock.LocalInstants(now)
+		if len(instants) == 0 {
+			return "", fmt.Errorf("Specified time does not exist due to summer-time transition")
+		}
+		if w[0] == "calendar" {
+			err = writeHardwareClock(instants[0])
+		} else {
+			err = setSoftwareClock(instants[0])
 		}
 	}
 	if err != nil {
-		return "", fmt.Errorf("Clock update failed: %w", err)
+		return "", fmt.Errorf("Clock update failed")
 	}
 	if w[0] == "clock" && w[1] != "update-calendar" {
 		source := "user configuration"
@@ -74,7 +76,7 @@ func clockOperation(w []string, c config.Config) (string, error) {
 			source = "hardware calendar"
 		}
 		if err = config.AtomicWrite(clockSourcePath, []byte(source), 0600); err != nil {
-			return "", err
+			return "", fmt.Errorf("Clock source state could not be saved")
 		}
 	}
 	return "", nil

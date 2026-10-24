@@ -375,7 +375,7 @@ func Serve() error {
 			} else if err == nil {
 				switch line {
 				case "show reload":
-					output = reloads.status(time.Now())
+					output = reloads.status(time.Now(), current.Clock)
 				case "help":
 					output = cli.Help
 				case "show users", "show users all", "show users wide", "show users all wide":

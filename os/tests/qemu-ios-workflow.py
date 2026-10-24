@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise IOS running/startup and session semantics on disposable KVM/WHPX disks."""
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -185,12 +186,27 @@ try:
     command('enable secret level 7 0 level-seven-test', 'config'); send('\x1a'); prompt()
     assert ' NST ' in command('show clock')
     assert ' NST ' in command('show calendar')
+    command('clock update-calendar')
+    command('clock read-calendar')
     command('conf t', 'config'); command('clock summer-time NDT recurring', 'config'); send('\x1a'); prompt()
     assert 'Summer time ends' in command('show clock detail')
     command('conf t', 'config'); command('no clock summer-time', 'config'); send('\x1a'); prompt()
     send('disable\n'); expect(re.escape(hostname+'> ')); send('enable 7\n'); expect('Password: '); send('level-seven-test\n'); prompt()
     assert 'Current privilege level is 7' in command('show privilege')
     command('enable'); command('conf t','config'); command('no enable secret level 7','config'); command('no clock timezone','config'); send('\x1a'); prompt()
+    command('clock set 18:00:00 1 January 2003')
+    assert '2003' in command('show clock')
+    command('clock update-calendar')
+    assert '2003' in command('show calendar')
+    command('clock read-calendar')
+    send('reload at 19:00\n')
+    response = expect(r'Save\? \[yes/no\]: |Proceed with reload\? \[confirm\]')
+    assert 'The clock has not been set' not in response, response
+    send('\x03'); prompt()
+    now = datetime.now(timezone.utc)
+    command('clock set '+now.strftime('%H:%M:%S %d %B %Y'))
+    command('clock update-calendar')
+    check('Native calendar read/write works and manually set clocks can schedule reloads independently of their year')
     check('Timezone display and level-specific enable authentication work through the serial console')
     section=command('show running-config | section line')
     assert 'line console 0' in section and 'exec-timeout' in section and 'hostname ctr' not in section

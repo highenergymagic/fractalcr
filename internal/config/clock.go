@@ -2,10 +2,33 @@ package config
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// LocalInstants resolves a wall-clock reading against the configured transition
+// rules. A skipped reading has no instant; a repeated reading has two. Keeping
+// both avoids silently scheduling with today's offset on a different date.
+func (c Clock) LocalInstants(wall time.Time) []time.Time {
+	wall = time.Date(wall.Year(), wall.Month(), wall.Day(), wall.Hour(), wall.Minute(), wall.Second(), wall.Nanosecond(), time.UTC)
+	offsets := []int{c.OffsetMinutes}
+	if c.Summer != nil {
+		offsets = append(offsets, c.OffsetMinutes+c.Summer.Offset)
+	}
+	var matches []time.Time
+	for _, offset := range offsets {
+		instant := wall.Add(-time.Duration(offset) * time.Minute)
+		local := c.LocalTime(instant)
+		reading := time.Date(local.Year(), local.Month(), local.Day(), local.Hour(), local.Minute(), local.Second(), local.Nanosecond(), time.UTC)
+		if reading.Equal(wall) {
+			matches = append(matches, local)
+		}
+	}
+	sort.Slice(matches, func(i, j int) bool { return matches[i].Before(matches[j]) })
+	return matches
+}
 
 type Clock struct {
 	Zone          string      `json:"zone,omitempty"`

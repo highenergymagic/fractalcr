@@ -112,7 +112,7 @@ func (m *reloadManager) cancel() (string, error) {
 	return "%Reload cancelled.", nil
 }
 
-func (m *reloadManager) status(now time.Time) string {
+func (m *reloadManager) status(now time.Time, clock ...config.Clock) string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.failure != "" {
@@ -125,7 +125,11 @@ func (m *reloadManager) status(now time.Time) string {
 	if d < 0 {
 		d = 0
 	}
-	s := fmt.Sprintf("Reload scheduled for %s (in %s)", m.plan.At.Format("15:04:05 MST Mon Jan 2 2006"), reloadInterval(d))
+	at := m.plan.At
+	if len(clock) != 0 {
+		at = clock[0].LocalTime(at)
+	}
+	s := fmt.Sprintf("Reload scheduled for %s (in %s)", at.Format("15:04:05 MST Mon Jan 2 2006"), reloadInterval(d))
 	if m.plan.Reason != "" {
 		s += "\nReload reason: " + m.plan.Reason
 	}
@@ -228,7 +232,13 @@ func reloadMonth(s string) time.Month {
 	return 0
 }
 
-func parseReload(w []string, now time.Time) (reloadPlan, error) {
+func parseReload(w []string, now time.Time, clocks ...config.Clock) (reloadPlan, error) {
+	zone, offset := now.Zone()
+	clock := config.Clock{Zone: zone, OffsetMinutes: offset / 60}
+	if len(clocks) != 0 {
+		clock = clocks[0]
+	}
+	now = clock.LocalTime(now)
 	p := reloadPlan{At: now, Requested: now}
 	args := w[1:]
 	if len(args) > 0 && strings.HasPrefix(args[0], "/") {
@@ -261,14 +271,12 @@ func parseReload(w []string, now time.Time) (reloadPlan, error) {
 			if len(args) < 2 {
 				return p, fmt.Errorf("Incomplete command.")
 			}
-			if now.Year() < 2025 {
-				return p, fmt.Errorf("The clock has not been set")
-			}
 			h, m, err := reloadTime(args[1], 23)
 			if err != nil {
 				return p, err
 			}
-			p.At, p.Scheduled = time.Date(now.Year(), now.Month(), now.Day(), h, m, 0, 0, now.Location()), true
+			wall := time.Date(now.Year(), now.Month(), now.Day(), h, m, 0, 0, time.UTC)
+			p.Scheduled = true
 			args = args[2:]
 			explicitDate := false
 			if len(args) >= 2 {
@@ -279,19 +287,39 @@ func parseReload(w []string, now time.Time) (reloadPlan, error) {
 					day, e = decimal(args[0])
 				}
 				if month != 0 && e == nil {
-					p.At = time.Date(now.Year(), month, day, h, m, 0, 0, now.Location())
-					if day < 1 || p.At.Month() != month {
+					wall = time.Date(now.Year(), month, day, h, m, 0, 0, time.UTC)
+					if day < 1 || wall.Month() != month {
 						return p, fmt.Errorf("Invalid date")
-					}
-					if !p.At.After(now) {
-						p.At = p.At.AddDate(1, 0, 0)
 					}
 					explicitDate = true
 					args = args[2:]
 				}
 			}
-			if !explicitDate && !p.At.After(now) {
-				p.At = p.At.AddDate(0, 0, 1)
+			// Select the first future occurrence of this local reading. During
+			// the autumn fold the second occurrence may still be ahead of us.
+			found := false
+			for attempt := 0; attempt < 2; attempt++ {
+				instants := clock.LocalInstants(wall)
+				if len(instants) == 0 {
+					return p, fmt.Errorf("Specified time does not exist due to summer-time transition")
+				}
+				for _, instant := range instants {
+					if instant.After(now) {
+						p.At, found = instant, true
+						break
+					}
+				}
+				if found {
+					break
+				}
+				if explicitDate {
+					wall = wall.AddDate(1, 0, 0)
+				} else {
+					wall = wall.AddDate(0, 0, 1)
+				}
+			}
+			if !found {
+				return p, fmt.Errorf("Invalid reload time")
 			}
 			if p.At.Sub(now) > 24*24*time.Hour {
 				return p, fmt.Errorf("Reload must occur within 24 days")
@@ -330,7 +358,14 @@ func (s *loginSession) beginReload(w []string, m *reloadManager, now time.Time) 
 		}
 		return r
 	}
-	p, err := parseReload(w, now)
+	if len(w) > 1 && w[1] == "at" {
+		_, source := softwareClockState(now)
+		if source == "none" {
+			r.Error = "The clock has not been set"
+			return r
+		}
+	}
+	p, err := parseReload(w, now, s.cli.Running.Clock)
 	if err != nil {
 		r.Error = err.Error()
 		return r
@@ -400,7 +435,7 @@ func (s *loginSession) answerReload(answer string, m *reloadManager, now time.Ti
 		return r
 	}
 	if d.plan.Scheduled {
-		r.Output = m.status(now)
+		r.Output = m.status(now, s.cli.Running.Clock)
 	} else {
 		r.Output = "\nReload requested.\n"
 	}

@@ -55,6 +55,12 @@ func TestClockUsesNativeAPIsAndConfiguredZone(t *testing.T) {
 	if string(before) != string(after) {
 		t.Fatal("failed operation changed source")
 	}
+	readHardwareClock = func() (time.Time, error) {
+		return time.Time{}, &os.PathError{Op: "open", Path: "/dev/rtc0", Err: os.ErrNotExist}
+	}
+	if _, err := clockOperation([]string{"clock", "read-calendar"}, c); err == nil || strings.Contains(err.Error(), "/dev/") {
+		t.Fatal("hardware error exposed platform implementation", err)
+	}
 }
 
 func TestClockSummerTimeDisplay(t *testing.T) {

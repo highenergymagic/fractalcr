@@ -60,6 +60,9 @@ Consulted 2026-10-24:
 | Output files | `redirect`, `append`, `tee`, and `tee /append`; native-console and management output share rooted atomic file writes; unprivileged writes and protected destinations rejected | `TestOutputRedirectionAtomicAppendAndConfinement`; serial workflow, including `show reload` |
 | Clock configuration | Both manual date orders, software/hardware clock APIs, `show calendar`, timezone offsets, recurring/dated summer-time rules, southern-hemisphere transitions, detail output | Clock API tests with injected clocks; transition boundary tests; serial display/configuration checks |
 | Reload notices | Independent notice delivery per authenticated session; schedule/cancel/minute warning; warning state survives management restart without replay | `TestReloadNotificationsAndRestart`; serial schedule/cancel notices |
+| Local-time scheduling | Target-date summer-time offset, repeated-hour selection, rejection of skipped local times, timezone label retained after management restart, clock-source validation independent of calendar year | `TestReloadAcrossSummerTime`; `TestReloadClockLabelSurvivesRestart`; `TestReloadRequiresClockSourceNotRecentYear` |
+| Calendar device | Built-in x86 CMOS RTC driver, build-time driver requirements, native read/write operations, sanitized hardware failures | Kernel recipe assertions; native clock tests; serial calendar read/write qualification |
+| Directory time | Configured timezone and the summer-time offset at each file's timestamp, for file, directory and all-filesystem listings | `TestDirectoryUsesConfiguredClockAtFileTimestamp` |
 
 Test names identify executable evidence, not a declaration of complete IOS
 compatibility. The VM report identifies the exact tested system image hash.
@@ -97,10 +100,13 @@ they must not be hidden behind accepted no-op keywords:
   command-by-command comparison. Existing support is not proof of parity.
   Concrete gaps include `show users summary`; persistent line-use counters;
   additional line/terminal settings and their corresponding display fields;
-  reload scheduling across a daylight-saving transition; and the complete
+  and the complete
   clock command family (`clock calendar-valid`, periodic calendar saving).
   Generic clock and NTP
   support does not imply support for every IOS clock/NTP command.
+  The references do not specify the choice between repeated local times or
+  the diagnostic for a skipped local time: those two reload outputs remain
+  pending a device transcript even though transition arithmetic is tested.
 - FractalCR workload, storage-array, Kata, Compose, BuildKit and Swarm commands
   are appliance extensions, not IOS commands.
 

@@ -8,11 +8,17 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+
+	"fractalcr/internal/config"
 )
 
 // IOS directory wildcards match a filename prefix; text after '*' is ignored.
 // Walk only real directories, never symlinks, including on recursive listings.
-func directoryOperation(args []string) (string, error) {
+func directoryOperation(args []string, clocks ...config.Clock) (string, error) {
+	clock := config.Clock{}
+	if len(clocks) > 0 {
+		clock = clocks[0]
+	}
 	recursive, allFS := false, false
 	url := "bootflash:"
 	for _, arg := range args {
@@ -33,7 +39,7 @@ func directoryOperation(args []string) (string, error) {
 			if recursive {
 				flags = append(flags, "/recursive")
 			}
-			out, err := directoryOperation(flags)
+			out, err := directoryOperation(flags, clock)
 			if err != nil {
 				outputs = append(outputs, "% "+err.Error())
 			} else {
@@ -88,7 +94,7 @@ func directoryOperation(args []string) (string, error) {
 			if entry.IsDir() {
 				mode = "drw-"
 			}
-			fmt.Fprintf(&b, "%5d  %s %12d  %s  %s\n", i+1, mode, entry.Size(), entry.ModTime().Format("Jan 2 2006 15:04:05 -07:00"), displayText(entry.Name()))
+			fmt.Fprintf(&b, "%5d  %s %12d  %s  %s\n", i+1, mode, entry.Size(), clock.LocalTime(entry.ModTime()).Format("Jan 2 2006 15:04:05 -07:00"), displayText(entry.Name()))
 		}
 		b.WriteByte('\n')
 		if recursive {
@@ -112,7 +118,7 @@ func directoryOperation(args []string) (string, error) {
 		if st.IsDir() {
 			err = walk(name, "", 0)
 		} else {
-			fmt.Fprintf(&b, "Directory of %s:/%s\n\n%5d  -rw- %12d  %s  %s\n\n", v.Name, displayText(name), 1, st.Size(), st.ModTime().Format("Jan 2 2006 15:04:05 -07:00"), displayText(path.Base(name)))
+			fmt.Fprintf(&b, "Directory of %s:/%s\n\n%5d  -rw- %12d  %s  %s\n\n", v.Name, displayText(name), 1, st.Size(), clock.LocalTime(st.ModTime()).Format("Jan 2 2006 15:04:05 -07:00"), displayText(path.Base(name)))
 		}
 	}
 	if err != nil {
