@@ -111,7 +111,7 @@ func fileAccessCommand(words []string) bool {
 	case "copy", "delete", "move", "rename", "mkdir", "rmdir", "more":
 		return true
 	}
-	if len(words) > 1 && ((words[0] == "write" && words[1] == "memory") || (words[0] == "show" && words[1] == "startup-config")) {
+	if len(words) > 1 && ((words[0] == "write" && (words[1] == "memory" || words[1] == "terminal")) || (words[0] == "show" && (words[1] == "startup-config" || words[1] == "running-config"))) {
 		return true
 	}
 	for i, word := range words {

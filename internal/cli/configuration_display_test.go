@@ -18,7 +18,7 @@ func TestDelegatedRunningConfigurationVisibility(t *testing.T) {
 	s := session(t)
 	execute(t, s, "conf t", "hostname permitted", "username hidden privilege 15 secret hidden-password", "enable secret hidden-enable",
 		"interface GigabitEthernet0", "description restricted-interface", "shutdown", "exit",
-		"privilege exec level 5 show running-config", "privilege exec level 5 write terminal", "privilege configure level 5 hostname", "end")
+		"file privilege 5", "privilege exec level 5 show running-config", "privilege exec level 5 write terminal", "privilege configure level 5 hostname", "end")
 	s.EnforcePrivilege, s.Privilege = true, 5
 	for _, cmd := range []string{"show running-config", "write terminal"} {
 		out, err := s.Execute(cmd)
@@ -53,9 +53,11 @@ func TestDelegatedRunningConfigurationVisibility(t *testing.T) {
 
 func TestFilePrivilegeIsIndependentFromCommandGrant(t *testing.T) {
 	s := session(t)
-	execute(t, s, "conf t", "privilege exec all level 5 copy", "privilege exec all level 5 show version", "end")
+	execute(t, s, "conf t", "privilege exec all level 5 copy", "privilege exec all level 5 show version",
+		"privilege exec all level 5 show running-config", "privilege exec level 5 write terminal", "end")
 	s.EnforcePrivilege, s.Privilege = true, 5
-	commands := [][]string{{"copy", "running-config", "startup-config"}, {"show", "version", "|", "redirect", "data0:version"}}
+	commands := [][]string{{"copy", "running-config", "startup-config"}, {"show", "version", "|", "redirect", "data0:version"},
+		{"show", "running-config"}, {"show", "running-config", "view", "full"}, {"write", "terminal"}}
 	for _, words := range commands {
 		if s.AllowedEXEC(words) {
 			t.Fatal("file privilege bypass", words)

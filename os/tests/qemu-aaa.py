@@ -106,13 +106,17 @@ try:
     command(operator, 'conf t')
     assert 'Invalid input' in command(operator, f'username forbidden privilege 15 secret {READER}')
     command(operator, 'end')
+    for line in ['conf t', 'no file privilege', 'end']: command(admin, line)
+    denied = command(operator, 'show running-config')
+    assert 'Invalid input' in denied or 'Authorization failed' in denied, denied
+    for line in ['conf t', 'file privilege 5', 'end']: command(admin, line)
     visible = command(operator, 'show running-config')
     assert 'hostname ctr-test' in visible and 'username ' not in visible and 'enable secret' not in visible, visible
     assert 'Invalid input' in command(operator, 'show running-config view full')
     for line in ['conf t', 'privilege exec level 5 show running-config view full', 'end']: command(admin, line)
     assert 'username admin' in command(operator, 'show running-config view full')
     assert 'username admin' not in command(operator, 'show running-config')
-    check('Delegated running-config omits configuration above the user level; an explicit view-full grant exposes the complete configuration')
+    check('Running-config requires file access, omits configuration above the user level, and exposes the full configuration only with a separate view-full grant')
     assert 'Invalid input' in command(operator, 'request container-engine debug enable container rm argument forbidden')
     check('Level-five command delegation permits hostname edits and one native operation, while denying account creation and sibling operations')
     command(admin, 'show version | redirect data0:privilege-test.txt')
@@ -126,7 +130,9 @@ try:
     operator.sendline(''); prompt(operator)
     assert 'Authorization failed.' in operator.before
     check('Changing command privileges revokes pending delete and configuration-copy confirmations before mutation')
-    operator.sendline('request container-engine events'); operator.expect_exact('request container-engine events')
+    # Replay the last minute so creating the fixture immediately after the
+    # command echo cannot race the native client's event subscription.
+    operator.sendline('request container-engine events since 1m'); operator.expect_exact('request container-engine events since 1m')
     command(admin, 'request container-engine network create argument privilege-fixture')
     operator.expect('network create', timeout=15)
     for line in ['conf t', 'privilege exec reset request container-engine events', 'end']: command(admin, line)
