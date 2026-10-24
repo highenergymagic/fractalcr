@@ -70,7 +70,8 @@ run_stage() {
         builder_id=$(docker image inspect --format '{{.Id}}' "$image")
         docker run --rm --name "fractalcr-${target}-build" \
             --security-opt seccomp=unconfined "${mounts[@]}" \
-            -e JOBS=4 -e "FCR_BUILDER_ID=$builder_id" "$builder_id" bash "/src/$target/tools/build.sh"
+            -e JOBS=4 -e "FCR_BUILDER_ID=$builder_id" "$builder_id" bash -c \
+            'set -e; bash "/src/$1/tools/build.sh"; python3 /src/tools/build-inputs.py "$1" > /work/artifacts/build-inputs.json' build "$target"
     fi
     if [[ "$mode" == Test || "$mode" == All ]]; then
         docker run --rm --name "fractalcr-${target}-test" "${mounts[@]}" \

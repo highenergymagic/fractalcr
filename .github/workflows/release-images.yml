@@ -155,7 +155,7 @@ jobs:
           test "$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha)" = "$SOURCE_COMMIT"
           gh release create "$TAG" --draft --verify-tag --title "FractalCR $TAG — development signed" \
             --prerelease --notes-file README.md README.md *.img.gz *.qcow2 *.img.json system.bin rommon.efi firmware.crt release.pub \
-            SHA256SUMS release-manifest.json firmware-source-snapshot.json system.spdx.json system.oe-vex.json packages.manifest \
+            SHA256SUMS release-manifest.json firmware-build-inputs.json system.spdx.json system.oe-vex.json packages.manifest \
             system-licenses.tar.gz buildroot-packages.json boot-sources.json oe-sources.json kernel-security.json builder-packages.txt \
             nocloud-examples.tar.gz source.tar.gz qualification.json usb-qualification.json
           gh release edit "$TAG" --draft=false
