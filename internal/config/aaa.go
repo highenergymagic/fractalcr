@@ -57,6 +57,7 @@ type AAA struct {
 	SSH               bool               `json:"ssh"`
 	SSHPort           int                `json:"ssh_port,omitempty"`
 	ConsoleTimeout    int                `json:"console_timeout_seconds"`
+	ConsoleTerminal   *LineTerminal      `json:"console_terminal,omitempty"`
 	VTYTimeout        int                `json:"vty_timeout_seconds"`
 	VTY               map[int]VTYLine    `json:"vty,omitempty"`
 	PasswordMinLength int                `json:"password_min_length,omitempty"`
@@ -72,8 +73,9 @@ func (a AAA) EnableVerifier(level int) string {
 }
 
 type VTYLine struct {
-	Timeout int  `json:"timeout_seconds"`
-	SSH     bool `json:"ssh"`
+	Timeout  int           `json:"timeout_seconds"`
+	SSH      bool          `json:"ssh"`
+	Terminal *LineTerminal `json:"terminal,omitempty"`
 }
 
 // Older configurations supplied one policy for all VTYs. Unmodified lines
@@ -187,9 +189,15 @@ func (a AAA) Validate() error {
 		return errors.New("invalid password minimum length (0..256)")
 	}
 	for number, line := range a.VTY {
+		if err := line.Terminal.Validate(); err != nil {
+			return err
+		}
 		if number < 0 || number >= VTYCount || line.Timeout < 0 || line.Timeout > 86400 {
 			return errors.New("invalid virtual terminal line or timeout")
 		}
+	}
+	if err := a.ConsoleTerminal.Validate(); err != nil {
+		return err
 	}
 	if a.EnableSecret != "" {
 		err := ValidateSecret(a.EnableSecret)

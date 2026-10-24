@@ -19,20 +19,21 @@ import (
 )
 
 type reply struct {
-	Output      string      `json:"output"`
-	Prompt      string      `json:"prompt"`
-	Error       string      `json:"error,omitempty"`
-	Completion  *string     `json:"completion,omitempty"`
-	Local       string      `json:"local,omitempty"`
-	ErrorColumn *int        `json:"error_column,omitempty"`
-	Argv        []string    `json:"argv,omitempty"`
-	Challenge   bool        `json:"challenge,omitempty"`
-	Secret      bool        `json:"secret,omitempty"`
-	Close       bool        `json:"close,omitempty"`
-	Stream      bool        `json:"stream,omitempty"`
-	Filter      *cli.Filter `json:"filter,omitempty"`
-	Notify      string      `json:"notify,omitempty"`
-	Privilege   *int        `json:"privilege,omitempty"`
+	Output      string         `json:"output"`
+	Prompt      string         `json:"prompt"`
+	Error       string         `json:"error,omitempty"`
+	Completion  *string        `json:"completion,omitempty"`
+	Local       string         `json:"local,omitempty"`
+	ErrorColumn *int           `json:"error_column,omitempty"`
+	Argv        []string       `json:"argv,omitempty"`
+	Challenge   bool           `json:"challenge,omitempty"`
+	Secret      bool           `json:"secret,omitempty"`
+	Close       bool           `json:"close,omitempty"`
+	Stream      bool           `json:"stream,omitempty"`
+	Filter      *cli.Filter    `json:"filter,omitempty"`
+	Notify      string         `json:"notify,omitempty"`
+	Privilege   *int           `json:"privilege,omitempty"`
+	Terminal    *terminalState `json:"terminal_settings,omitempty"`
 }
 
 func readManagementRequest(r io.Reader) (managementRequest, error) {
@@ -153,6 +154,7 @@ func Serve() error {
 		wasAuthenticated := login.authenticated
 		respond := func(response reply) {
 			if login.authenticated {
+				response.Terminal = login.syncLineTerminal()
 				level := session.Privilege
 				response.Privilege = &level
 			}

@@ -16,6 +16,8 @@ Consulted 2026-10-24:
 - [Configuration Fundamentals: R through setup](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/command/cf_command_ref/R_through_setup.html): reload scheduling and rename.
 - [Configuration Fundamentals: C commands](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/command/cf_command_ref/C_commands.html): copy operands and interactive filename selection.
 - [Configuration Fundamentals: F through K](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/command/cf_command_ref/F_through_K.html): `file prompt` confirmation policies and required information.
+- [Configuration Fundamentals: L through mode](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/command/cf_command_ref/L_through_mode.html): persistent terminal page length and its reset form.
+- [IOS XE 17 configuration partition examples](https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/syst-mgmt/b-system-management/m_cm-partition-0.pdf): canonical `line con` output and single-line versus VTY-range display.
 - [Configuration Fundamentals: show through show fm summary](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/command/cf_command_ref/show_through_show_fm_summary.html): filesystem types, aliases, flags and default-device marker.
 - [Configuration Fundamentals: show protocols through showmon](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/command/cf_command_ref/show_protocols_through_showmon.html): scheduled reload status, configuration display, version information.
 - [Configuration Fundamentals: terminal commands](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/command/cf_command_ref/slave_auto-sync_config_through_terminal-type.html): history, screen geometry, and terminal monitoring.
@@ -77,14 +79,16 @@ Consulted 2026-10-24:
 | Calendar policy | `ntp update-calendar`, `no` and `default` forms; disabled by default; NTP synchronization independent of RTC update policy; time configuration restarts only time-sync and rolls back on failure | Time-service and CLI policy tests; serial policy/save/reboot qualification |
 | Calendar EXEC privilege | `clock read-calendar` and `clock update-calendar` available at user EXEC; arbitrary date/time setting remains privileged | `TestClockEXECReachesNativeOperations` |
 | NVRAM clock fallback | `clock save interval 8..24` and its documented numbered `no` form; unavailable with a hardware calendar; persist only NTP update timestamps, enforce intervals across service restarts, restore before networking once per boot without rewinding a newer clock | `TestClockSaveIntervalGrammarAndPersistence`; `TestTrackingReferenceRequiresNetworkTime`; `TestSavedClockIntervalAndAuthority`; `TestSavedClockRestoresOnceBeforeNetworking`; `TestSavedClockDevicePolicyAndFailures`; three-cold-boot no-RTC KVM component qualification passed; the release gate now requires it |
-| Startup display | Documented missing-file response and `Using ... out of ... bytes` header; byte count comes from the same validated saved-file read; capacity is the enforced 256 KiB configuration slot; sanitized read failures | `TestStartupConfigurationOutputAndFailures`; serial workflow assertions added, new-image qualification pending |
-| Numbered configuration | `show running-config linenum`, numbered configuration lines below the unnumbered size header, output filtering after numbering, delegated visibility and file-access gates | `TestRunningConfigurationLineNumbers`; documented Configuration Fundamentals sample; new-image qualification pending |
-| Legacy secret import | Type 5 user and per-level enable secret import, native MD5-crypt verification, bounded canonical encoding and constant-time comparison; plaintext configuration continues to generate type 9 | `TestType5IndependentVectors` using independent OpenSSL vectors; `TestIOSSecretImportAndAlgorithms`; new-image authentication qualification pending |
+| Startup display | Documented missing-file response and `Using ... out of ... bytes` header; byte count comes from the same validated saved-file read; capacity is the enforced 256 KiB configuration slot; sanitized read failures | `TestStartupConfigurationOutputAndFailures`; iteration 17 serial qualification |
+| Numbered configuration | `show running-config linenum`, numbered configuration lines below the unnumbered size header, output filtering after numbering, delegated visibility and file-access gates | `TestRunningConfigurationLineNumbers`; documented Configuration Fundamentals sample; iteration 17 serial qualification |
+| Legacy secret import | Type 5 user and per-level enable secret import, native MD5-crypt verification, bounded canonical encoding and constant-time comparison; plaintext configuration continues to generate type 9 | `TestType5IndependentVectors` using independent OpenSSL vectors; `TestIOSSecretImportAndAlgorithms`; iteration 17 console/SSH authentication qualification |
 | Line usage | Authenticated uses counted per physical/virtual line; retained across management restart; reset on a full machine boot | `TestLineCountersSurviveManagementRestart`; console/SSH restart qualification |
 | Interface selection | Selected interface detail, description, and IP brief display; configured descriptions and observed link state; administrative shutdown forces protocol down | Interface display/dispatch tests; serial qualification |
 | File display | Native `more`, configuration aliases, contextual filesystem help, format selection, output filters, privilege checks, rooted regular-file reads, bounded decompression and terminal control handling | `TestMoreConfigurationAliasesAndPolicy`; `TestMoreNativeConfinementAndWorkingDirectory`; `TestFormatsAndTerminalSafety`; `TestCompressedIntegrityAndLimits`; new-image qualification pending |
 | Interface configuration display | `show running-config interface` with joined or separated type/index and optional `linenum`; selected-port output, delegated visibility and file-access gates; `(config-if)#` prompt | `TestInterfaceRunningConfiguration`; configuration replay tests; new-image qualification pending |
 | Interactive pager | `/` searches remaining output, `+` includes matching lines, `-` excludes them; first filter remains active while later searches are allowed; complete lines span API/log chunks; EOF and Ctrl-C/Z/^ stop output; exact-width lines do not acquire a spurious row | `os/tests/test-pager.c` with ASan/UBSan; native service compiler checks; new-image serial qualification pending |
+| Persistent line terminals | Console/VTY `history`, `history size`, `editing`, `length`, and `no`/`default` forms; independent VTY ranges; line history-size changes do not reenable disabled history; new sessions inherit saved defaults while unrelated edits preserve session overrides; canonical `line con`, single-VTY display and omitted default timeout | `TestLineTerminalPersistenceAndDefaults`; `TestLineTerminalValidationAndClone`; `TestLineTerminalPolicyAndSessionOverrides`; `TestLineTerminalDelegatedDisplay`; new-image serial qualification pending |
+| Word editing | Escape-D cuts the next word into the delete buffer; Escape-C/U/L capitalize, uppercase and lowercase the remaining word; upper/lowercase key variants and leading spaces are handled | `os/tests/test-line-editor.c` with ASan/UBSan; new-image serial qualification pending |
 
 Test names identify executable evidence, not a declaration of complete IOS
 compatibility. The VM report identifies the exact tested system image hash.
@@ -93,6 +97,12 @@ the same command transcript against a licensed ISR 4331 IOS XE instance, and
 therefore do not establish byte-for-byte prompt/output equivalence. Differences
 between Cisco platforms and releases mean that a future device transcript must
 identify its precise 17.12 maintenance release before serving as that oracle.
+
+The iteration 17 serial, AAA and USB reports bind to system image SHA-256
+`48bec8954e673b2bd97db325588cda0675864ebca352555b39322148fb17e669`
+and source build
+`a272f0e1cb1fe82abc070979a42581bb311955958313d9b5dfec2e0aaef5773c`.
+Later implementations marked pending are not covered by those reports.
 
 ## Platform boundaries and outstanding differences
 
@@ -173,9 +183,10 @@ launcher disks on a KVM host. The script tests actual console prompts and a
 complete reboot, not just direct Go calls.
 
 `tools/qualify-management.py --artifacts <signed-artifacts> --output <new-directory>`
-prepares disposable launcher disks and runs both the serial and console/SSH AAA
-suites sequentially on KVM. Its result binds both reports to the signed image
-hash. The development-release workflow requires this gate and publishes its
+prepares disposable launcher disks and runs the serial, console/SSH AAA and
+no-RTC clock-restoration suites sequentially on KVM. Its result binds the console
+reports to the signed image hash and the clock report to the exact kernel and
+source identity. The development-release workflow requires this gate and publishes its
 report as `management-qualification.json`; it fails rather than skipping the
 checks when its runner lacks KVM. Test disks and private SSH material are not
 included in release assets or failure diagnostics.

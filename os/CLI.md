@@ -62,6 +62,11 @@ returns to login, or waits for RETURN if local login is not configured.
 Ctrl-V inserts a literal question mark.
 Quoted arguments have no shell expansion or substitution. `terminal length 0`
 disables pagination; `show history` and `show terminal` inspect session settings.
+Under `line console 0` or a `line vty` range, `length`, `history`,
+`history size` and `editing` set persistent defaults, with `no` and `default`
+forms. Changing line history size does not reenable disabled history. EXEC
+`terminal` overrides last for that session; a new login uses the saved line
+settings. `show line vty 4` also reports the configured defaults of an idle line.
 
 Local accounts accept `user freya priv 15 password 0 TEXT` and
 `username freya privilege 15 secret 0 TEXT`. Both hash the plaintext input;

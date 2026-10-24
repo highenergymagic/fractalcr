@@ -34,7 +34,7 @@ def command(c,text,user=False):
 def login(c,user,password):
     c.sendline(user);c.expect_exact('Password: ');c.sendline(password);prompt(c,user=user=='reader')
     assert password not in c.before,'password echoed'
-def ssh_login(user,password):
+def ssh_login(user,password,keep_line_defaults=False):
     # Line policy is reconciled by the SSH service once per second. Wait for
     # its listener after re-enabling VTY transport; never retry authentication.
     deadline=time.monotonic()+15
@@ -51,7 +51,8 @@ def ssh_login(user,password):
             if time.monotonic() >= deadline or not any(s in diagnostic for s in ['Connection reset','Connection refused','Connection closed']): raise
             time.sleep(.25)
     c.sendline(password);c.expect_exact('Press RETURN to get started!');c.sendline('');prompt(c,user=user=='reader')
-    command(c,'terminal width 512',user=user=='reader');command(c,'terminal length 0',user=user=='reader')
+    command(c,'terminal width 512',user=user=='reader')
+    if not keep_line_defaults: command(c,'terminal length 0',user=user=='reader')
     return c
 ADMIN='Qualification-admin-410!';READER='Qualification-reader-410!';ENABLE='Qualification-enable-410!'
 try:
@@ -169,7 +170,24 @@ try:
     child.sendline('enable');child.expect_exact('Password: ');child.sendline(ENABLE);prompt(child)
     for line in ['conf t','line vty 0 15','transport input none','line vty 0 1','transport input ssh','exec-timeout 10','end']:
         assert '% ' not in command(child,line)
-    first=ssh_login('admin',ADMIN);second=ssh_login('reader',READER)
+    for line in ['conf t','line vty 0','length 20','history size 31',
+                 'line vty 1','length 13','history size 11','no history','no editing','end']:
+        assert '% ' not in command(child,line)
+    first=ssh_login('admin',ADMIN,True);second=ssh_login('reader',READER,True)
+    assert 'Length: 20 lines' in command(first,'show terminal | include Length')
+    assert 'History is enabled, history size is 31.' in command(first,'show terminal | include History')
+    assert 'Length: 13 lines' in command(second,'show terminal | include Length',user=True)
+    assert 'History is disabled, history size is 11.' in command(second,'show terminal | include History',user=True)
+    assert 'Editing is disabled.' in command(second,'show terminal | include Editing',user=True)
+    for line in ['conf t','line vty 1','history size 9','end']: command(child,line)
+    time.sleep(1.2)  # Let the idle second line receive its policy heartbeat.
+    assert 'History is disabled, history size is 9.' in command(second,'show terminal | include History',user=True)
+    assert 'history size is 31.' in command(first,'show terminal | include History')
+    for line in ['conf t','line vty 0 1','default length','default history size','default history','default editing','end']:
+        command(child,line)
+    time.sleep(1.2)
+    command(first,'terminal length 0'); command(second,'terminal length 0',user=True)
+    check('SSH sessions inherit individual VTY history, editing and page settings; live policy changes affect only the selected line')
     users=command(first,'show users')
     assert 'vty 0' in users and 'vty 1' in users,users
     for line in ['conf t','line vty 1','exec-timeout 0 3','end']: assert '% ' not in command(child,line)

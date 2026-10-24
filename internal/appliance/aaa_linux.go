@@ -59,6 +59,8 @@ type loginSession struct {
 	last                             time.Time
 	activated                        time.Time
 	terminal                         terminalState
+	lineTerminal                     config.LineTerminal
+	lineTerminalSet                  bool
 	noticeSequence                   uint64
 	pendingOutput                    *cli.Filter
 	outputCommand                    []string
@@ -143,6 +145,7 @@ func (s *loginSession) challenge() reply {
 	return reply{Prompt: prompt, Challenge: true, Secret: secret}
 }
 func (s *loginSession) logout() {
+	s.lineTerminalSet = false
 	s.workingDirectory = ""
 	s.pendingFile = nil
 	s.pendingReload = nil

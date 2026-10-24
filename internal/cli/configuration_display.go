@@ -163,7 +163,7 @@ func configurationMode(words []string) string {
 	case "interface", "container", "network", "volume":
 		return words[0]
 	case "line":
-		if len(words) > 1 && words[1] == "console" {
+		if len(words) > 1 && (words[1] == "console" || words[1] == "con") {
 			return "line-console"
 		}
 		return "line-vty"

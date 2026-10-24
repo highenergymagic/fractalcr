@@ -32,6 +32,16 @@ int main(void) {
     editor_feed(&e,25); assert(!strcmp(e.line,"one two three"));
     type("\033y"); assert(!strcmp(e.line,"one two one two "));
     puts("PASS word movement, Ctrl-U/Ctrl-W deletion and kill-ring recall");
+    editor_clear(&e);type("  fIRst SECOND third");editor_feed(&e,1);
+    type("\033c");assert(!strcmp(e.line,"  First SECOND third") && e.cursor==7);
+    type("\033L");assert(!strcmp(e.line,"  First second third") && e.cursor==14);
+    type("\033u");assert(!strcmp(e.line,"  First second THIRD") && e.cursor==20);
+    editor_feed(&e,1);type("\033D");assert(!strcmp(e.line," second THIRD") && e.cursor==0);
+    editor_feed(&e,25);assert(!strcmp(e.line,"  First second THIRD"));
+    editor_feed(&e,1);editor_feed(&e,6);editor_feed(&e,6);editor_feed(&e,6);
+    type("\033u");assert(!strcmp(e.line,"  FIRST second THIRD") && e.cursor==7);
+    editor_feed(&e,5);type("\033d\033c\033u\033l");assert(e.cursor==e.length);
+    puts("PASS escape word deletion, kill-ring recall and case conversions handle spaces, partial words and end of line");
     editor_clear(&e); type("ab"); editor_feed(&e,20); assert(!strcmp(e.line,"ba"));
     assert(editor_feed(&e,3)==EDIT_CANCEL && !e.length);
     type("draft"); assert(editor_feed(&e,26)==EDIT_END && !e.length);

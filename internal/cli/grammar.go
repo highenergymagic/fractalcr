@@ -486,6 +486,7 @@ func init() {
 	}
 	for _, mode := range []string{"line-console", "line-vty"} {
 		modeCommands[mode] = append(modeCommands[mode], "no exec-timeout", "default exec-timeout")
+		modeCommands[mode] = append(modeCommands[mode], "length <0-512>", "no length", "default length", "editing", "no editing", "default editing", "history", "no history", "default history", "history size <0-256>", "no history size", "default history size")
 	}
 	// File options are ordered keywords, not a Unix argument pass-through.
 	for _, flags := range []string{"", "/all ", "/recursive ", "/all /recursive ", "/recursive /all "} {

@@ -191,6 +191,11 @@ try:
     command('conf t', 'config'); send('\x10'); prompt('config'); expect('file prompt noisy')
     send('\x15'); prompt('config'); command('no file prompt', 'config'); send('\x1a'); prompt()
     check('Terminal display uses actual settings; editing toggles work and EXEC/configuration histories stay separate')
+    send('show VERSion\x01\x1bf\x1bl\n')
+    assert 'Platform kernel:' in prompt()
+    send('show discard version\x01\x1bf\x1bd\n')
+    assert 'Platform kernel:' in prompt()
+    check('Escape word lowercase and deletion edit the command before parser execution')
     command('show version | redirect data0:version.txt')
     assert 'FractalCR Software' in command('more data0:version.txt')
     assert 'FractalCR Software' in command('more /ascii data0:version.txt | include FractalCR')
@@ -201,12 +206,12 @@ try:
     check('Native more displays files, configuration aliases, ASCII/hex formats and filtered output')
     command('terminal length 4')
     send('more system:running-config\n'); expect(re.escape(' --More-- '))
-    send('/^line console\r\n'); searched=expect(re.escape(' --More-- '))
-    assert 'filtering...' in searched and 'line console 0' in searched and 'hostname '+hostname not in searched, searched
+    send('/^line con\r\n'); searched=expect(re.escape(' --More-- '))
+    assert 'filtering...' in searched and 'line con 0' in searched and 'hostname '+hostname not in searched, searched
     send('q'); prompt()
     send('more system:running-config\n'); expect(re.escape(' --More-- '))
     send('+^line \n'); filtered=prompt()
-    assert 'line console 0' in filtered and 'line vty' in filtered and ' exec-timeout' not in filtered, filtered
+    assert 'line con 0' in filtered and 'line vty' in filtered and ' exec-timeout' not in filtered, filtered
     for interrupt in ['\x1a', '\x1e']:
         send('more system:running-config\n'); expect(re.escape(' --More-- ')); send(interrupt); prompt()
     send('show history\n'); expect(re.escape(' --More-- '))
@@ -280,7 +285,7 @@ try:
     assert re.search(r'container-engine\s+running\s+(\d+)\s+(\d+)', after_time_policy).groups() == time_engine.groups(), after_time_policy
     check('Calendar synchronization is opt-in and policy changes restart only the time service without restarting Docker')
     section=command('show running-config | section line')
-    assert 'line console 0' in section and 'exec-timeout' in section and 'hostname ctr' not in section
+    assert 'line con 0' in section and 'transport input none' in section and 'hostname ctr' not in section
     check('Copy prompts, scheduled reload, show reload, cancellation and Ctrl-C work through the serial console')
     policy_before=command('show platform software service')
     policy_engine=re.search(r'container-engine\s+running\s+(\d+)\s+(\d+)', policy_before)
@@ -437,6 +442,25 @@ try:
     interfaces=command('show ip interface brief')
     assert 'Port-channel1' in interfaces and re.search(r'Vlan100\s+192\.0\.2\.100',interfaces),interfaces
     command('conf t', 'config'); command('file prompt quiet', 'config'); send('\x1a'); prompt()
+    command('conf t','config'); command('line con 0','config-line')
+    command('no history','config-line'); command('history size 35','config-line')
+    command('no editing','config-line'); command('length 12','config-line')
+    command('end')
+    assert 'History is disabled, history size is 35.' in command('show terminal | include History')
+    assert 'Editing is disabled.' in command('show terminal | include Editing')
+    assert 'Length: 12 lines' in command('show terminal | include Length')
+    command('conf t','config'); command('line con 0','config-line')
+    command('editing','config-line'); command('history','config-line')
+    command('exit','config'); command('line vty 0 4','config-line')
+    command('length 17','config-line'); command('history size 27','config-line'); command('end')
+    assert 'history size is 27.' in command('show line vty 4 | include History')
+    assert 'history size is 10.' in command('show line vty 5 | include History')
+    command('terminal length 0'); command('terminal history size 7')
+    command('conf t','config'); command('line con 0','config-line')
+    command('exec-timeout 10','config-line'); command('end')
+    assert 'History is enabled, history size is 7.' in command('show terminal | include History')
+    assert 'Length: 0 lines' in command('show terminal | include Length')
+    check('Line history, editing and page length apply natively; VTY ranges stay separate and unrelated edits preserve EXEC overrides')
     command('write memory')
     check('Packaged kernel creates a native port-channel and VLAN and applies its address from configuration mode')
     command('conf t', 'config')
@@ -445,6 +469,10 @@ try:
     expect(re.escape('System configuration has been modified. Save? [yes/no]: ')); send('no\n')
     expect(re.escape('Proceed with reload? [confirm]')); send('\n'); finish()
     hostname='thething'; spawn(); login()
+    assert 'Length: 12 lines' in command('show terminal | include Length')
+    assert 'History is enabled, history size is 35.' in command('show terminal | include History')
+    assert 'Length: 17 lines' in command('show line vty 4 | include Length')
+    check('Saved console and VTY terminal defaults survive cold boot and replace the previous session overrides')
     command('terminal length 0'); command('terminal width 512')
     startup = command('show startup-config')
     assert 'thething' in startup and 'testadmin' in startup and password not in startup and 'unsaved' not in startup

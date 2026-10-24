@@ -213,17 +213,43 @@ func (c Config) CLI() string {
 		}
 		line(" exit")
 	}
-	line("!\nline console 0\n exec-timeout %d %d", c.AAA.ConsoleTimeout/60, c.AAA.ConsoleTimeout%60)
+	terminalLines := func(t LineTerminal) {
+		if t.Length != 24 {
+			line(" length %d", t.Length)
+		}
+		if !t.Editing {
+			line(" no editing")
+		}
+		if t.HistorySize != 10 {
+			line(" history size %d", t.HistorySize)
+		}
+		if !t.History {
+			line(" no history")
+		}
+	}
+	line("!\nline con 0")
+	if c.AAA.ConsoleTimeout != 600 {
+		line(" exec-timeout %d %d", c.AAA.ConsoleTimeout/60, c.AAA.ConsoleTimeout%60)
+	}
+	terminalLines(c.AAA.Terminal(0))
 	if c.AAA.Enabled {
 		line(" login local")
 	}
 	for first := 0; first < VTYCount; {
 		policy := c.AAA.Line(first)
 		last := first
-		for last+1 < VTYCount && c.AAA.Line(last+1) == policy {
+		for last+1 < VTYCount && c.AAA.Line(last+1).Equal(policy) {
 			last++
 		}
-		line("!\nline vty %d %d\n exec-timeout %d %d", first, last, policy.Timeout/60, policy.Timeout%60)
+		if first == last {
+			line("!\nline vty %d", first)
+		} else {
+			line("!\nline vty %d %d", first, last)
+		}
+		if policy.Timeout != 600 {
+			line(" exec-timeout %d %d", policy.Timeout/60, policy.Timeout%60)
+		}
+		terminalLines(policy.Terminal.Effective())
 		if c.AAA.Enabled {
 			line(" login local")
 		}

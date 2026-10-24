@@ -26,6 +26,31 @@ func defaultTerminal() terminalState {
 	return terminalState{Length: 24, Width: 80, HistorySize: 10, History: true, Editing: true}
 }
 
+// Push line-policy changes as objects. Unchanged policy fields must not reset
+// a user's EXEC terminal overrides on every heartbeat or unrelated edit.
+func (s *loginSession) syncLineTerminal() *terminalState {
+	t := s.cli.Running.AAA.Terminal(terminalLine(s))
+	old, initial := s.lineTerminal, !s.lineTerminalSet
+	if !initial && old == t {
+		return nil
+	}
+	if initial || old.Length != t.Length {
+		s.terminal.Length = uint(t.Length)
+	}
+	if initial || old.HistorySize != t.HistorySize {
+		s.terminal.HistorySize = uint(t.HistorySize)
+	}
+	if initial || old.History != t.History {
+		s.terminal.History = t.History
+	}
+	if initial || old.Editing != t.Editing {
+		s.terminal.Editing = t.Editing
+	}
+	s.lineTerminal, s.lineTerminalSet = t, true
+	state := s.terminal
+	return &state
+}
+
 func terminalLine(s *loginSession) int {
 	if s.transport == "ssh" {
 		return s.vty + 1
@@ -52,6 +77,9 @@ func terminalDuration(d time.Duration) string {
 
 func terminalDisplay(s *loginSession, number int, c config.Config, now time.Time) string {
 	state := defaultTerminal()
+	policy := c.AAA.Terminal(number)
+	state.Length, state.HistorySize = uint(policy.Length), uint(policy.HistorySize)
+	state.History, state.Editing = policy.History, policy.Editing
 	if s != nil {
 		state = s.terminal
 	}

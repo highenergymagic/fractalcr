@@ -55,6 +55,9 @@ func defaultCommandLevel(mode string, words []string) int {
 	return 15
 }
 func (s *Session) aaaCommand(w []string) (bool, string, error) {
+	if s.lineTerminalCommand(w) {
+		return true, "", nil
+	}
 	if len(w) > 0 && (w[0] == "enable" || w[0] == "username") {
 		for _, i := range []int{1, 2, 4} {
 			if i >= len(w) || w[i] != "algorithm-type" || (w[0] == "enable" && i != 1) || (w[0] == "username" && (i == 1 || (i == 4 && w[2] != "privilege"))) {

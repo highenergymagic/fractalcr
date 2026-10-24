@@ -63,3 +63,50 @@ func TestTerminalMetadataValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestLineTerminalPolicyAndSessionOverrides(t *testing.T) {
+	c := config.Default()
+	p := config.DefaultLineTerminal()
+	p.Length = 12
+	p.HistorySize = 35
+	p.History = false
+	p.Editing = false
+	c.AAA.ConsoleTerminal = &p
+	s := &loginSession{cli: &cli.Session{Running: c}, terminal: defaultTerminal()}
+	s.terminal.TX = 115200
+	got := s.syncLineTerminal()
+	if got == nil || got.Length != 12 || got.History || got.Editing || got.HistorySize != 35 || got.TX != 115200 {
+		t.Fatalf("initial policy: %+v", got)
+	}
+	s.terminal.Length = 0
+	s.terminal.History = true
+	s.terminal.HistorySize = 7
+	if s.syncLineTerminal() != nil {
+		t.Fatal("unchanged line reset session overrides")
+	}
+	s.cli.Running.AAA.ConsoleTerminal.Editing = true
+	got = s.syncLineTerminal()
+	if got == nil || got.Length != 0 || !got.History || got.HistorySize != 7 || !got.Editing {
+		t.Fatalf("unrelated fields reset: %+v", got)
+	}
+	s.lineTerminalSet = false
+	got = s.syncLineTerminal()
+	if got.Length != 12 || got.History || got.HistorySize != 35 {
+		t.Fatal("new session retained EXEC overrides")
+	}
+	// Inactive line output reports saved policy, never the active console's overrides.
+	p2 := p
+	p2.HistorySize = 19
+	p2.Length = 0
+	s.cli.Running.AAA.VTY = map[int]config.VTYLine{2: {Terminal: &p2}}
+	out := terminalDisplay(nil, 3, s.cli.Running, time.Now())
+	if !strings.Contains(out, "Length: 0 lines") || !strings.Contains(out, "history size is 19") {
+		t.Fatal(out)
+	}
+	s.transport = "ssh"
+	s.vty = 2
+	s.lineTerminalSet = false
+	if got = s.syncLineTerminal(); got.Length != 0 || got.HistorySize != 19 {
+		t.Fatal("VTY policy not applied")
+	}
+}
