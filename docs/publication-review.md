@@ -26,9 +26,12 @@ and document the development-preview status. Component checkouts remain pinned
 to exact commits. No release images or private build outputs are published by
 this change; GitHub source ZIP downloads still omit submodules.
 
-Private vulnerability reporting is enabled separately on each repository when
-its visibility changes. The three obsolete read-only integration deploy keys
-and corresponding Actions secrets are retired after public checkout works.
+All four repositories are public. Private vulnerability reporting, secret
+scanning and secret-scanning push protection were enabled and verified on each.
+An unauthenticated recursive clone of the integration repository succeeded,
+including all three pinned components. The three obsolete read-only integration
+deploy keys and corresponding Actions secrets were then removed and their
+absence verified.
 There are no self-hosted runners registered on the integration repository.
 Signing keys, build caches and interactive datastore images remain on private
 development machines.
