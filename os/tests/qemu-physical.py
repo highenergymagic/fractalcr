@@ -127,6 +127,21 @@ try:
         time.sleep(2)
     else: raise AssertionError('chrony did not synchronize: '+output)
     check('supervised chrony synchronized to an actual NTP response source')
+    assert 'Time source is NTP' in command('show clock detail')
+    before_time = command('show platform software service')
+    engine_identity = re.search(r'container-engine\s+running\s+(\d+)\s+(\d+)', before_time)
+    assert engine_identity, before_time
+    for policy in ['ntp update-calendar', 'no ntp update-calendar']:
+        command('conf t', 'steel(config)# '); command(policy, 'steel(config)# '); command('end')
+        for _ in range(45):
+            output = command('show ntp status')
+            if 'Clock is synchronized' in output: break
+            time.sleep(2)
+        else: raise AssertionError('NTP did not recover after calendar policy change: '+output)
+        assert 'Time source is NTP' in command('show clock detail')
+        after_time = command('show platform software service')
+        assert re.search(r'container-engine\s+running\s+(\d+)\s+(\d+)', after_time).groups() == engine_identity.groups(), after_time
+    check('NTP synchronization remains visible with RTC updates enabled or disabled and time policy changes preserve Docker')
     for cycle in range(3):
         command('request platform software service networking restart')
         deadline = time.monotonic() + 30
