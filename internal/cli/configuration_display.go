@@ -1,9 +1,23 @@
 package cli
 
 import (
+	"fmt"
 	"fractalcr/internal/config"
 	"strings"
 )
+
+func runningConfigurationDisplay(text string, numbered bool) string {
+	header := fmt.Sprintf("Building configuration...\n\nCurrent configuration : %d bytes\n", len(text))
+	if !numbered {
+		return header + text
+	}
+	var b strings.Builder
+	b.WriteString(header)
+	for index, line := range strings.Split(strings.TrimSuffix(text, "\n"), "\n") {
+		fmt.Fprintf(&b, " %d : %s\n", index+1, line)
+	}
+	return b.String()
+}
 
 // The configuration model renders CLI commands; the same parser policy used
 // to edit those commands controls their visibility. This never executes a

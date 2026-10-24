@@ -1,6 +1,33 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+func TestType5IndependentVectors(t *testing.T) {
+	// Generated independently with OpenSSL passwd -1 on the Linux test host.
+	for _, test := range []struct{ password, encoded string }{
+		{"password", "$1$salt$qJH7.N4xYta3aEG/dfqo/0"},
+		{"cisco", "$1$abcd$2hDGYdE0UrwK2pqoiF6BB1"},
+		{"synthetic-password", "$1$12345678$ucEINfSoBuudVOjQhEiYE/"},
+	} {
+		if err := ValidateSecret(test.encoded); err != nil {
+			t.Fatal(err)
+		}
+		if !CheckSecret(test.encoded, test.password) || CheckSecret(test.encoded, "wrong") || CheckSecret(test.encoded, strings.Repeat("x", 257)) {
+			t.Fatal(test.encoded)
+		}
+		if got := SecretCLI(test.encoded); got != "5 "+test.encoded {
+			t.Fatal(got)
+		}
+	}
+	for _, bad := range []string{"$1$salt$short", "$1$123456789$qJH7.N4xYta3aEG/dfqo/0", "$1$salt$qJH7.N4xYta3aEG/dfqo/z", "$1$salt$qJH7.N4xYta3aEG/dfqo/0$", "$1$salt\n$qJH7.N4xYta3aEG/dfqo/0"} {
+		if ValidateSecret(bad) == nil || CheckSecret(bad, "password") {
+			t.Fatal("malformed type 5 accepted", bad)
+		}
+	}
+}
 
 // Independent published vectors: hashcat v6.2.6 module_09200.c/module_09300.c.
 func TestIOSSecretPublishedVectors(t *testing.T) {

@@ -78,6 +78,9 @@ func (a AAA) HashIOSSecret(kind, password string) (string, error) {
 }
 
 func SecretCLI(encoded string) string {
+	if strings.HasPrefix(encoded, "$1$") {
+		return "5 " + encoded
+	}
 	if strings.HasPrefix(encoded, "$8$") {
 		return "8 " + encoded
 	}

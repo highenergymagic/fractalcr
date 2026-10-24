@@ -31,6 +31,7 @@ Consulted 2026-10-24:
 - [Running configuration at lower privilege levels](https://www.cisco.com/c/en/us/support/docs/routers/asr-1000-series-aggregation-services-routers/212149-Configure-IOS-XE-to-display-full-show-ru.html): configuration visibility and the separately authorized `view full` variant.
 - [Configuration Fundamentals: write commands](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/command/cf_command_ref/test_cable-diagnostics_through_xmodem.html): `write terminal` as a running-configuration display alias.
 - [Protecting secrets](https://www.cisco.com/c/en/us/about/trust-center/resilient-infrastructure/protecting-secrets.html): type 8 and 9 password verifiers.
+- [IOS XE 17.12 secret migration](https://www.cisco.com/content/en/us/td/docs/switches/lan/catalyst9500/software/release/17-12/configuration_guide/sec/b_1712_sec_9500_cg.pdf): type 5 imports and platform-dependent conversion to convoluted type 9. This Catalyst reference does not establish ISR conversion behavior.
 - [Basic System Management: A through M](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/bsm/command/bsm-cr-book/bsm-cr-a1.html): software/hardware clocks, timezone offsets and summer-time transitions.
 - [Basic System Management: N through T](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/bsm/command/bsm-cr-book/m_bsm-cr-n1.html): opt-in periodic NTP calendar updates.
 - [Interface and Hardware commands](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/interface/command/ir-cr-book/ir-s4.html): selected-interface status and description displays.
@@ -77,6 +78,8 @@ Consulted 2026-10-24:
 | Calendar EXEC privilege | `clock read-calendar` and `clock update-calendar` available at user EXEC; arbitrary date/time setting remains privileged | `TestClockEXECReachesNativeOperations` |
 | NVRAM clock fallback | `clock save interval 8..24` and its documented numbered `no` form; unavailable with a hardware calendar; persist only NTP update timestamps, enforce intervals across service restarts, restore before networking once per boot without rewinding a newer clock | `TestClockSaveIntervalGrammarAndPersistence`; `TestTrackingReferenceRequiresNetworkTime`; `TestSavedClockIntervalAndAuthority`; `TestSavedClockRestoresOnceBeforeNetworking`; `TestSavedClockDevicePolicyAndFailures`; no-calendar hardware boot qualification remains pending |
 | Startup display | Documented missing-file response and `Using ... out of ... bytes` header; byte count comes from the same validated saved-file read; capacity is the enforced 256 KiB configuration slot; sanitized read failures | `TestStartupConfigurationOutputAndFailures`; serial workflow assertions added, new-image qualification pending |
+| Numbered configuration | `show running-config linenum`, numbered configuration lines below the unnumbered size header, output filtering after numbering, delegated visibility and file-access gates | `TestRunningConfigurationLineNumbers`; documented Configuration Fundamentals sample; new-image qualification pending |
+| Legacy secret import | Type 5 user and per-level enable secret import, native MD5-crypt verification, bounded canonical encoding and constant-time comparison; plaintext configuration continues to generate type 9 | `TestType5IndependentVectors` using independent OpenSSL vectors; `TestIOSSecretImportAndAlgorithms`; new-image authentication qualification pending |
 | Line usage | Authenticated uses counted per physical/virtual line; retained across management restart; reset on a full machine boot | `TestLineCountersSurviveManagementRestart`; console/SSH restart qualification |
 | Interface selection | Selected interface detail, description, and IP brief display; configured descriptions and observed link state; administrative shutdown forces protocol down | Interface display/dispatch tests; serial qualification |
 
@@ -104,9 +107,11 @@ they must not be hidden behind accepted no-op keywords:
   existing-file limit for append. Copy's durable configuration representation
   is the appliance JSON model.
 - Local AAA is not all IOS AAA: CLI views,
-  additional Cisco password encodings (including type 5/6/14),
+  additional Cisco password encodings (including type 6/14),
   and additional line/login settings need separate implementation and
   conformance work.
+  Type 5 imports now authenticate and persist, but automatic conversion to
+  convoluted type 9 (`$14$`) is not implemented; imported type 5 remains type 5.
   External RADIUS/TACACS+ services remain outside the previously agreed
   [local AAA scope](../os/docs/aaa-and-management.md); they are not implemented.
   Configurable privileges now cover the appliance parser modes and native

@@ -215,6 +215,9 @@ func (s *Session) aaaCommand(w []string) (bool, string, error) {
 			i += 2
 		}
 		if i < len(w) {
+			if w[i] == "password" && i+1 < len(w) && slices.Contains([]string{"5", "8", "9"}, w[i+1]) {
+				return true, "", errors.New("use secret for an irreversible password encoding")
+			}
 			if w[i] == "secret" && i+1 < len(w) && w[i+1] == "7" {
 				return true, "", errors.New("type 7 is a password encoding, not a secret encoding")
 			}
@@ -286,8 +289,12 @@ func (s *Session) aaaCommand(w []string) (bool, string, error) {
 // Type 0 describes input, never the on-disk representation. Do not silently
 // treat an imported Cisco ciphertext as the password a user must log in with.
 func (s *Session) hashCLISecret(words []string) (string, error) {
-	if len(words) > 0 && (words[0] == "8" || words[0] == "9") {
-		if len(words) != 2 || !strings.HasPrefix(words[1], "$"+words[0]+"$") {
+	if len(words) > 0 && (words[0] == "5" || words[0] == "8" || words[0] == "9") {
+		kind := words[0]
+		if kind == "5" {
+			kind = "1"
+		}
+		if len(words) != 2 || !strings.HasPrefix(words[1], "$"+kind+"$") {
 			return "", errors.New("invalid encoded secret")
 		}
 		if err := config.ValidateSecret(words[1]); err != nil {

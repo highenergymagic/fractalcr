@@ -6,7 +6,7 @@ func init() {
 		if prefix == "enable secret level <1-15>" {
 			secretPrefix = prefix
 		}
-		for _, kind := range []string{"8", "9"} {
+		for _, kind := range []string{"5", "8", "9"} {
 			configCommands = append(configCommands, Command{secretPrefix + " " + kind + " <SECRET...>", "Import an encoded secret", false})
 		}
 		if prefix != "enable secret level <1-15>" {

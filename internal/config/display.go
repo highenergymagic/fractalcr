@@ -241,6 +241,10 @@ func (c Config) CLI() string {
 }
 
 func ValidateSecret(encoded string) error {
+	if strings.HasPrefix(encoded, "$1$") {
+		_, err := md5SecretSalt(encoded)
+		return err
+	}
 	if strings.HasPrefix(encoded, "$8$") || strings.HasPrefix(encoded, "$9$") {
 		_, _, _, err := iosSecretParts(encoded)
 		return err

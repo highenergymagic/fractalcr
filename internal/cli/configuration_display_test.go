@@ -46,6 +46,33 @@ func TestStartupConfigurationOutputAndFailures(t *testing.T) {
 	}
 }
 
+func TestRunningConfigurationLineNumbers(t *testing.T) {
+	const body = "!\ninterface Ethernet0/0\n ip address 10.4.2.63 255.255.255.0\n no ip route-cache\n no ip mroute-cache\nend\n"
+	want := fmt.Sprintf("Building configuration...\n\nCurrent configuration : %d bytes\n", len(body)) +
+		" 1 : !\n 2 : interface Ethernet0/0\n 3 :  ip address 10.4.2.63 255.255.255.0\n 4 :  no ip route-cache\n 5 :  no ip mroute-cache\n 6 : end\n"
+	if got := runningConfigurationDisplay(body, true); got != want {
+		t.Fatalf("%q != %q", got, want)
+	}
+	s := session(t)
+	execute(t, s, "conf t", "hostname numbered", "username hidden privilege 15 secret hidden-password",
+		"file privilege 5", "privilege exec level 5 show running-config linenum", "privilege configure level 5 hostname", "end")
+	s.EnforcePrivilege, s.Privilege = true, 5
+	out, err := s.Execute("sh run lin")
+	if err != nil || !strings.Contains(out, " 2 : hostname numbered\n") || strings.Contains(out, "username hidden") {
+		t.Fatal(out, err)
+	}
+	if out, err := s.Execute("show running-config linenum | include hostname"); err != nil || out != " 2 : hostname numbered" {
+		t.Fatal(out, err)
+	}
+	if _, err := s.Execute("show running-config view full"); err == nil {
+		t.Fatal("numbering grant disclosed full view")
+	}
+	s.Running.AAA.FilePrivilege = nil
+	if _, err := s.Execute("show running-config linenum"); err == nil {
+		t.Fatal("numbered output bypassed file privilege")
+	}
+}
+
 func TestPrivilegeCatalogCoversConfigurationModes(t *testing.T) {
 	for mode := range modeCommands {
 		if !slices.Contains(privilegeModes, privilegeMode(mode)) {

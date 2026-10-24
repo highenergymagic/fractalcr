@@ -82,6 +82,7 @@ var execCommands = []Command{
 	{"configure terminal", "Enter configuration mode", false},
 	{"configure candidate", "Stage an explicit configuration transaction", false},
 	{"show running-config", "Running configuration", false},
+	{"show running-config linenum", "Running configuration with line numbers", false},
 	{"show running-config view full", "Full running configuration", false},
 	{"show running-config json", "Running configuration in interchange format", false},
 	{"show candidate-config", "Staged configuration", false},

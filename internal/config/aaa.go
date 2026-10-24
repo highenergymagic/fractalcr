@@ -128,6 +128,9 @@ func secretParts(encoded string) ([]byte, []byte, error) {
 	return salt, key, nil
 }
 func CheckSecret(encoded, password string) bool {
+	if strings.HasPrefix(encoded, "$1$") {
+		return checkMD5Secret(encoded, password)
+	}
 	if strings.HasPrefix(encoded, "$8$") || strings.HasPrefix(encoded, "$9$") {
 		return checkIOSSecret(encoded, password)
 	}

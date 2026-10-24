@@ -685,12 +685,12 @@ func memorySize(v string, minimum int) (int, error) {
 func (s *Session) operational(w []string) (string, error) {
 	line := strings.Join(w, " ")
 	switch line {
-	case "show running-config", "show running-config view full", "write terminal":
+	case "show running-config", "show running-config linenum", "show running-config view full", "write terminal":
 		text := s.configurationText(s.Running)
 		if line == "show running-config view full" {
 			text = s.Running.CLI()
 		}
-		return fmt.Sprintf("Building configuration...\n\nCurrent configuration : %d bytes\n%s", len(text), text), nil
+		return runningConfigurationDisplay(text, line == "show running-config linenum"), nil
 	case "show running-config json":
 		return string(s.Running.JSON()), nil
 	case "show candidate-config":
