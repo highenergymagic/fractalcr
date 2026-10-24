@@ -93,6 +93,11 @@ Use `privilege ... reset COMMAND` or `no privilege ... level LEVEL COMMAND`
 to remove an override; add `all` to reset descendants as well. The level in
 the `no` form does not need to match the previous assignment.
 
+Running configuration preserves `all` groups and narrower command exceptions.
+Partial resets preserve unrelated permissions and retain default parent levels
+when needed for safe CLI replay. Startup storage groups equal node assignments
+and has a 256 KiB limit; both loading and saving enforce that limit.
+
 Help, completion and execution use the current running policy. Pending file
 and reload dialogs recheck it before acting. Running native clients check their
 operation grant once per second and stop on revocation or loss of management;
@@ -105,8 +110,9 @@ display only configuration commands the user can modify. Grant
 granting configuration changes. JSON configuration views remain separate full
 exports with their own command permissions.
 
-File content access also requires the configured `file privilege` level,
-which defaults to 15. For example, delegating `copy` to level 5 requires both
+File content access, running/startup configuration displays, and `write terminal`
+also require the configured `file privilege` level, which defaults to 15.
+For example, delegating `copy` to level 5 requires both
 `privilege exec all level 5 copy` and `file privilege 5`. Reset file access with
 `no file privilege`. Directory metadata remains available in user EXEC.
 

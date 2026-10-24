@@ -45,7 +45,7 @@ func TestDaemonConfig(t *testing.T) {
 }
 func TestBoundedLoad(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "oversize")
-	if e := os.WriteFile(p, make([]byte, 65537), 0600); e != nil {
+	if e := os.WriteFile(p, make([]byte, MaxConfigBytes+1), 0600); e != nil {
 		t.Fatal(e)
 	}
 	if _, e := Load(p); e == nil {

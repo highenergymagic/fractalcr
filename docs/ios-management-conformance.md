@@ -44,6 +44,7 @@ Consulted 2026-10-24:
 | Context help | Word-boundary filesystem placeholder and mounted prefixes; partial filesystem help preserves the typed prefix; unique Tab completion | `TestIOSFilesystemHelpAndReloadGrammar`; `qemu-ios-workflow.py` |
 | Privilege | Console enable without a configured secret; remote sessions require a secret; explicit levels; disable never raises privilege; removable enable secret; cancel an enable challenge; configuration commands reach the configuration transaction | `TestIOSEnableConsoleAndVTY`; `TestIOSEnableDispatchDoesNotConsumeConfiguration`; serial/SSH AAA workflow |
 | Command privileges | `privilege mode [all] {level level \| reset} command-string` and `no` reset; parent-keyword assignments; descendant/submode assignment; privilege-filtered configuration help and execution; deterministic saved-policy replay | `TestCommandPrivilegeDelegationAndReplay`; `TestCommandPrivilegeParentsResetAndZero`; `TestPrivilegeAllIncludesSubmodesAndRevokesLive` |
+| Privilege configuration output | Retain the documented `all` form, including implicit EXEC parents; preserve narrower exceptions and defaults after partial resets; compact node groups in bounded startup storage | `TestPrivilegeAllRetainsDocumentedConfigurationForm`; `TestPrivilegeGroupsMatchNodeAssignmentsAcrossEdits`; `TestPrivilegeNestedGroupsAndPartialReset`; configuration capacity/load tests |
 | Command revocation | File, reload and output confirmations recheck current command policy; native client streams recheck the parsed operation, including after global options, without renewing idle deadlines | `TestDelegatedFileConfirmationRevokesOnPolicyChange`; `TestDelegatedCopySaveAndRevocation`; `TestReloadAndOutputRecheckCommandPolicy`; `TestNativeStreamGrantRevocationAndIdleDeadline`; expanded SSH qualification |
 | Delegated configuration output | Ordinary `show running-config` and `write terminal` show commands editable at the session level; `view full` requires a separate grant; read-only filters inherit the display command's level | `TestDelegatedRunningConfigurationVisibility`; expanded SSH qualification |
 | File access levels | `file privilege 0..15`, default 15; command permission and content-access permission are separate, including running/startup configuration displays and `write terminal`; changing either revokes pending file mutations | `TestFilePrivilegeIsIndependentFromCommandGrant`; `TestCopySaveRejectsDirtyTransactionAndRevokedFileAccess`; SSH file-access revocation check |
@@ -107,8 +108,9 @@ they must not be hidden behind accepted no-op keywords:
   External RADIUS/TACACS+ services remain outside the previously agreed
   [local AAA scope](../os/docs/aaa-and-management.md); they are not implemented.
   Configurable privileges now cover the appliance parser modes and native
-  workload operation paths. Exact ISR rendering of expanded `all` policies and
-  argument-node policies still needs comparison with a device transcript;
+  workload operation paths. The documented `all` example is matched. Exact ISR
+  formatting after partial group resets, including default ancestors and
+  argument-node exceptions, still needs comparison with a device transcript;
   per-option privilege overrides inside native workload clients are not exposed.
 - Reload warning cadence and reload-history output have not been fully matched.
   Scheduled reloads are not retained across a complete machine reboot.

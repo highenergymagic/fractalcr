@@ -145,6 +145,8 @@ func Decode(b []byte) (Config, error) {
 	return c, nil
 }
 
+const MaxConfigBytes = 256 * 1024
+
 func Load(path string) (Config, error) {
 	f, err := openConfig(path)
 	if err != nil {
@@ -155,14 +157,14 @@ func Load(path string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	if !st.Mode().IsRegular() || st.Size() > 65536 {
-		return Config{}, errors.New("configuration must be a regular file of at most 64 KiB")
+	if !st.Mode().IsRegular() || st.Size() > MaxConfigBytes {
+		return Config{}, errors.New("configuration must be a regular file of at most 256 KiB")
 	}
-	b, err := io.ReadAll(io.LimitReader(f, 65537))
+	b, err := io.ReadAll(io.LimitReader(f, MaxConfigBytes+1))
 	if err != nil {
 		return Config{}, err
 	}
-	if len(b) > 65536 {
+	if len(b) > MaxConfigBytes {
 		return Config{}, errors.New("configuration too large")
 	}
 	return Decode(b)
@@ -186,8 +188,8 @@ func (c Config) Validate() error {
 	if err := c.Clock.Validate(); err != nil {
 		return err
 	}
-	if len(c.JSON()) > 65536 {
-		return errors.New("configuration exceeds 64 KiB")
+	if len(c.JSON()) > MaxConfigBytes {
+		return errors.New("configuration exceeds 256 KiB")
 	}
 	if c.Version != 1 {
 		return errors.New("unsupported configuration version")

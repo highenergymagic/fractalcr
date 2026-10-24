@@ -102,6 +102,9 @@ try:
                  'privilege exec level 5 request container-engine events', 'end']:
         command(admin, line)
     operator = ssh_login('operator', READER)
+    policy = command(admin, 'show running-config | include ^privilege')
+    assert 'privilege exec all level 5 copy' in policy and '<URL>' not in policy, policy
+    check('All-policy commands retain their canonical grouped form in running configuration')
     for line in ['conf t', 'hostname ctr', 'hostname ctr-test', 'end']: command(operator, line)
     command(operator, 'conf t')
     assert 'Invalid input' in command(operator, f'username forbidden privilege 15 secret {READER}')
@@ -231,11 +234,13 @@ try:
     assert '"transport":"ssh"' in accounting and '"event":"command"' in accounting
     assert all(secret not in accounting for secret in [ADMIN,READER,ENABLE])
     check('persistent AAA accounting records identities and command classes without plaintext secrets')
+    for line in ['conf t', 'privilege exec all level 5 show ip', 'end']: command(admin, line)
     command(admin,'write memory')
     reload_appliance(admin);child.expect(pexpect.EOF,timeout=180);stop_qemu(child)
     child=spawn();child.expect_exact('Username: ');login(child,'admin',ADMIN)
-    check('AAA configuration and SSH host identity persist across a complete reboot')
     admin2=ssh_login('admin',ADMIN);assert 'privilege level is 15' in command(admin2,'show privilege')
+    assert 'privilege exec all level 5 show ip' in command(admin2, 'show running-config | include ^privilege')
+    check('AAA configuration, grouped command privileges and SSH host identity persist across a complete reboot')
     reload_appliance(admin2);child.expect(pexpect.EOF,timeout=180);stop_qemu(child)
     child=spawn(recovery=True);prompt(child)
     for line in ['terminal length 0','terminal width 512','configure candidate','do copy startup-config candidate-config',f'username admin privilege 15 secret {ADMIN}-recovered']:

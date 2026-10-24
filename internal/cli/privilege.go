@@ -90,10 +90,7 @@ func (s *Session) policyGrammar() *node {
 
 func (s *Session) applyPrivilegeLevels(root *node) *node {
 	defaultNodeLevels(root, s.Mode, nil)
-	rules := map[string]int{}
-	for _, r := range s.Running.AAA.CommandPrivileges {
-		rules[r.Mode+"\x00"+r.Command] = r.Level
-	}
+	rules := effectivePrivileges(s.Running.AAA)
 	var apply func(*node, []string, int, int)
 	apply = func(n *node, path []string, parentDefault, parentLevel int) {
 		n.level = n.defaultLevel
@@ -350,53 +347,54 @@ func (s *Session) privilegeCommand(w []string) (bool, error) {
 	if !ok {
 		return false, nil
 	}
-	path, n, err := privilegePath(r.mode, w[r.start:])
+	path, _, err := privilegePath(r.mode, w[r.start:])
 	if err != nil {
 		return true, err
 	}
 	entries := map[string]config.CommandPrivilege{}
-	for _, rule := range s.Candidate.AAA.CommandPrivileges {
-		entries[rule.Mode+"\x00"+rule.Command] = rule
+	for _, rule := range s.Candidate.AAA.OrderedPrivileges() {
+		entries[privilegeKey(rule)] = rule
 	}
-	set := func(mode string, path []string) {
-		command := strings.Join(path, " ")
-		key := mode + "\x00" + command
-		if r.reset {
-			delete(entries, key)
-		} else {
-			entries[key] = config.CommandPrivilege{Mode: mode, Command: command, Level: r.level}
-		}
+	target := config.CommandPrivilege{Mode: r.mode, Command: strings.Join(path, " "), Level: r.level, All: r.all}
+	targets := map[string]config.CommandPrivilege{}
+	if r.all {
+		targets = privilegeGroup(target)
 	}
 	for i := 1; i <= len(path); i++ {
-		set(r.mode, path[:i])
+		parent := config.CommandPrivilege{Mode: r.mode, Command: strings.Join(path[:i], " "), Level: r.level}
+		targets[privilegeKey(parent)] = parent
 	}
-	var descend func(string, *node, []string)
-	descend = func(mode string, n *node, path []string) {
-		if len(path) > 0 {
-			set(mode, path)
+	if r.reset || r.all {
+		if r.reset {
+			materializePrivilegeGroups(entries, targets)
+		} else {
+			removeCoveredPrivilegeGroups(entries, targets)
 		}
-		for _, c := range n.children {
-			if c.word != "do" {
-				descend(mode, c, append(append([]string(nil), path...), c.word))
+		for key := range targets {
+			delete(entries, key)
+		}
+	}
+	if !r.reset {
+		if r.all {
+			entries[privilegeKey(target)] = target
+			for i := 1; i < len(path); i++ {
+				parent := config.CommandPrivilege{Mode: r.mode, Command: strings.Join(path[:i], " "), Level: r.level}
+				entries[privilegeKey(parent)] = parent
+			}
+		} else {
+			for key, rule := range targets {
+				entries[key] = rule
 			}
 		}
 	}
-	if r.all {
-		descend(r.mode, n, path)
-		if r.mode == "configure" {
-			// The parser's configuration entry commands select these submodes.
-			for _, entry := range []struct{ prefix, mode string }{{"interface", "interface"}, {"line", "line"}, {"container", "container"}, {"network", "network"}, {"storage datastore name", "storage-datastore"}, {"system container-engine", "engine"}, {"volume", "volume"}} {
-				p := strings.Join(path, " ")
-				if entry.prefix == p || strings.HasPrefix(entry.prefix, p+" ") || strings.HasPrefix(p, entry.prefix+" ") {
-					descend(entry.mode, privilegeSession(entry.mode).rawGrammar(), nil)
-				}
-			}
-		}
+	if r.reset {
+		retainDefaultPrivilegeParents(entries)
 	}
 	s.Candidate.AAA.CommandPrivileges = nil
 	for _, key := range config.Keys(entries) {
 		s.Candidate.AAA.CommandPrivileges = append(s.Candidate.AAA.CommandPrivileges, entries[key])
 	}
+	s.Candidate.AAA.CommandPrivileges = config.CompactPrivileges(s.Candidate.AAA.CommandPrivileges)
 	return true, nil
 }
 
