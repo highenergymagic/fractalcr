@@ -120,7 +120,7 @@ try:
     assert 'Invalid input' in command(operator, 'request container-engine debug enable container rm argument forbidden')
     check('Level-five command delegation permits hostname edits and one native operation, while denying account creation and sibling operations')
     command(admin, 'show version | redirect data0:privilege-test.txt')
-    operator.sendline('delete data0:privilege-test.txt'); operator.expect_exact('Delete data0:privilege-test.txt? [confirm]')
+    operator.sendline('delete data0:privilege-test.txt'); operator.expect_exact('Delete data0:/privilege-test.txt? [confirm]')
     for line in ['conf t', 'privilege exec reset delete', 'end']: command(admin, line)
     operator.sendline(''); prompt(operator)
     assert 'Authorization failed.' in operator.before
