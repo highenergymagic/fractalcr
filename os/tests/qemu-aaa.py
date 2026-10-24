@@ -162,6 +162,9 @@ try:
     for line in ['conf t','no username streamer','commit','end']:command(admin,line)
     streamer.expect(pexpect.EOF,timeout=10)
     check('account revocation also terminates a VTY occupied by a streaming native client')
+    before_lines = command(admin, 'show line')
+    before_uses = {int(m[0]): int(m[1]) for m in re.findall(r'(?m)^\s*\*?\s*(\d+)\s+(?:CTY|VTY)\s+.*?\s+-\s+-\s+-\s+-\s+-\s+(\d+)\s+', before_lines)}
+    assert before_uses and max(before_uses.values()) > 1, before_lines
     admin.sendline('request platform software service management restart')
     admin.expect(pexpect.EOF,timeout=30)
     if child.expect_exact(['Username: ','Press RETURN to get started!'],timeout=30)==1:
@@ -170,6 +173,10 @@ try:
     admin=ssh_login('admin',ADMIN)
     check('management service restart requires console reauthentication and restores authenticated SSH')
     command(admin,'terminal length 0');command(admin,'terminal width 512')
+    after_lines = command(admin, 'show line')
+    after_uses = {int(m[0]): int(m[1]) for m in re.findall(r'(?m)^\s*\*?\s*(\d+)\s+(?:CTY|VTY)\s+.*?\s+-\s+-\s+-\s+-\s+-\s+(\d+)\s+', after_lines)}
+    assert after_uses.keys() == before_uses.keys() and all(after_uses[n] >= count for n, count in before_uses.items()), after_lines
+    check('Line usage counters survive management restart and continue counting authenticated sessions')
     accounting=command(admin,'show logging aaa')
     assert 'authentication' in accounting or '"event":"login"' in accounting
     assert '"transport":"ssh"' in accounting and '"event":"command"' in accounting

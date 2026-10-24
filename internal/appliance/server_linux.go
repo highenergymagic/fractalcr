@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"strconv"
@@ -69,7 +70,10 @@ func Serve() error {
 		return err
 	}
 	sessions := map[int32]*loginSession{}
-	var lineUses [config.VTYCount + 1]uint64
+	lineUses, counterErr := loadLineCounters("/run/fractal-line-counters.json")
+	if counterErr != nil {
+		log.Print("Line usage counters could not be restored")
+	}
 	load := func() *loginSession {
 		c, e := loadRunning()
 		if e != nil {
@@ -146,7 +150,9 @@ func Serve() error {
 				response.Privilege = &level
 			}
 			if !wasAuthenticated && login.authenticated {
-				lineUses[terminalLine(login)]++
+				if err := lineUses.record(terminalLine(login)); err != nil {
+					log.Print("Line usage counters could not be saved")
+				}
 			}
 			if login.authenticated && !response.Challenge {
 				login.noticeSequence, response.Notify = reloads.notifications(login.noticeSequence)
@@ -367,7 +373,7 @@ func Serve() error {
 					argv = append([]string{"/usr/libexec/fractal-workload", service}, args...)
 				}
 			} else if err == nil && len(native) >= 2 && native[0] == "show" && native[1] == "line" {
-				output = showLine(native, sessions, login, lineUses, time.Now())
+				output = showLine(native, sessions, login, lineUses.Uses, time.Now())
 			} else if err == nil && len(native) == 2 && native[0] == "show" && native[1] == "terminal" {
 				output = terminalDisplay(login, terminalLine(login), current, time.Now())
 			} else if local && err == nil {

@@ -25,6 +25,22 @@ func Operations(w []string, c config.Config) (string, error) {
 		}
 	}
 	line := strings.Join(w, " ")
+	if len(w) >= 2 && w[0] == "show" && w[1] == "interfaces" {
+		selector, format := "", "detail"
+		if len(w) >= 3 {
+			selector = w[2]
+			if selector == "description" {
+				selector, format = "", "description"
+			}
+		}
+		if len(w) == 4 && w[3] == "description" {
+			format = "description"
+		}
+		return showInterfaceSelection(selector, format, c)
+	}
+	if len(w) == 5 && w[0] == "show" && w[1] == "ip" && w[2] == "interface" && w[4] == "brief" {
+		return showInterfaceSelection(w[3], "brief", c)
+	}
 	if line == "request system container-isolation kata-containers vm-factory create" {
 		return prepareVMFactory()
 	}
@@ -63,8 +79,8 @@ func Operations(w []string, c config.Config) (string, error) {
 		return debugDisable()
 	case "show container-isolation capabilities":
 		return isolationStatus(c), nil
-	case "show interfaces", "show ip interface brief":
-		return showInterfaces(line == "show ip interface brief", c)
+	case "show ip interface brief":
+		return showInterfaceSelection("", "brief", c)
 	case "show ip route":
 		return showRoutes()
 	case "show ipv6 route":

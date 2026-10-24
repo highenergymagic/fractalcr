@@ -216,6 +216,17 @@ try:
     command('clock update-calendar')
     check('Native calendar read/write works and manually set clocks can schedule reloads independently of their year')
     check('Timezone display and level-specific enable authentication work through the serial console')
+    before_time_policy = command('show platform software service')
+    time_engine = re.search(r'container-engine\s+running\s+(\d+)\s+(\d+)', before_time_policy)
+    assert time_engine, before_time_policy
+    command('conf t', 'config'); command('ntp update-calendar', 'config'); send('\x1a'); prompt()
+    assert 'ntp update-calendar' in command('show running-config')
+    command('conf t', 'config'); command('no ntp update-calendar', 'config'); send('\x1a'); prompt()
+    assert 'ntp update-calendar' not in command('show running-config')
+    command('conf t', 'config'); command('ntp update-calendar', 'config'); send('\x1a'); prompt()
+    after_time_policy = command('show platform software service')
+    assert re.search(r'container-engine\s+running\s+(\d+)\s+(\d+)', after_time_policy).groups() == time_engine.groups(), after_time_policy
+    check('Calendar synchronization is opt-in and policy changes restart only the time service without restarting Docker')
     section=command('show running-config | section line')
     assert 'line console 0' in section and 'exec-timeout' in section and 'hostname ctr' not in section
     check('Copy prompts, scheduled reload, show reload, cancellation and Ctrl-C work through the serial console')
@@ -357,6 +368,12 @@ try:
     interfaces=command('show ip interface brief')
     physical=re.search(r'(?m)^([A-Za-z]+Ethernet[0-9]+|Ethernet[0-9]+)\s+',interfaces)
     assert physical, interfaces
+    detail = command('show interfaces '+physical.group(1))
+    assert physical.group(1)+' is ' in detail, detail
+    assert 'line protocol is ' in detail and 'packets input' in detail, detail
+    assert physical.group(1) in command('show ip interface '+physical.group(1)+' brief')
+    assert 'Protocol Description' in command('show interfaces '+physical.group(1)+' description')
+    check('Interface selectors and descriptions reach native status APIs through the console')
     command('conf t','config')
     command('interface '+physical.group(1),'config-interface')
     command('role container','config-interface'); command('exit','config')
@@ -381,6 +398,7 @@ try:
     assert 'thething' in startup and 'testadmin' in startup and password not in startup and 'unsaved' not in startup
     assert 'ip address 192.0.2.100 255.255.255.0' in startup
     assert 'file prompt quiet' in startup
+    assert 'ntp update-calendar' in startup
     command('copy running-config data0:prompt-persistence')
     command('delete data0:prompt-persistence')
     check('Saved file prompt policy survives a full reboot and controls native copy/delete without confirmations')

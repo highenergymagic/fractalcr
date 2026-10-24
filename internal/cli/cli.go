@@ -382,6 +382,10 @@ func (s *Session) execute(line string) (string, error) {
 			return "", nil
 		}
 	}
+	if line == "ntp update-calendar" || line == "no ntp update-calendar" || line == "default ntp update-calendar" {
+		s.Candidate.NTP.UpdateCalendar = line == "ntp update-calendar"
+		return "", nil
+	}
 	if len(w) == 3 && w[0] == "ntp" && w[1] == "server" {
 		for _, v := range s.Candidate.NTP.Servers {
 			if v == w[2] {

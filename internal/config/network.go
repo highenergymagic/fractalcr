@@ -7,7 +7,8 @@ import (
 )
 
 type NTP struct {
-	Servers []string `json:"servers,omitempty"`
+	Servers        []string `json:"servers,omitempty"`
+	UpdateCalendar bool     `json:"update_calendar,omitempty"`
 }
 type DockerNetwork struct {
 	IPv6        bool                `json:"ipv6,omitempty"`

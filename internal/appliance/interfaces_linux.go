@@ -235,12 +235,66 @@ func migrateInterfaces(c *config.Config) {
 		}
 	}
 }
-func showInterfaces(brief bool, c config.Config) (string, error) {
+func showInterfaceSelection(selector, format string, c config.Config) (string, error) {
+	ports := append(platformPorts(), virtualDisplayPorts()...)
+	if selector != "" {
+		name, err := canonicalInterface(selector)
+		if err != nil {
+			return "", err
+		}
+		selected := []platformPort{}
+		for _, port := range ports {
+			if port.Name == name {
+				selected = append(selected, port)
+			}
+		}
+		if len(selected) == 0 {
+			return "", fmt.Errorf("Interface %s is unavailable", name)
+		}
+		ports = selected
+	}
+	return renderInterfaces(ports, format, c)
+}
+
+func interfaceLinkState(p platformPort, n *config.Network) (string, string) {
+	state, protocol := "down", "down"
+	if p.Flags&net.FlagUp != 0 {
+		state = "up"
+	}
+	if p.Flags&net.FlagRunning != 0 {
+		protocol = "up"
+	}
+	if n != nil && n.Shutdown {
+		state, protocol = "administratively down", "down"
+	}
+	return state, protocol
+}
+
+func renderInterfaces(ports []platformPort, format string, c config.Config) (string, error) {
 	var b strings.Builder
-	if brief {
+	if format == "brief" {
 		b.WriteString("Interface                       IP-Address      OK? Method Status                Protocol\n")
 	}
-	for _, p := range append(platformPorts(), virtualDisplayPorts()...) {
+	if format == "description" {
+		b.WriteString("Interface                      Status         Protocol Description\n")
+	}
+	for _, p := range ports {
+		n := c.AllInterfaces()[p.Name]
+		if n == nil {
+			n = c.AllInterfaces()[p.Interface.Name]
+		}
+		state, protocol := interfaceLinkState(p, n)
+		if format == "description" {
+			description := ""
+			if n != nil {
+				description = displayText(n.Description)
+			}
+			if state == "administratively down" {
+				state = "admin down"
+			}
+			fmt.Fprintf(&b, "%-30s %-14s %-8s %s\n", p.Name, state, protocol, description)
+			continue
+		}
 		address := "unassigned"
 		addresses, _ := p.Addrs()
 		for _, a := range addresses {
@@ -250,18 +304,7 @@ func showInterfaces(brief bool, c config.Config) (string, error) {
 				break
 			}
 		}
-		state, protocol := "down", "down"
-		if p.Flags&net.FlagUp != 0 {
-			state = "up"
-		}
-		if p.Flags&net.FlagRunning != 0 {
-			protocol = "up"
-		}
 		method := "unset"
-		n := c.AllInterfaces()[p.Name]
-		if n == nil {
-			n = c.AllInterfaces()[p.Interface.Name]
-		}
 		if n != nil {
 			if n.Shutdown {
 				state = "administratively down"
@@ -272,7 +315,7 @@ func showInterfaces(brief bool, c config.Config) (string, error) {
 				method = "manual"
 			}
 		}
-		if brief {
+		if format == "brief" {
 			fmt.Fprintf(&b, "%-31s %-15s YES %-6s %-21s %s\n", p.Name, address, method, state, protocol)
 			continue
 		}

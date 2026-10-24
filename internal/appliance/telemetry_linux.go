@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"fractalcr/internal/config"
-	"golang.org/x/sys/unix"
 	"math"
 	"net"
 	"os"
@@ -135,10 +134,20 @@ func configuredClockStatus(c config.Clock, now time.Time, detail bool) string {
 	return output
 }
 
+var synchronizedNTP = func() bool {
+	data, err := chronyQuery(33, 5, 0, 104)
+	return err == nil && synchronizedTracking(data)
+}
+
+func synchronizedTracking(data []byte) bool {
+	return len(data) >= 28 && binary.BigEndian.Uint16(data[24:]) > 0 && binary.BigEndian.Uint16(data[24:]) < 16 && binary.BigEndian.Uint16(data[26:]) != 3
+}
+
 var softwareClockState = func(now time.Time) (string, string) {
 	mark, source := "*", "none"
-	var state syscall.Timex
-	if result, err := syscall.Adjtimex(&state); err == nil && result != unix.TIME_ERROR && state.Status&unix.STA_UNSYNC == 0 {
+	// Kernel synchronization flags also control RTC updates. Query the time
+	// daemon itself so disabling calendar writes cannot hide valid NTP time.
+	if synchronizedNTP() {
 		mark, source = "", "NTP"
 	} else if data, err := os.ReadFile(clockSourcePath); err == nil && (string(data) == "user configuration" || string(data) == "hardware calendar") {
 		mark, source = "", string(data)

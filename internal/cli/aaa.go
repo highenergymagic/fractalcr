@@ -27,6 +27,17 @@ func (s *Session) Allowed(words []string) bool {
 	if s.Privilege < 1 {
 		return false
 	}
+	// IOS exposes these calendar transfers in user EXEC. Setting an arbitrary
+	// clock value remains privileged; keep the exceptions exact.
+	if command == "clock read-calendar" || command == "clock update-calendar" {
+		return true
+	}
+	if len(words) >= 2 && words[0] == "show" && words[1] == "interfaces" {
+		return true
+	}
+	if len(words) == 5 && words[0] == "show" && words[1] == "ip" && words[2] == "interface" && words[4] == "brief" {
+		return true
+	}
 	if words[0] == "terminal" || (len(words) >= 2 && words[0] == "show" && (words[1] == "users" || words[1] == "line")) {
 		return true
 	}

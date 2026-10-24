@@ -96,6 +96,9 @@ func (c Config) CLI() string {
 	for _, server := range c.NTP.Servers {
 		line("ntp server %s", server)
 	}
+	if c.NTP.UpdateCalendar {
+		line("ntp update-calendar")
+	}
 	for _, name := range Keys(c.AllInterfaces()) {
 		c.AllInterfaces()[name].RenderRoutesCLI(line)
 	}

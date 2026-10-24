@@ -29,6 +29,8 @@ Consulted 2026-10-24:
 - [Security: enable commands](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/security/d1/sec-d1-cr-book/sec-cr-e1.html): level-specific enable authentication.
 - [Protecting secrets](https://www.cisco.com/c/en/us/about/trust-center/resilient-infrastructure/protecting-secrets.html): type 8 and 9 password verifiers.
 - [Basic System Management: A through M](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/bsm/command/bsm-cr-book/bsm-cr-a1.html): software/hardware clocks, timezone offsets and summer-time transitions.
+- [Basic System Management: N through T](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/bsm/command/bsm-cr-book/m_bsm-cr-n1.html): opt-in periodic NTP calendar updates.
+- [Interface and Hardware commands](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/interface/command/ir-cr-book/ir-s4.html): selected-interface status and description displays.
 - [IP Addressing Services command reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipaddr/command/ipaddr-cr-book.pdf): primary and secondary IPv4 addresses and subnet masks.
 - [ISR 4000 IOS XE 17 software installation](https://www.cisco.com/c/en/us/td/docs/routers/access/isr4400/software/configuration/xe-17/isr4400-sw-config-xe-17/installing_the_software.html): platform boot and filesystem context.
 
@@ -63,6 +65,10 @@ Consulted 2026-10-24:
 | Local-time scheduling | Target-date summer-time offset, repeated-hour selection, rejection of skipped local times, timezone label retained after management restart, clock-source validation independent of calendar year | `TestReloadAcrossSummerTime`; `TestReloadClockLabelSurvivesRestart`; `TestReloadRequiresClockSourceNotRecentYear` |
 | Calendar device | Built-in x86 CMOS RTC driver, build-time driver requirements, native read/write operations, sanitized hardware failures | Kernel recipe assertions; native clock tests; serial calendar read/write qualification |
 | Directory time | Configured timezone and the summer-time offset at each file's timestamp, for file, directory and all-filesystem listings | `TestDirectoryUsesConfiguredClockAtFileTimestamp` |
+| Calendar policy | `ntp update-calendar`, `no` and `default` forms; disabled by default; NTP synchronization independent of RTC update policy; time configuration restarts only time-sync and rolls back on failure | Time-service and CLI policy tests; serial policy/save/reboot qualification |
+| Calendar EXEC privilege | `clock read-calendar` and `clock update-calendar` available at user EXEC; arbitrary date/time setting remains privileged | `TestClockEXECReachesNativeOperations` |
+| Line usage | Authenticated uses counted per physical/virtual line; retained across management restart; reset on a full machine boot | `TestLineCountersSurviveManagementRestart`; console/SSH restart qualification |
+| Interface selection | Selected interface detail, description, and IP brief display; configured descriptions and observed link state; administrative shutdown forces protocol down | Interface display/dispatch tests; serial qualification |
 
 Test names identify executable evidence, not a declaration of complete IOS
 compatibility. The VM report identifies the exact tested system image hash.
@@ -98,10 +104,12 @@ they must not be hidden behind accepted no-op keywords:
 - Remaining `show users` variants, interface counters/variants, NTP command
   options, and terminal editor/history edge cases still need a
   command-by-command comparison. Existing support is not proof of parity.
-  Concrete gaps include `show users summary`; persistent line-use counters;
+  Concrete gaps include `show users summary`;
   additional line/terminal settings and their corresponding display fields;
   and the complete
-  clock command family (`clock calendar-valid`, periodic calendar saving).
+  clock command family (`clock calendar-valid`, NVRAM time saving on platforms
+  without a battery-backed calendar). Periodic hardware calendar synchronization
+  is implemented by `ntp update-calendar`.
   Generic clock and NTP
   support does not imply support for every IOS clock/NTP command.
   The references do not specify the choice between repeated local times or

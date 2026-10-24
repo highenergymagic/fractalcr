@@ -77,13 +77,42 @@ func TestClockEXECReachesNativeOperations(t *testing.T) {
 	}
 	execute(t, s, "end")
 	s.Privilege = 1
+	for _, command := range commands[:2] {
+		if _, err := s.Execute(command); err != nil {
+			t.Fatal("calendar transfer unavailable in user EXEC", command, err)
+		}
+	}
 	before := len(calls)
-	for _, command := range commands {
+	for _, command := range commands[2:] {
 		if _, err := s.Execute(command); err == nil {
 			t.Fatal("unprivileged clock mutation", command)
 		}
 	}
 	if len(calls) != before {
 		t.Fatal("unauthorized command reached clock API")
+	}
+	s.Privilege = 0
+	for _, command := range commands {
+		if _, err := s.Execute(command); err == nil {
+			t.Fatal("clock operation available at privilege zero", command)
+		}
+	}
+}
+
+func TestNTPUpdateCalendarConfiguration(t *testing.T) {
+	s := session(t)
+	if s.Running.NTP.UpdateCalendar || strings.Contains(s.Running.CLI(), "ntp update-calendar") {
+		t.Fatal("calendar updates must be opt-in")
+	}
+	execute(t, s, "conf t", "ntp server time.example.org", "ntp update-calendar", "clock timezone UTC 0", "end")
+	if !s.Running.NTP.UpdateCalendar || !strings.Contains(s.Running.CLI(), "ntp update-calendar\n") {
+		t.Fatal("calendar policy not applied/rendered")
+	}
+	for _, reset := range []string{"no ntp update-calendar", "default ntp update-calendar"} {
+		execute(t, s, "conf t", reset, "end")
+		if s.Running.NTP.UpdateCalendar || len(s.Running.NTP.Servers) != 1 {
+			t.Fatal("calendar reset changed server configuration")
+		}
+		execute(t, s, "conf t", "ntp update-calendar", "end")
 	}
 }

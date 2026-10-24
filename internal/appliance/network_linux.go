@@ -152,7 +152,7 @@ func NetworkService() error {
 }
 
 func TimeService() error {
-	c, e := config.Load("/run/startup-config.json")
+	c, e := loadRunning()
 	if e != nil {
 		return e
 	}
@@ -189,10 +189,7 @@ func TimeService() error {
 	}
 	defer syscall.Unmount(state, syscall.MNT_DETACH)
 	// No network command socket or NTP server; control is local Unix socket only.
-	text := "driftfile /run/fractal-time-state/drift\npidfile /run/chrony/chronyd.pid\nbindcmdaddress /run/chrony/chronyd.sock\ncmdport 0\nport 0\nrtcsync\nmakestep 1 3\n"
-	for _, s := range c.NTP.Servers {
-		text += "server " + s + " iburst\n"
-	}
+	text := timeServiceConfiguration(c.NTP)
 	if e = config.AtomicWrite("/run/chrony.conf", []byte(text), 0600); e != nil {
 		return e
 	}

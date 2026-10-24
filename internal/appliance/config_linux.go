@@ -213,6 +213,11 @@ func Apply(old, next config.Config) error {
 	if err := supported(next); err != nil {
 		return err
 	}
+	oldTime, nextTime := old.Clone(), next.Clone()
+	oldTime.NTP, nextTime.NTP = config.NTP{}, config.NTP{}
+	if string(old.JSON()) != string(next.JSON()) && string(oldTime.JSON()) == string(nextTime.JSON()) {
+		return applyTimeConfiguration(old, next)
+	}
 	if (old.Engine.StorageBackend == "blockfile") != (next.Engine.StorageBackend == "blockfile") {
 		if err := emptyEngineForStorageChange(); err != nil {
 			return err
