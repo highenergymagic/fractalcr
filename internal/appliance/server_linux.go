@@ -318,12 +318,7 @@ func Serve() error {
 				conn.Close()
 				continue
 			}
-			if err == nil && (line == "enable" || strings.HasPrefix(line, "enable ")) {
-				level := 15
-				enableWords := strings.Fields(line)
-				if len(enableWords) == 2 {
-					level, _ = strconv.Atoi(enableWords[1])
-				}
+			if level, enable := execEnableLevel(words); err == nil && enable {
 				response := login.enable(level, current)
 				respond(response)
 				conn.Close()

@@ -106,7 +106,8 @@ def command(text, mode='', error=False):
     return response
 
 def login():
-    expect('Username: '); send('testadmin\n'); expect('Password: '); send(password+'\n')
+    expect('Username: '); send('test'); time.sleep(1.2); send('admin\n')
+    expect('Password: '); send(password[:8]); time.sleep(1.2); send(password[8:]+'\n')
     response = prompt()
     assert password not in response, 'login password echoed'
 

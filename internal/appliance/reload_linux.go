@@ -353,6 +353,25 @@ func (s *loginSession) answerReload(answer string, m *reloadManager, now time.Ti
 	return r
 }
 
+// Configuration commands share the "enable" keyword. Only the resolved EXEC
+// forms enter authentication; enable secret must reach the config transaction.
+func execEnableLevel(w []string) (int, bool) {
+	if len(w) > 0 && w[0] == "do" {
+		w = w[1:]
+	}
+	if len(w) == 0 || w[0] != "enable" {
+		return 0, false
+	}
+	if len(w) == 1 {
+		return 15, true
+	}
+	if len(w) != 2 {
+		return 0, false
+	}
+	level, err := strconv.Atoi(w[1])
+	return level, err == nil && level >= 0 && level <= 15
+}
+
 func (s *loginSession) enable(level int, c config.Config) reply {
 	r := reply{Prompt: s.cli.Prompt()}
 	if level <= s.cli.Privilege {

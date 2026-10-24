@@ -41,6 +41,41 @@ func TestIOSEnableConsoleAndVTY(t *testing.T) {
 	}
 }
 
+func TestIOSEnableDispatchDoesNotConsumeConfiguration(t *testing.T) {
+	c := config.Default()
+	s := &cli.Session{Running: c, Candidate: c.Clone()}
+	if _, err := s.Execute("configure terminal"); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{"enable secret 0 test-enable-secret", "enable secret test-enable-secret", "no enable secret"} {
+		words, _, err := s.Resolve(command)
+		if err != nil {
+			t.Fatal(command, err)
+		}
+		if _, handled := execEnableLevel(words); handled {
+			t.Fatal("EXEC handler consumed configuration", command)
+		}
+		if _, err := s.Execute(command); err != nil {
+			t.Fatal(command, err)
+		}
+		if !strings.HasPrefix(command, "no ") && !config.CheckSecret(s.Running.AAA.EnableSecret, "test-enable-secret") {
+			t.Fatal("enable secret was not applied")
+		}
+	}
+	for _, tt := range []struct {
+		command string
+		level   int
+	}{{"enable", 15}, {"enable 0", 0}, {"enable 7", 7}, {"do enable 15", 15}} {
+		level, handled := execEnableLevel(strings.Fields(tt.command))
+		if !handled || level != tt.level {
+			t.Fatal(tt.command, level, handled)
+		}
+	}
+	if _, handled := execEnableLevel([]string{"enable", "secret"}); handled {
+		t.Fatal("accepted nonnumeric EXEC level")
+	}
+}
+
 func TestIOSReloadTimes(t *testing.T) {
 	now := time.Date(2026, 10, 24, 18, 33, 0, 0, time.UTC)
 	for _, tt := range []struct {

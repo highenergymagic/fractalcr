@@ -68,7 +68,8 @@ try:
     child.sendline('logout');child.expect_exact('Username: ');login(child,'admin',ADMIN)
     command(child,'terminal length 0');command(child,'write memory')
     assert ADMIN not in command(child,'show history')
-    assert ADMIN not in command(child,'show running-config')
+    running=command(child,'show running-config')
+    assert ADMIN not in running and 'enable secret pbkdf2 ' in running,running
     check('abbreviated username/password 0 and secret 0 configure local AAA; bootstrap privilege ends at logout; serial password hidden; startup configuration saved')
     child.sendline('logout');child.expect_exact('Username: ');login(child,'reader',READER)
     assert 'privilege level is 1' in command(child,'sh priv',user=True)
