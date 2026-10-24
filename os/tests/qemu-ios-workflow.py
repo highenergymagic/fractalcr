@@ -192,9 +192,9 @@ try:
     send('\x15'); prompt('config'); command('no file prompt', 'config'); send('\x1a'); prompt()
     check('Terminal display uses actual settings; editing toggles work and EXEC/configuration histories stay separate')
     send('show VERSion\x01\x1bf\x1bl\n')
-    assert 'Platform kernel:' in prompt()
+    expect('Platform kernel:'); prompt()  # Editor redraws contain a prompt too.
     send('show discard version\x01\x1bf\x1bd\n')
-    assert 'Platform kernel:' in prompt()
+    expect('Platform kernel:'); prompt()
     check('Escape word lowercase and deletion edit the command before parser execution')
     command('show version | redirect data0:version.txt')
     assert 'FractalCR Software' in command('more data0:version.txt')
