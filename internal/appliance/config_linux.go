@@ -53,6 +53,9 @@ func supported(c config.Config) error {
 	if err := c.Validate(); err != nil {
 		return err
 	}
+	if c.Clock.SaveIntervalHours != 0 && hardwareCalendarPresent() {
+		return fmt.Errorf("clock save interval requires a platform without a hardware calendar")
+	}
 	for name := range c.AllInterfaces() {
 		if _, kind, _, _ := config.VirtualInterface(name); kind != "" {
 			continue
@@ -95,6 +98,9 @@ func Prepare() error {
 	}
 	if err = supported(c); err != nil {
 		return err
+	}
+	if err = restoreSavedClock(c.Clock, time.Now()); err != nil {
+		return fmt.Errorf("saved clock restoration failed")
 	}
 	if err = syscall.Sethostname([]byte(c.Hostname)); err != nil {
 		return err

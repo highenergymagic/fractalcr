@@ -119,8 +119,12 @@ def finish():
 try:
     spawn()
     expect(re.escape('Enter initial configuration dialog? [yes/no]: ')); send('no\n'); prompt()
+    assert 'startup-config is not present' in command('show startup-config')
     command('write memory')  # Seed startup so reconnect does not repeat first-use setup.
     command('terminal length 0')
+    startup_usage = command('show startup-config | include ^Using')
+    assert re.search(r'Using [1-9][0-9]* out of 262144 bytes', startup_usage), startup_usage
+    check('Startup configuration reports missing state and actual bounded storage usage')
     command('__connect', error=True)
     command('__help show ', error=True)
     send('disable\n'); expect(re.escape('ctr> ')); send('enable\n'); prompt()
@@ -183,6 +187,11 @@ try:
     command('delete /force data0:reload.txt')
     check('Native-console and management output redirect, append and tee through rooted file APIs')
     command('conf t', 'config'); command('clock timezone NST -3 30', 'config')
+    send('clock ?'); clock_help = prompt('config')
+    assert not re.search(r'\n\s+save\s', clock_help), clock_help
+    expect('clock '); send('\x15'); prompt('config')
+    command('clock save interval 24', 'config', error=True)
+    check('Hardware-calendar platform omits the NVRAM-only clock save command')
     command('enable secret level 7 0 level-seven-test', 'config'); send('\x1a'); prompt()
     assert ' NST ' in command('show clock')
     assert ' NST ' in command('show calendar')

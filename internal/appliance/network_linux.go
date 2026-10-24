@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"fractalcr/internal/config"
+	"log"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -227,11 +228,23 @@ func TimeService() error {
 		case <-ticker.C:
 			if st, e := os.Stat("/run/chrony/chronyd.sock"); e == nil && st.Mode()&os.ModeSocket != 0 {
 				notifyReady()
-				select {
-				case <-signals:
-					return nil
-				case e := <-done:
-					return fmt.Errorf("chronyd exited: %v", e)
+				saveTicker := time.NewTicker(time.Minute)
+				defer saveTicker.Stop()
+				for {
+					// Read live policy: changing the interval must not restart NTP
+					// or disturb its synchronization history.
+					if current, err := loadRunning(); err == nil {
+						if err := saveNetworkClock(current.Clock); err != nil {
+							log.Print("Network time could not be saved to NVRAM")
+						}
+					}
+					select {
+					case <-saveTicker.C:
+					case <-signals:
+						return nil
+					case e := <-done:
+						return fmt.Errorf("chronyd exited: %v", e)
+					}
 				}
 			}
 		}

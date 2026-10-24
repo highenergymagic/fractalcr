@@ -151,6 +151,9 @@ var softwareClockState = func(now time.Time) (string, string) {
 		mark, source = "", "NTP"
 	} else if data, err := os.ReadFile(clockSourcePath); err == nil && (string(data) == "user configuration" || string(data) == "hardware calendar") {
 		mark, source = "", string(data)
+	} else if err == nil && string(data) == "NVRAM" {
+		// A saved timestamp did not run while power was off.
+		mark, source = "*", "NVRAM"
 	} else if _, err := os.Stat("/sys/class/rtc/rtc0"); err == nil && now.Year() >= 1993 {
 		mark, source = ".", "hardware calendar"
 	}

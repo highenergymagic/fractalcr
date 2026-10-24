@@ -82,6 +82,7 @@ func Serve() error {
 		}
 		s := &loginSession{cli: &cli.Session{Running: c, Candidate: c.Clone(), StateDir: "/datastore/data0/config", Apply: Apply, InterfaceName: canonicalInterface, InterfaceNames: interfaceNames, FileSystems: filesystemNames, Save: Save, EnforcePrivilege: true}, stage: "username", last: time.Now()}
 		s.cli.Platform = s.operations
+		s.cli.HardwareCalendar = hardwareCalendarPresent
 		s.terminal = defaultTerminal()
 		return s
 	}

@@ -10,7 +10,7 @@ import (
 )
 
 var setSoftwareClock = func(t time.Time) error {
-	ts := unix.NsecToTimespec(t.UnixNano())
+	ts := unix.Timespec{Sec: t.Unix(), Nsec: int64(t.Nanosecond())}
 	return unix.ClockSettime(unix.CLOCK_REALTIME, &ts)
 }
 var clockSourcePath = "/run/fractal-clock-source"

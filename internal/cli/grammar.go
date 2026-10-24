@@ -184,6 +184,9 @@ var configCommands = []Command{
 	{"no security passwords min-length", "Remove the minimum password length policy", false},
 	{"hostname <NAME>", "Set the appliance hostname", false},
 	{"clock timezone <ZONE> <HOURS>", "Timezone offset from UTC in hours", false},
+	{"clock save interval <8-24>", "Hours between saving network time to NVRAM", false},
+	{"no clock save interval <8-24>", "Disable saving network time to NVRAM", false},
+	{"default clock save interval <8-24>", "Disable saving network time to NVRAM", false},
 	{"clock timezone <ZONE> <HOURS> <0-59>", "Additional timezone offset minutes", false},
 	{"no clock timezone", "Use UTC", false},
 	{"default clock timezone", "Use UTC", false},
@@ -416,6 +419,9 @@ func (s *Session) rawGrammar() *node {
 		}
 	} else {
 		for _, c := range configCommands {
+			if strings.Contains(c.Syntax, "clock save interval") && s.HardwareCalendar != nil && s.HardwareCalendar() {
+				continue
+			}
 			if s.Mode != "config" && c.Syntax != "exit" && c.Syntax != "end" && c.Syntax != "help" && c.Syntax != "commit" && c.Syntax != "abort" {
 				continue
 			}

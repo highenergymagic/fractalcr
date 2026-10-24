@@ -75,6 +75,8 @@ Consulted 2026-10-24:
 | Directory time | Configured timezone and the summer-time offset at each file's timestamp, for file, directory and all-filesystem listings | `TestDirectoryUsesConfiguredClockAtFileTimestamp` |
 | Calendar policy | `ntp update-calendar`, `no` and `default` forms; disabled by default; NTP synchronization independent of RTC update policy; time configuration restarts only time-sync and rolls back on failure | Time-service and CLI policy tests; serial policy/save/reboot qualification |
 | Calendar EXEC privilege | `clock read-calendar` and `clock update-calendar` available at user EXEC; arbitrary date/time setting remains privileged | `TestClockEXECReachesNativeOperations` |
+| NVRAM clock fallback | `clock save interval 8..24` and its documented numbered `no` form; unavailable with a hardware calendar; persist only NTP update timestamps, enforce intervals across service restarts, restore before networking once per boot without rewinding a newer clock | `TestClockSaveIntervalGrammarAndPersistence`; `TestTrackingReferenceRequiresNetworkTime`; `TestSavedClockIntervalAndAuthority`; `TestSavedClockRestoresOnceBeforeNetworking`; `TestSavedClockDevicePolicyAndFailures`; no-calendar hardware boot qualification remains pending |
+| Startup display | Documented missing-file response and `Using ... out of ... bytes` header; byte count comes from the same validated saved-file read; capacity is the enforced 256 KiB configuration slot; sanitized read failures | `TestStartupConfigurationOutputAndFailures`; serial workflow assertions added, new-image qualification pending |
 | Line usage | Authenticated uses counted per physical/virtual line; retained across management restart; reset on a full machine boot | `TestLineCountersSurviveManagementRestart`; console/SSH restart qualification |
 | Interface selection | Selected interface detail, description, and IP brief display; configured descriptions and observed link state; administrative shutdown forces protocol down | Interface display/dispatch tests; serial qualification |
 
@@ -120,8 +122,12 @@ they must not be hidden behind accepted no-op keywords:
   Concrete gaps include `show users summary`;
   additional line/terminal settings and their corresponding display fields;
   and the complete
-  clock command family (`clock calendar-valid`, NVRAM time saving on platforms
-  without a battery-backed calendar). Periodic hardware calendar synchronization
+  clock command family (`clock calendar-valid`). The NVRAM fallback now has
+  native persistence and restoration tests, but a no-calendar machine boot and
+  the exact ISR display of restored, non-authoritative time remain unverified.
+  The implementation reports `*` and `Time source is NVRAM`; this must not be
+  treated as a documented byte-for-byte ISR output match.
+  Periodic hardware calendar synchronization
   is implemented by `ntp update-calendar`.
   Generic clock and NTP
   support does not imply support for every IOS clock/NTP command.

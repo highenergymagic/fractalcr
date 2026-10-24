@@ -6,6 +6,43 @@ import (
 	"testing"
 )
 
+func TestClockSaveIntervalGrammarAndPersistence(t *testing.T) {
+	s := session(t)
+	execute(t, s, "conf t", "clock save interval 24", "clock timezone PST -8")
+	if s.Running.Clock.SaveIntervalHours != 24 || !strings.Contains(s.Running.CLI(), "clock save interval 24\n") {
+		t.Fatal(s.Running.CLI())
+	}
+	for _, cmd := range []string{"clock save interval 7", "clock save interval 25", "clock save interval", "no clock save interval"} {
+		if _, err := s.Execute(cmd); err == nil {
+			t.Fatal(cmd)
+		}
+	}
+	for _, reset := range []string{"no", "default"} {
+		execute(t, s, reset+" clock save interval 24")
+		if s.Running.Clock.SaveIntervalHours != 0 || strings.Contains(s.Running.CLI(), "clock save interval") {
+			t.Fatal(s.Running.Clock)
+		}
+		execute(t, s, "clock save interval 8")
+	}
+	c, err := config.Decode(s.Running.JSON())
+	if err != nil || c.Clock.SaveIntervalHours != 8 {
+		t.Fatal(c.Clock, err)
+	}
+	s.HardwareCalendar = func() bool { return true }
+	if strings.Contains(s.ContextHelp("clock "), "save") {
+		t.Fatal("hardware calendar exposed NVRAM-only command")
+	}
+	if _, _, err := s.Resolve("clock save interval 24"); err == nil {
+		t.Fatal("hardware calendar accepted NVRAM-only command")
+	}
+	for _, hours := range []int{-1, 1, 7, 25} {
+		c.Clock.SaveIntervalHours = hours
+		if c.Validate() == nil {
+			t.Fatal(hours)
+		}
+	}
+}
+
 func TestClockTimezoneAndDateGrammar(t *testing.T) {
 	s := session(t)
 	execute(t, s, "conf t", "clock timezone NST -3 30")

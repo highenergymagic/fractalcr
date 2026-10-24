@@ -27,6 +27,9 @@ func (c Config) CLI() string {
 	if c.Clock.Summer != nil {
 		line("%s", c.Clock.Summer.CLI())
 	}
+	if c.Clock.SaveIntervalHours != 0 {
+		line("clock save interval %d", c.Clock.SaveIntervalHours)
+	}
 	if c.FilePrompt != "" && c.FilePrompt != "alert" {
 		line("file prompt %s", c.FilePrompt)
 	}

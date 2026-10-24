@@ -1,10 +1,50 @@
 package cli
 
 import (
+	"fmt"
+	"fractalcr/internal/config"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 )
+
+func TestStartupConfigurationOutputAndFailures(t *testing.T) {
+	s := session(t)
+	for _, command := range []string{"show startup-config", "show startup-config json"} {
+		out, err := s.Execute(command)
+		if err != nil || out != "startup-config is not present" {
+			t.Fatal(command, out, err)
+		}
+	}
+	path := filepath.Join(s.StateDir, "startup-config.json")
+	c := s.Running.Clone()
+	c.Hostname = "saved-name"
+	// Storage occupancy must count the actual saved representation, including
+	// accepted whitespace, rather than a newly rendered configuration.
+	data := append(c.JSON(), []byte("\n  \n")...)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	output, err := s.Execute("show startup-config")
+	want := fmt.Sprintf("Using %d out of %d bytes\n%s", len(data), config.MaxConfigBytes, c.CLI())
+	if err != nil || output != want {
+		t.Fatalf("got %q, %v; want %q", output, err, want)
+	}
+	if output, err := s.Execute("show startup-config json"); err != nil || output != string(c.JSON()) {
+		t.Fatal(output, err)
+	}
+	if output, err := s.Execute("show startup-config | include ^Using"); err != nil || output != strings.Split(want, "\n")[0] {
+		t.Fatal(output, err)
+	}
+	if err := os.WriteFile(path, []byte("bad-private-config-value"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Execute("show startup-config"); err == nil || err.Error() != "Unable to read startup configuration" {
+		t.Fatal(err)
+	}
+}
 
 func TestPrivilegeCatalogCoversConfigurationModes(t *testing.T) {
 	for mode := range modeCommands {

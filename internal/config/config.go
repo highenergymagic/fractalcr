@@ -148,26 +148,34 @@ func Decode(b []byte) (Config, error) {
 const MaxConfigBytes = 256 * 1024
 
 func Load(path string) (Config, error) {
+	c, _, err := LoadWithSize(path)
+	return c, err
+}
+
+// LoadWithSize reports the bytes read from the same bounded, validated file
+// snapshot. A second pathname stat could describe a different atomic save.
+func LoadWithSize(path string) (Config, int, error) {
 	f, err := openConfig(path)
 	if err != nil {
-		return Config{}, err
+		return Config{}, 0, err
 	}
 	defer f.Close()
 	st, err := f.Stat()
 	if err != nil {
-		return Config{}, err
+		return Config{}, 0, err
 	}
 	if !st.Mode().IsRegular() || st.Size() > MaxConfigBytes {
-		return Config{}, errors.New("configuration must be a regular file of at most 256 KiB")
+		return Config{}, 0, errors.New("configuration must be a regular file of at most 256 KiB")
 	}
 	b, err := io.ReadAll(io.LimitReader(f, MaxConfigBytes+1))
 	if err != nil {
-		return Config{}, err
+		return Config{}, 0, err
 	}
 	if len(b) > MaxConfigBytes {
-		return Config{}, errors.New("configuration too large")
+		return Config{}, 0, errors.New("configuration too large")
 	}
-	return Decode(b)
+	c, err := Decode(b)
+	return c, len(b), err
 }
 
 func (c Config) Validate() error {

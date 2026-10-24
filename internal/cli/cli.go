@@ -25,6 +25,7 @@ type Session struct {
 	InterfaceName    func(string) (string, error)
 	InterfaceNames   func() []string
 	FileSystems      func() []string
+	HardwareCalendar func() bool
 	Save             func(config.Config) error
 	Recovery         bool
 	EnforcePrivilege bool
@@ -181,6 +182,14 @@ func (s *Session) execute(line string) (string, error) {
 		s.Candidate.Clock.OffsetMinutes = 0
 		return "", nil
 	}
+	if len(w) == 4 && w[0] == "clock" && w[1] == "save" && w[2] == "interval" {
+		s.Candidate.Clock.SaveIntervalHours, _ = strconv.Atoi(w[3])
+		return "", nil
+	}
+	if len(w) == 5 && (w[0] == "no" || w[0] == "default") && w[1] == "clock" && w[2] == "save" && w[3] == "interval" {
+		s.Candidate.Clock.SaveIntervalHours = 0
+		return "", nil
+	}
 	if len(w) >= 4 && w[0] == "clock" && w[1] == "timezone" {
 		minutes := "0"
 		if len(w) == 5 {
@@ -189,6 +198,7 @@ func (s *Session) execute(line string) (string, error) {
 		c, err := config.ParseTimezone(w[2], w[3], minutes)
 		if err == nil {
 			c.Summer = s.Candidate.Clock.Summer
+			c.SaveIntervalHours = s.Candidate.Clock.SaveIntervalHours
 			s.Candidate.Clock = c
 		}
 		return "", err
@@ -686,14 +696,17 @@ func (s *Session) operational(w []string) (string, error) {
 	case "show candidate-config":
 		return s.configurationText(s.Candidate), nil
 	case "show startup-config", "show startup-config json":
-		c, err := config.Load(filepath.Join(s.StateDir, "startup-config.json"))
+		c, used, err := config.LoadWithSize(filepath.Join(s.StateDir, "startup-config.json"))
+		if os.IsNotExist(err) {
+			return "startup-config is not present", nil
+		}
 		if err != nil {
-			return "", err
+			return "", errors.New("Unable to read startup configuration")
 		}
 		if line == "show startup-config json" {
 			return string(c.JSON()), nil
 		}
-		return c.CLI(), nil
+		return fmt.Sprintf("Using %d out of %d bytes\n%s", used, config.MaxConfigBytes, c.CLI()), nil
 	case "show container-isolation":
 		var b strings.Builder
 		fmt.Fprintf(&b, "enabled=%t default=%s runtime=%s memory=%dMiB\n", s.Running.Isolation.Enabled, s.Running.Isolation.ApplyTo, s.Running.Isolation.Runtime, s.Running.Isolation.MemoryMiB)

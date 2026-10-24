@@ -31,9 +31,10 @@ func (c Clock) LocalInstants(wall time.Time) []time.Time {
 }
 
 type Clock struct {
-	Zone          string      `json:"zone,omitempty"`
-	OffsetMinutes int         `json:"offset_minutes,omitempty"`
-	Summer        *SummerTime `json:"summer,omitempty"`
+	SaveIntervalHours int         `json:"save_interval_hours,omitempty"`
+	Zone              string      `json:"zone,omitempty"`
+	OffsetMinutes     int         `json:"offset_minutes,omitempty"`
+	Summer            *SummerTime `json:"summer,omitempty"`
 }
 
 func (c Clock) Location() *time.Location {
@@ -43,6 +44,9 @@ func (c Clock) Location() *time.Location {
 	return time.FixedZone(c.Zone, c.OffsetMinutes*60)
 }
 func (c Clock) Validate() error {
+	if c.SaveIntervalHours != 0 && (c.SaveIntervalHours < 8 || c.SaveIntervalHours > 24) {
+		return fmt.Errorf("clock save interval must be 8..24 hours")
+	}
 	if c.Summer != nil {
 		s := c.Summer
 		mode := "recurring"
