@@ -243,6 +243,7 @@ try:
     for key in ['logout\n', 'exit\n', '\x04']:
         send(key); login()
     check('Logout, exit and Ctrl-D require local authentication after login local')
+    check('Authentication retains partial usernames and passwords across heartbeat intervals')
     command('conf t', 'config'); command('line con 0', 'config-line')
     send('\x04'); prompt('config'); send('\x04'); prompt()
     check('Empty-line Ctrl-D leaves each configuration context; Ctrl-Z returns directly to EXEC')
