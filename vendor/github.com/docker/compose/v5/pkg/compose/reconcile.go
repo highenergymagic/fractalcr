@@ -1,0 +1,1649 @@
+/*
+   Copyright 2020 Docker Compose CLI authors
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+
+package compose
+
+import (
+	"cmp"
+	"context"
+	"fmt"
+	"slices"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/compose-spec/compose-go/v2/types"
+	"github.com/moby/moby/api/types/container"
+	mmount "github.com/moby/moby/api/types/mount"
+	"github.com/sirupsen/logrus"
+
+	"github.com/docker/compose/v5/pkg/api"
+)
+
+// toReconcileOptions maps api.CreateOptions to ReconcileOptions.
+func toReconcileOptions(options api.CreateOptions) ReconcileOptions {
+	return ReconcileOptions{
+		Services:             options.Services,
+		Recreate:             options.Recreate,
+		RecreateDependencies: options.RecreateDependencies,
+		Inherit:              options.Inherit,
+		Timeout:              options.Timeout,
+		RemoveOrphans:        options.RemoveOrphans,
+		SkipProviders:        options.SkipProviders,
+	}
+}
+
+// ReconcileScope selects which lifecycle phases the plan covers. The zero
+// value plans the Create phase only — the historical behavior, and what
+// `compose create` keeps using. ScopeCreateStart adds the Start phase to the
+// same plan; ScopeStart plans starting the observed containers without
+// converging them first.
+type ReconcileScope int
+
+// plansCreatePhase reports whether the scope covers the create phase
+// (networks, volumes, container convergence); plansStartPhase whether it
+// covers the start phase. Named positively — the 3-value enum reads poorly
+// through negations.
+func (s ReconcileScope) plansCreatePhase() bool { return s == ScopeCreate || s == ScopeCreateStart }
+func (s ReconcileScope) plansStartPhase() bool  { return s == ScopeStart || s == ScopeCreateStart }
+
+const (
+	ScopeCreate ReconcileScope = iota
+	ScopeCreateStart
+	ScopeStart
+)
+
+// ReconcileOptions controls how the reconciler compares desired and observed state.
+type ReconcileOptions struct {
+	Scope                ReconcileScope // lifecycle phases to plan; zero = Create only
+	Services             []string       // targeted services (empty = all)
+	Recreate             string         // "diverged", "force", "never" for targeted services
+	RecreateDependencies string         // same for non-targeted services
+	Inherit              bool           // inherit anonymous volumes on recreate
+	Timeout              *time.Duration // for stop operations
+	RemoveOrphans        bool
+	SkipProviders        bool
+}
+
+// reconciler compares a types.Project (desired state) with an ObservedState
+// (actual state) and produces a Plan — a DAG of atomic operations.
+type reconciler struct {
+	project  *types.Project
+	observed *ObservedState
+	options  ReconcileOptions
+	// prompt interacts with the user to confirm destructive decisions taken
+	// while building the plan. Today its only consumer is reconcileVolumes,
+	// which asks for confirmation before scheduling the recreation of a volume
+	// whose configuration has diverged (an operation that loses the volume's
+	// data). Network recreation is not gated: it is not destructive.
+	prompt Prompt
+	plan   *Plan
+
+	// networkNodes and volumeNodes track the last plan node for each
+	// network/volume, so container creation nodes can depend on them.
+	networkNodes map[string]*PlanNode // compose network key → create node
+	volumeNodes  map[string]*PlanNode // compose volume key → create node
+	// serviceNodes tracks the last plan node per service, so dependent
+	// services can order their operations after dependencies.
+	serviceNodes map[string]*PlanNode
+	// containerNodes tracks, per service then replica number, the
+	// create-phase node that materializes that container (creation,
+	// recreation, or the exceptional-state restart), so start-phase nodes
+	// can depend on it and resolve their target from its result.
+	containerNodes map[string]map[int]*PlanNode
+	// startChainEnds tracks the nodes ending each service's start-phase
+	// visit: the last node of the replica chain, or — when nothing had to
+	// start — the dependency prerequisites the visit still evaluated. What a
+	// service_started dependent (or a wait node) hooks onto, matching
+	// InDependencyOrder semantics: a dependent's visit begins only once the
+	// dependency's whole visit (waits included) completed.
+	startChainEnds map[string][]*PlanNode
+	// waitNodes deduplicates OpWaitCondition nodes per (service, condition):
+	// several dependents awaiting the same condition share one node, like
+	// networkNodes deduplicates network creations.
+	waitNodes map[string]*PlanNode
+	// dependencyGraph memoizes NewGraph(project, ServiceStopped): both
+	// reconcileContainers and planStartPhase need the same dependency-ordered
+	// walk within one reconcile() call. Safe to share — visitInDependencyOrder
+	// tracks visited state locally per call and never mutates the graph, and
+	// r.project is never reassigned between the two calls.
+	dependencyGraph *Graph
+	// removedByPlan records replicas the create phase condemns (scale-down
+	// stop+remove): the start phase must never plan a start for them — the
+	// imperative engine only ever starts what survives the convergence.
+	removedByPlan map[string]bool
+	// hookRunnerNodes records, per service, the create-phase nodes that
+	// materialize the pre_start hook runners, so the start-phase RunPreStart
+	// node can depend on them — the executor must never run the hooks before
+	// their runners exist.
+	hookRunnerNodes map[string][]*PlanNode
+	// stoppedByPlan records containers already stopped by an earlier stage
+	// of the plan (typically planRecreateNetwork) so that downstream stages
+	// can chain on the existing OpStopContainer instead of emitting a second
+	// one against an already-stopped container.
+	stoppedByPlan map[string]*PlanNode // container ID → existing Stop node
+
+	// connectNodes records the OpConnectNetwork nodes emitted for a container by
+	// planRecreateNetworks (reconnecting it to a freshly recreated network). If
+	// reconcileContainers later recreates the same container, its RemoveContainer
+	// must wait for these reconnects so they don't race the removal.
+	connectNodes map[string][]*PlanNode // container ID → reconnect nodes
+
+	// recreatedServices is the set of services with at least one container
+	// scheduled for recreation in the current plan. Services iterate in
+	// dependency order, so by the time a dependent is evaluated, all its
+	// parents are final — read by parentNamespaceRecreated to cascade
+	// recreates to dependents that would otherwise hold stale
+	// "container:<old_id>" references.
+	recreatedServices map[string]bool
+
+	// observedContainersByService memoizes ObservedState.containersByService()
+	// (an O(services * containers) build) for expectedConfigHash, which is
+	// called once per service.
+	observedContainersByService map[string]Containers
+
+	// resolvedNetworks/resolvedVolumes hold the single live resource selected per
+	// compose key from the (possibly multi-valued) observed state — see
+	// resolveObserved. All reconcile logic reads these, never observed.Networks/
+	// observed.Volumes directly, so selection happens exactly once.
+	resolvedNetworks map[string]ObservedNetwork
+	resolvedVolumes  map[string]ObservedVolume
+}
+
+// reconcile is the main entry point: it builds a Plan from desired vs observed state.
+// The prompt function is consulted while planning to confirm destructive
+// decisions (see the reconciler.prompt field).
+func reconcile(_ context.Context, project *types.Project, observed *ObservedState, options ReconcileOptions, prompt Prompt) (*Plan, error) {
+	r := &reconciler{
+		project:                     project,
+		observed:                    observed,
+		options:                     options,
+		prompt:                      prompt,
+		plan:                        &Plan{},
+		networkNodes:                map[string]*PlanNode{},
+		volumeNodes:                 map[string]*PlanNode{},
+		serviceNodes:                map[string]*PlanNode{},
+		containerNodes:              map[string]map[int]*PlanNode{},
+		startChainEnds:              map[string][]*PlanNode{},
+		waitNodes:                   map[string]*PlanNode{},
+		removedByPlan:               map[string]bool{},
+		stoppedByPlan:               map[string]*PlanNode{},
+		hookRunnerNodes:             map[string][]*PlanNode{},
+		connectNodes:                map[string][]*PlanNode{},
+		recreatedServices:           map[string]bool{},
+		observedContainersByService: observed.containersByService(),
+	}
+
+	r.resolveObserved()
+
+	if options.Scope.plansCreatePhase() {
+		if err := r.reconcileNetworks(); err != nil {
+			return nil, err
+		}
+
+		if err := r.reconcileVolumes(); err != nil {
+			return nil, err
+		}
+
+		if err := r.reconcileContainers(); err != nil {
+			return nil, err
+		}
+
+		if r.options.RemoveOrphans {
+			r.reconcileOrphans()
+		}
+	}
+
+	if options.Scope.plansStartPhase() {
+		if err := r.planStartPhase(); err != nil {
+			return nil, err
+		}
+	}
+
+	return r.plan, nil
+}
+
+// resolveObserved selects, for every declared network and volume, the single
+// live resource that matches it best (see selectNetwork/selectVolume) and stores
+// it in resolvedNetworks/resolvedVolumes — the only observed views the rest of
+// the reconciler reads. Extra live resources sharing a compose key (typically a
+// leftover after a rename) are reported as orphans: they are left untouched —
+// removing them could drop data or break unrelated workloads — but the user is
+// warned so they can clean up, and selection stays deterministic across runs.
+func (r *reconciler) resolveObserved() {
+	r.resolvedNetworks = make(map[string]ObservedNetwork, len(r.project.Networks))
+	for _, key := range sortedKeys(r.project.Networks) {
+		selected, orphans, ok := r.observed.selectNetwork(key, r.project.Networks[key].Name)
+		if !ok {
+			continue
+		}
+		r.resolvedNetworks[key] = selected
+		for _, o := range orphans {
+			logrus.Warnf("network %q (id %s) carries the compose label %q but does not match the compose file (using %q); "+
+				"it is left untouched — remove it manually if it is no longer needed", o.Name, o.ID, key, selected.Name)
+		}
+	}
+	r.resolvedVolumes = make(map[string]ObservedVolume, len(r.project.Volumes))
+	for _, key := range sortedKeys(r.project.Volumes) {
+		selected, orphans, ok := r.observed.selectVolume(key, r.project.Volumes[key].Name)
+		if !ok {
+			continue
+		}
+		r.resolvedVolumes[key] = selected
+		for _, o := range orphans {
+			logrus.Warnf("volume %q carries the compose label %q but does not match the compose file (using %q); "+
+				"it is left untouched — remove it manually if it is no longer needed", o.Name, key, selected.Name)
+		}
+	}
+}
+
+// reconcileNetworks plans the network lifecycle: creation of missing networks
+// and, for networks whose configuration has diverged from the live resource,
+// recreation. Unlike volumes, recreating a network is not destructive, so no
+// user confirmation is required.
+//
+// Divergence is detected by comparing NetworkHash(desired) with the config-hash
+// persisted on the live network (observed.ConfigHash). A network with no
+// recorded hash (e.g. created by an older Compose or manually) is left
+// untouched: without a recorded hash there is no reliable way to tell
+// configuration drift apart from deliberate manual setup.
+//
+// A rename (observed.Name != desired.Name) also diverges the hash — NetworkHash
+// includes the name — and is handled by the same recreation path: the old
+// network is removed and the new one created, migrating attached containers onto
+// it. Networks carry no data, so removing the previous network (rather than
+// leaving it dangling) is safe and keeps subsequent runs deterministic.
+func (r *reconciler) reconcileNetworks() error {
+	var diverged []string
+	for _, key := range sortedKeys(r.project.Networks) {
+		desired := r.project.Networks[key]
+		if desired.External {
+			continue
+		}
+		observed, exists := r.resolvedNetworks[key]
+		if !exists {
+			r.planCreateNetwork(key, &desired, "not found")
+			continue
+		}
+		expected, err := NetworkHash(&desired)
+		if err != nil {
+			return err
+		}
+		if observed.ConfigHash == "" || observed.ConfigHash == expected {
+			continue
+		}
+		diverged = append(diverged, key)
+	}
+	r.planRecreateNetworks(diverged)
+	return nil
+}
+
+// planCreateNetwork adds a single CreateNetwork node and records it for dependency tracking.
+func (r *reconciler) planCreateNetwork(key string, networkConfig *types.NetworkConfig, cause string) {
+	r.networkNodes[key] = r.plan.addNode(Operation{
+		Type:       OpCreateNetwork,
+		ResourceID: "network:" + key,
+		Cause:      cause,
+		Name:       networkConfig.Name,
+		Network:    networkConfig,
+	}, "")
+}
+
+// planRecreateNetworks adds, for each diverged network, the sequence:
+//
+//	stop containers → disconnect containers → remove network → create network → connect containers
+//
+// Attached containers must be disconnected before the network can be removed
+// (Docker refuses to remove a network with active endpoints) and are reconnected
+// to the fresh network afterwards — they keep their identity and are not
+// recreated: a network definition change alone is not a reason to lose
+// container state.
+//
+// Stops are deduplicated through stoppedByPlan so a container attached to several
+// diverged networks (or later recreated by reconcileContainers) is stopped once.
+// Each reconnect is recorded in connectNodes so that, should reconcileContainers
+// recreate the container for an unrelated reason, its removal is ordered after
+// the reconnect instead of racing it.
+func (r *reconciler) planRecreateNetworks(keys []string) {
+	for _, key := range keys {
+		observed := r.resolvedNetworks[key]
+		desired := r.project.Networks[key]
+		containers := r.containersForServices(r.servicesUsingNetwork(key))
+
+		// Stop then disconnect every attached container.
+		var disconnectNodes []*PlanNode
+		for i := range containers {
+			oc := &containers[i]
+			resID := serviceReplicaID(oc.Summary.Labels[api.ServiceLabel], oc.Number)
+			stopNode, alreadyStopped := r.stoppedByPlan[oc.ID]
+			if !alreadyStopped {
+				stopNode = r.plan.addNode(Operation{
+					Type:       OpStopContainer,
+					ResourceID: resID,
+					Cause:      fmt.Sprintf("network %s config changed", key),
+					Container:  &oc.Summary,
+					Timeout:    r.options.Timeout,
+				}, "")
+				r.stoppedByPlan[oc.ID] = stopNode
+			}
+			disconnectNodes = append(disconnectNodes, r.plan.addNode(Operation{
+				Type:       OpDisconnectNetwork,
+				ResourceID: resID,
+				Cause:      fmt.Sprintf("network %s recreate", key),
+				Container:  &oc.Summary,
+				Name:       observed.Name,
+			}, "", stopNode))
+		}
+
+		// A rename (the live network has a different name than desired) does not
+		// require removing the old network: the new one has a distinct name, so
+		// it is created independently and the old removal becomes best-effort
+		// cleanup — skipped with a warning if the network is still in use by
+		// non-Compose containers, instead of blocking the whole operation. A
+		// same-name divergence, on the other hand, must remove the old network
+		// before the new one can be created.
+		rename := observed.Name != desired.Name
+		removeCause := "config hash diverged"
+		createCause := "recreate after config change"
+		if rename {
+			removeCause = "renamed (best-effort cleanup)"
+			createCause = "renamed"
+		}
+
+		removeNode := r.plan.addNode(Operation{
+			Type:       OpRemoveNetwork,
+			ResourceID: "network:" + key,
+			Cause:      removeCause,
+			Name:       observed.Name,
+			BestEffort: rename,
+		}, "", disconnectNodes...)
+
+		var createDeps []*PlanNode
+		if !rename {
+			createDeps = []*PlanNode{removeNode}
+		}
+		createNode := r.plan.addNode(Operation{
+			Type:       OpCreateNetwork,
+			ResourceID: "network:" + key,
+			Cause:      createCause,
+			Name:       desired.Name,
+			Network:    &desired,
+		}, "", createDeps...)
+		r.networkNodes[key] = createNode
+
+		// Reconnect every attached container to the fresh network. On a rename the
+		// reconnect also waits for the container to be disconnected from the old
+		// network first (on a same-name recreate that ordering already holds
+		// transitively through remove → create).
+		for i := range containers {
+			oc := &containers[i]
+			resID := serviceReplicaID(oc.Summary.Labels[api.ServiceLabel], oc.Number)
+			deps := []*PlanNode{createNode}
+			if rename {
+				deps = append(deps, disconnectNodes[i])
+			}
+			connectNode := r.plan.addNode(Operation{
+				Type:       OpConnectNetwork,
+				ResourceID: resID,
+				Cause:      fmt.Sprintf("network %s recreate", key),
+				Container:  &oc.Summary,
+				Name:       desired.Name,
+			}, "", deps...)
+			r.connectNodes[oc.ID] = append(r.connectNodes[oc.ID], connectNode)
+		}
+	}
+}
+
+// reconcileVolumes plans the volume lifecycle: creation of missing volumes and,
+// for volumes whose configuration has diverged from the live resource,
+// recreation — gated on user confirmation because it destroys the volume's data.
+//
+// Divergence is detected by comparing VolumeHash(desired) with the config-hash
+// persisted on the live volume (observed.ConfigHash). A volume with no recorded
+// hash (e.g. created by an older Compose) is left untouched: without a
+// recorded hash there is no reliable way to tell configuration drift apart
+// from deliberate manual setup, and volumes carry data.
+func (r *reconciler) reconcileVolumes() error {
+	var diverged []string
+	for _, key := range sortedKeys(r.project.Volumes) {
+		desired := r.project.Volumes[key]
+		if desired.External {
+			continue
+		}
+		observed, exists := r.resolvedVolumes[key]
+		if !exists {
+			r.planCreateVolume(key, &desired, "not found")
+			continue
+		}
+		expected, err := VolumeHash(desired)
+		if err != nil {
+			return err
+		}
+		if observed.ConfigHash == "" || observed.ConfigHash == expected {
+			continue
+		}
+		if observed.Name != desired.Name {
+			// The volume was renamed: the live volume matched by label carries a
+			// different name, i.e. a distinct Docker resource. A rename is
+			// additive — create the new volume and leave the old one (and its
+			// data) untouched — instead of prompting to delete data under a
+			// name that does not exist yet.
+			r.planCreateVolume(key, &desired, "renamed")
+			// Rewrite the observed name to the desired one so reconcileContainers
+			// detects the mount mismatch and migrates existing containers onto
+			// the new volume within the same up, and so later runs match
+			// deterministically on the new name rather than split-braining
+			// between the two.
+			observed.Name = desired.Name
+			r.resolvedVolumes[key] = observed
+			continue
+		}
+		confirmed, err := r.prompt(
+			fmt.Sprintf("Volume %q exists but doesn't match configuration in compose file. Recreate (data will be lost)?", desired.Name),
+			false)
+		if err != nil {
+			return err
+		}
+		if confirmed {
+			diverged = append(diverged, key)
+		}
+	}
+	r.planRecreateVolumes(diverged)
+	return nil
+}
+
+// planCreateVolume adds a single CreateVolume node and records it for dependency tracking.
+func (r *reconciler) planCreateVolume(key string, vol *types.VolumeConfig, cause string) {
+	r.volumeNodes[key] = r.plan.addNode(Operation{
+		Type:       OpCreateVolume,
+		ResourceID: "volume:" + key,
+		Cause:      cause,
+		Name:       vol.Name,
+		Volume:     vol,
+	}, "")
+}
+
+// planRecreateVolumes schedules the recreation of the given (confirmed) diverged
+// volumes and hands the re-creation of the impacted service containers to
+// reconcileContainers. The resulting plan, for each affected container/volume, is:
+//
+//	stop containers → remove containers → remove volume → create volume → create containers
+//
+// Containers must be *removed* (not merely stopped) before a volume can be
+// removed: Docker refuses to remove a volume still referenced by any container,
+// even a stopped one. They are then recreated once the fresh volume exists.
+//
+// Rather than re-implementing container creation here, the affected services are
+// cleared from the observed snapshot: reconcileContainers (which runs next) then
+// sees them as absent and schedules fresh containers that depend on the
+// CreateVolume node via infrastructureDeps. Marking those services as recreated
+// propagates the cascade to namespace/volume-sharing dependents.
+//
+// Container stops/removes are planned once per container even when a container
+// mounts several diverged volumes, and every RemoveVolume waits for all affected
+// container removals, so the ordering holds regardless of which service mounts
+// which volume.
+func (r *reconciler) planRecreateVolumes(keys []string) {
+	if len(keys) == 0 {
+		return
+	}
+
+	// Collect the services (and their containers) mounting any diverged volume.
+	serviceSet := map[string]bool{}
+	for _, key := range keys {
+		for _, serviceName := range r.servicesUsingVolume(key) {
+			serviceSet[serviceName] = true
+		}
+	}
+	services := sortedKeys(serviceSet)
+	containers := r.containersForServices(services)
+
+	// Stop then remove every affected container.
+	var removeNodes []*PlanNode
+	for i := range containers {
+		oc := &containers[i]
+		resID := serviceReplicaID(oc.Summary.Labels[api.ServiceLabel], oc.Number)
+		stopNode, alreadyStopped := r.stoppedByPlan[oc.ID]
+		if !alreadyStopped {
+			stopNode = r.plan.addNode(Operation{
+				Type:       OpStopContainer,
+				ResourceID: resID,
+				Cause:      "mounted volume config changed",
+				Container:  &oc.Summary,
+				Timeout:    r.options.Timeout,
+			}, "")
+			r.stoppedByPlan[oc.ID] = stopNode
+		}
+		removeNode := r.plan.addNode(Operation{
+			Type:       OpRemoveContainer,
+			ResourceID: resID,
+			Cause:      "mounted volume config changed",
+			Container:  &oc.Summary,
+		}, "", stopNode)
+		removeNodes = append(removeNodes, removeNode)
+	}
+
+	// Remove then recreate each diverged volume once all affected containers are
+	// gone. Record the CreateVolume node so the fresh containers scheduled by
+	// reconcileContainers depend on it (via infrastructureDeps).
+	for _, key := range keys {
+		desired := r.project.Volumes[key]
+		removeVolNode := r.plan.addNode(Operation{
+			Type:       OpRemoveVolume,
+			ResourceID: "volume:" + key,
+			Cause:      "config hash diverged",
+			Name:       r.resolvedVolumes[key].Name,
+		}, "", removeNodes...)
+		createVolNode := r.plan.addNode(Operation{
+			Type:       OpCreateVolume,
+			ResourceID: "volume:" + key,
+			Cause:      "recreate after config change",
+			Name:       desired.Name,
+			Volume:     &desired,
+		}, "", removeVolNode)
+		r.volumeNodes[key] = createVolNode
+	}
+
+	// Hand container re-creation to reconcileContainers: cleared services are
+	// seen as absent and scheduled fresh (gated on their CreateVolume node via
+	// infrastructureDeps), and marking them recreated cascades to
+	// namespace/volume-sharing dependents.
+	//
+	// Only observed.Containers is cleared, not the observedContainersByService
+	// snapshot memoized at reconciler init: that snapshot backs config-hash
+	// resolution (serviceHashWithResolvedRefs), which must mirror the state the
+	// executor hashed against at create time, whereas clearing here is purely a
+	// scheduling concern carried by the plan's dependency edges. The two
+	// intentionally diverge; do not "fix" one to match the other.
+	for _, serviceName := range services {
+		r.recreatedServices[serviceName] = true
+		r.observed.Containers[serviceName] = nil
+	}
+}
+
+// servicesUsingNetwork returns the names of services that reference the given
+// compose network key, sorted for deterministic plan output.
+func (r *reconciler) servicesUsingNetwork(networkKey string) []string {
+	var names []string
+	for _, key := range sortedKeys(r.project.Services) {
+		service := r.project.Services[key]
+		if _, ok := service.Networks[networkKey]; ok {
+			names = append(names, service.Name)
+		}
+	}
+	return names
+}
+
+// servicesUsingVolume returns the names of services whose containers reference
+// the given compose volume — either by mounting it directly (service.Volumes) or
+// by inheriting the mount transitively through volumes_from. Every such service's
+// containers must be removed before the volume can be removed: Docker refuses to
+// remove a volume still referenced by any container, and volumes_from
+// materializes the source's mounts on the target container. Sorted for
+// deterministic plan output.
+//
+// Only volumes_from propagates a *mount* (and therefore a volume reference);
+// network_mode/ipc/pid: service:x share namespaces, not mounts, so they do not
+// keep a volume in use and are intentionally excluded here.
+func (r *reconciler) servicesUsingVolume(volumeKey string) []string {
+	inSet := map[string]bool{}
+	// Seed with services that mount the volume directly.
+	for _, key := range sortedKeys(r.project.Services) {
+		service := r.project.Services[key]
+		for _, v := range service.Volumes {
+			if v.Source == volumeKey {
+				inSet[service.Name] = true
+				break
+			}
+		}
+	}
+	// Grow the set by transitive volumes_from closure until it stabilizes: a
+	// service inherits the mount when it draws volumes from a service already in
+	// the set (references to external containers carry no compose dependency).
+	for {
+		added := false
+		for _, key := range sortedKeys(r.project.Services) {
+			service := r.project.Services[key]
+			if inSet[service.Name] {
+				continue
+			}
+			for _, vf := range service.VolumesFrom {
+				if strings.HasPrefix(vf, types.ContainerPrefix) {
+					continue
+				}
+				name, _, _ := strings.Cut(vf, ":")
+				if inSet[name] {
+					inSet[service.Name] = true
+					added = true
+					break
+				}
+			}
+		}
+		if !added {
+			break
+		}
+	}
+	return sortedKeys(inSet)
+}
+
+// containersForServices returns all observed containers belonging to the given
+// service names.
+func (r *reconciler) containersForServices(services []string) []ObservedContainer {
+	var result []ObservedContainer
+	for _, serviceName := range services {
+		result = append(result, r.observed.Containers[serviceName]...)
+	}
+	return result
+}
+
+// reconcileContainers processes each service in dependency order, comparing
+// the desired scale and configuration with observed containers.
+func (r *reconciler) reconcileContainers() error {
+	graph, err := r.serviceGraph()
+	if err != nil {
+		return err
+	}
+
+	// Visit in dependency order (leaves first = services with no deps)
+	return r.visitInDependencyOrder(graph, r.reconcileService)
+}
+
+// serviceGraph memoizes NewGraph(r.project, ServiceStopped):
+// reconcileContainers and planStartPhase both need it within one
+// reconcile() call.
+func (r *reconciler) serviceGraph() (*Graph, error) {
+	if r.dependencyGraph == nil {
+		graph, err := NewGraph(r.project, ServiceStopped)
+		if err != nil {
+			return nil, err
+		}
+		r.dependencyGraph = graph
+	}
+	return r.dependencyGraph, nil
+}
+
+// visitInDependencyOrder processes services from leaves to roots so that
+// dependencies are reconciled before the services that depend on them.
+func (r *reconciler) visitInDependencyOrder(g *Graph, visit func(types.ServiceConfig) error) error {
+	visited := map[string]bool{}
+	// Sort vertex keys for deterministic plan output in tests
+	keys := sortedKeys(g.Vertices)
+	for {
+		// Find a vertex whose all children are visited
+		var next *Vertex
+		for _, k := range keys {
+			v := g.Vertices[k]
+			if visited[v.Key] {
+				continue
+			}
+			allChildrenVisited := true
+			for _, child := range v.Children {
+				if !visited[child.Key] {
+					allChildrenVisited = false
+					break
+				}
+			}
+			if allChildrenVisited {
+				next = v
+				break
+			}
+		}
+		if next == nil {
+			break // all visited
+		}
+		visited[next.Key] = true
+
+		service, err := r.project.GetService(next.Service)
+		if err != nil {
+			return err
+		}
+		if err := visit(service); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// reconcileService handles a single service: scale down, recreate diverged,
+// start stopped, scale up.
+func (r *reconciler) reconcileService(service types.ServiceConfig) error {
+	if service.Provider != nil && r.options.SkipProviders {
+		return nil
+	}
+	if service.Provider != nil {
+		serviceCopy := service
+		deps := r.infrastructureDeps(service)
+		// A service migrated from replicas to a provider leaves its old
+		// containers behind: not converged (a provider service has no
+		// replicas to converge) and not orphaned (the service is still in
+		// the model). They must go before the provider's relay stands in:
+		// the relay takes over the service's canonical container name and
+		// its network alias, so a leftover replica is both a name conflict
+		// at relay creation and a competing DNS entry serving stale
+		// traffic. The relay itself (RelayLabel) is the provider service's
+		// legitimate container and is left alone — converged by
+		// ensureServiceRelay, not by the plan.
+		for i := range r.observed.Containers[service.Name] {
+			oc := &r.observed.Containers[service.Name][i]
+			if isRelayContainer(oc.Summary) {
+				continue
+			}
+			resID := serviceReplicaID(service.Name, oc.Number)
+			stopNode := r.plan.addNode(Operation{
+				Type:       OpStopContainer,
+				ResourceID: resID,
+				Cause:      "service is now provider-backed",
+				Container:  &oc.Summary,
+				Timeout:    r.options.Timeout,
+			}, "")
+			removeNode := r.plan.addNode(Operation{
+				Type:       OpRemoveContainer,
+				ResourceID: resID,
+				Cause:      "service is now provider-backed",
+				Container:  &oc.Summary,
+			}, "", stopNode)
+			r.removedByPlan[resID] = true
+			// the provider run deploys the relay: the canonical name must
+			// be free by then
+			deps = append(deps, removeNode)
+		}
+		node := r.plan.addNode(Operation{
+			Type:       OpRunProvider,
+			ResourceID: "provider:" + service.Name,
+			Cause:      "provider service",
+			Service:    &serviceCopy,
+		}, "", deps...)
+		r.serviceNodes[service.Name] = node
+		return nil
+	}
+
+	expected, err := getScale(service)
+	if err != nil {
+		return err
+	}
+
+	containers := r.observed.Containers[service.Name]
+	actual := len(containers)
+
+	strategy := r.options.RecreateDependencies
+	if slices.Contains(r.options.Services, service.Name) || len(r.options.Services) == 0 {
+		strategy = r.options.Recreate
+	}
+
+	// Precompute once per service: mustRecreate is called twice per container
+	// (sortContainers + main loop) and the hash/cascade inputs depend on the
+	// service, not the container.
+	expectedHash, err := serviceHashWithResolvedRefs(service, r.observedContainersByService)
+	if err != nil {
+		return err
+	}
+	parentRecreated := r.parentNamespaceRecreated(service)
+
+	// Order containers so that the scale-down below (i >= expected) trims
+	// obsolete containers and the highest replica numbers first — see
+	// sortContainers for the resulting ordering.
+	r.sortContainers(containers, service, expectedHash, parentRecreated, strategy)
+
+	// Collect dependency nodes that container creation should depend on
+	infraDeps := r.infrastructureDeps(service)
+
+	var lastNode *PlanNode
+	// containerNodes collects every node planned for this service's replicas,
+	// so the pre_start hook-runner creation below can wait for the executor's
+	// live container view to be final before resolving its target replica.
+	var containerNodes []*PlanNode
+	// keptRunning reports whether a running replica survives the plan
+	// untouched — the start phase will then skip pre_start, so no hook
+	// runner is needed.
+	keptRunning := false
+
+	// Process existing containers
+	for i, oc := range containers {
+		if i >= expected {
+			// Scale down: stop + remove excess containers. Track the remove
+			// node so dependent services wait for the scale-down to finish
+			// even when no other operation runs on this service.
+			resID := serviceReplicaID(service.Name, oc.Number)
+			stopNode := r.plan.addNode(Operation{
+				Type:       OpStopContainer,
+				ResourceID: resID,
+				Cause:      "scale down",
+				Container:  &containers[i].Summary,
+				Timeout:    r.options.Timeout,
+			}, "")
+			lastNode = r.plan.addNode(Operation{
+				Type:       OpRemoveContainer,
+				ResourceID: resID,
+				Cause:      "scale down",
+				Container:  &containers[i].Summary,
+			}, "", stopNode)
+			r.removedByPlan[resID] = true
+			containerNodes = append(containerNodes, lastNode)
+			continue
+		}
+
+		if r.mustRecreate(service, expectedHash, parentRecreated, oc, strategy) {
+			lastNode = r.planRecreateContainer(service, &containers[i], infraDeps)
+			r.setContainerNode(service.Name, oc.Number, lastNode)
+			containerNodes = append(containerNodes, lastNode)
+			r.recreatedServices[service.Name] = true
+			continue
+		}
+
+		// Container is up-to-date
+		switch oc.State {
+		case container.StateRunning, container.StateCreated, container.StateRestarting, container.StateExited:
+			// Nothing to plan. Starting created/exited containers is NOT the
+			// plan's job: `up` runs a separate start phase afterwards
+			// (start.go), which lists containers again and starts them in
+			// dependency order. Exited containers are deliberately left as-is
+			// here so that phase (or the user) decides.
+			if oc.State == container.StateRunning {
+				// Observed state is a snapshot from before this plan ran: a
+				// container reported running here may already be scheduled
+				// to stop elsewhere in the plan (a network recreate, a
+				// restart: true dependency cascade, ...) via stoppedByPlan.
+				// It will not be running by the time the start phase
+				// evaluates pre_start, so it does not count as kept.
+				if _, alreadyStopped := r.stoppedByPlan[oc.ID]; !alreadyStopped {
+					keptRunning = true
+				}
+			}
+		default:
+			// Any other state (paused, dead, ...): attempt to (re)start
+			lastNode = r.plan.addNode(Operation{
+				Type:       OpStartContainer,
+				ResourceID: serviceReplicaID(service.Name, oc.Number),
+				Cause:      "not running",
+				Container:  &containers[i].Summary,
+			}, "", infraDeps...)
+			r.setContainerNode(service.Name, oc.Number, lastNode)
+			containerNodes = append(containerNodes, lastNode)
+			// The replica is running once this op executes, so the start
+			// phase will skip pre_start for the service.
+			keptRunning = true
+		}
+	}
+
+	// Scale up: create new containers
+	nextNum := nextContainerNumber(r.observedSummaries(service.Name))
+	for i := 0; i < expected-actual; i++ {
+		number := nextNum + i
+		name := getContainerName(r.project.Name, service, number)
+		serviceCopy := service // copy for pointer stability
+		lastNode = r.plan.addNode(Operation{
+			Type:       OpCreateContainer,
+			ResourceID: serviceReplicaID(service.Name, number),
+			Cause:      "no existing container",
+			Service:    &serviceCopy,
+			Number:     number,
+			Name:       name,
+		}, "", infraDeps...)
+		r.setContainerNode(service.Name, number, lastNode)
+		containerNodes = append(containerNodes, lastNode)
+	}
+
+	r.planPreStartHookRunners(service, expected, keptRunning, containerNodes, infraDeps)
+
+	if lastNode != nil {
+		r.serviceNodes[service.Name] = lastNode
+	}
+	return nil
+}
+
+// planPreStartHookRunners plans the create-phase side of the pre_start hook
+// lifecycle. With no running replica surviving the plan, it purges every
+// observed hook-runner container (leftovers of a previous run that failed, or
+// was never started) and — when there is also a replica to start (scale > 0)
+// — creates one fresh runner per declared hook. The purge requires neither
+// hooks to still be declared nor a positive scale: a service that dropped its
+// pre_start declarations or was scaled down to zero must not keep runners of
+// the prior generation accumulating until down — the same rationale as the
+// per_replica return below. The start phase only executes runners prepared
+// here; it never creates one itself.
+//
+// Purges are best-effort (mirroring the historical imperative purge, which was
+// warn-only) but the creates depend on them: runner names are deterministic,
+// so a genuinely stuck old runner surfaces as a name conflict on the create.
+// The creates also depend on every replica node and on the infrastructure, so
+// the executor resolves the target replica (VolumesFrom) against a final live
+// view with networks in place. When a running replica survives the plan, the
+// start phase skips pre_start entirely: nothing is created, and a hook
+// container retained after a failure stays available for inspection.
+func (r *reconciler) planPreStartHookRunners(service types.ServiceConfig, expectedScale int, keptRunning bool, containerNodes, infraDeps []*PlanNode) {
+	if keptRunning {
+		return
+	}
+	serviceCopy := service
+	deps := slices.Concat(containerNodes, infraDeps)
+	stale := slices.Clone(r.observed.HookContainers[service.Name])
+	slices.SortFunc(stale, func(a, b ObservedContainer) int { return strings.Compare(a.ID, b.ID) })
+	for i := range stale {
+		node := r.plan.addNode(Operation{
+			Type:          OpRemoveContainer,
+			ResourceID:    fmt.Sprintf("hook:%s:stale:%s", service.Name, stale[i].ID[:min(12, len(stale[i].ID))]),
+			Cause:         "stale pre_start hook container",
+			Service:       &serviceCopy,
+			Container:     &stale[i].Summary,
+			RemoveVolumes: true,
+			BestEffort:    true,
+		}, "")
+		deps = append(deps, node)
+	}
+	if expectedScale == 0 {
+		// No replica will start, so there is no hook to prepare — but the
+		// stale-runner purge above already ran: scaling a service down to
+		// zero must not leave runners of the prior generation behind.
+		return
+	}
+	if perReplicaHookIndex(service) >= 0 {
+		// per_replica is not yet supported (docker/compose#14259):
+		// runPreStart validates every hook up front and rejects the whole
+		// service before executing any of them. Planning creates here would
+		// only orphan runners that can never run — nothing to prepare until
+		// the hook declares per_replica: false. The stale-runner purge
+		// above still runs unconditionally: a user switching a hook to
+		// per_replica: true must not be left with runners from a prior,
+		// non-per_replica generation accumulating forever.
+		return
+	}
+	for i := range service.PreStart {
+		node := r.plan.addNode(Operation{
+			Type:       OpCreateHookContainer,
+			ResourceID: fmt.Sprintf("hook:%s:%s:%d", service.Name, preStartHookType, i),
+			Cause:      "pre_start hook",
+			Service:    &serviceCopy,
+			HookIndex:  i,
+			Name:       getHookContainerName(r.project.Name, service.Name, i),
+		}, "", deps...)
+		r.hookRunnerNodes[service.Name] = append(r.hookRunnerNodes[service.Name], node)
+	}
+}
+
+// mustRecreate decides whether oc must be recreated to match expected. The
+// expectedHash and parentRecreated inputs are precomputed once per service by
+// reconcileService — see expectedConfigHash and parentNamespaceRecreated for
+// the rationale (issue #13878).
+func (r *reconciler) mustRecreate(expected types.ServiceConfig, expectedHash string, parentRecreated bool, oc ObservedContainer, policy string) bool {
+	switch policy {
+	case api.RecreateNever:
+		return false
+	case api.RecreateForce:
+		return true
+	}
+	if parentRecreated {
+		return true
+	}
+	if oc.ConfigHash != expectedHash {
+		return true
+	}
+	if oc.ImageDigest != expected.CustomLabels[api.ImageDigestLabel] {
+		return true
+	}
+	if oc.ImageVolumeDigest != expected.CustomLabels[api.ImageVolumeDigestLabel] {
+		return true
+	}
+	if oc.State == container.StateRunning && r.hasNetworkMismatch(expected, oc) {
+		return true
+	}
+	return r.hasVolumeMismatch(expected, oc)
+}
+
+// parentNamespaceRecreated reports whether any namespace- or volume-sharing
+// parent of service has at least one container scheduled for recreation. The
+// parent set is derived from service itself (network_mode/ipc/pid and volumes_from)
+// rather than depends_on, so the cascade fires only when a stale
+// "container:<id>" reference would otherwise be left behind.
+func (r *reconciler) parentNamespaceRecreated(service types.ServiceConfig) bool {
+	for _, mode := range []string{service.NetworkMode, service.Ipc, service.Pid} {
+		if name := getDependentServiceFromMode(mode); name != "" && r.recreatedServices[name] {
+			return true
+		}
+	}
+	for _, vol := range service.VolumesFrom {
+		if strings.HasPrefix(vol, types.ContainerPrefix) {
+			continue
+		}
+		name, _, _ := strings.Cut(vol, ":")
+		if r.recreatedServices[name] {
+			return true
+		}
+	}
+	return false
+}
+
+// serviceHashWithResolvedRefs mirrors what the executor persists at create
+// time: service references (network_mode/ipc/pid: service:X, volumes_from) are
+// resolved against the observed containers snapshot before hashing. On
+// resolution failure (e.g. referenced parent absent) the raw form is hashed —
+// it cannot match the persisted hash either way, so recreation is forced.
+//
+// Only fields mutated by resolveServiceReferences need defensive copying.
+// service.Networks (a map) is left shared because resolveServiceReferences does
+// not touch it; revisit if that changes.
+func serviceHashWithResolvedRefs(service types.ServiceConfig, containers map[string]Containers) (string, error) {
+	resolved := service
+	resolved.VolumesFrom = slices.Clone(service.VolumesFrom)
+	_ = resolveServiceReferences(&resolved, containers)
+	return ServiceHash(resolved)
+}
+
+// hasNetworkMismatch checks if the container is not connected to all expected networks.
+func (r *reconciler) hasNetworkMismatch(expected types.ServiceConfig, oc ObservedContainer) bool {
+	for _, net := range sortedKeys(expected.Networks) {
+		expectedID := ""
+		if obs, ok := r.resolvedNetworks[net]; ok {
+			expectedID = obs.ID
+		}
+		if expectedID == "" || expectedID == "swarm" {
+			continue
+		}
+		found := false
+		for _, netID := range oc.ConnectedNetworks {
+			if netID == expectedID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return true
+		}
+	}
+	return false
+}
+
+// hasVolumeMismatch checks if the container is missing any expected volume mounts.
+func (r *reconciler) hasVolumeMismatch(expected types.ServiceConfig, oc ObservedContainer) bool {
+	for _, vol := range expected.Volumes {
+		if vol.Type != string(mmount.TypeVolume) || vol.Source == "" {
+			continue
+		}
+		expectedName := ""
+		if obs, ok := r.resolvedVolumes[vol.Source]; ok {
+			expectedName = obs.Name
+		}
+		if expectedName == "" {
+			continue
+		}
+		found := false
+		for _, m := range oc.Summary.Mounts {
+			if m.Type == mmount.TypeVolume && m.Name == expectedName {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return true
+		}
+	}
+	return false
+}
+
+// planStartPhase appends the Start phase to the plan: for every service, a
+// replica chain of start-phase operations reproducing the imperative
+// engine's semantics — dependency conditions first, one optional
+// OpRunPreStart when no replica was running at observation, then per
+// replica inject+start (OpStartContainer, enriched by the executor) and
+// post_start hooks, each replica chained after the previous one to keep
+// today's sequential start order, now visible in the plan.
+//
+// Conditions other than service_started materialize as OpWaitCondition
+// nodes, deduplicated per (service, condition) across dependents; health is
+// deliberately re-observed at execution time — the plan only encodes what to
+// wait for, never a stale observation. service_started needs no node: a
+// plain DAG edge to the dependency's chain end expresses it.
+func (r *reconciler) planStartPhase() error {
+	graph, err := r.serviceGraph()
+	if err != nil {
+		return err
+	}
+	return r.visitInDependencyOrder(graph, r.planServiceStart)
+}
+
+// startReplica is a container the start phase must bring to running: either
+// materialized by a create-phase node (create) or already observed (container).
+type startReplica struct {
+	resID  string
+	number int // replica number, the start order within the service
+	// container is the observed container to start; nil when the create
+	// phase materializes it.
+	container *container.Summary
+	// after is the create-phase node this replica's start must follow, when
+	// the create phase planned one.
+	after *PlanNode
+	// createNodeID is the ID of the node whose execution result carries the
+	// materialized container (the OpCreateContainer node); 0 when the
+	// container is observed.
+	createNodeID int
+}
+
+// plannedReplica builds the startReplica for a container the create phase
+// already planned a node for. The node registered in containerNodes is not
+// always the one whose execution result carries the container ID: a recreate
+// chain registers its final rename node, whose CreateNodeID names the actual
+// create node.
+func plannedReplica(service string, number int, node *PlanNode) startReplica {
+	rep := startReplica{resID: serviceReplicaID(service, number), number: number, after: node}
+	switch node.Operation.Type {
+	case OpCreateContainer:
+		rep.createNodeID = node.ID
+	case OpRenameContainer:
+		rep.createNodeID = node.Operation.CreateNodeID
+	default:
+		// no other node type is registered in containerNodes today
+		// (exceptional-state restarts are filtered out before this point);
+		// leave the target unresolved so execution fails with a clean "no
+		// materialized container" error instead of panicking here
+	}
+	return rep
+}
+
+// serviceReplicaID is the canonical resource ID of one service replica:
+// every producer of the "service:<name>:<number>" form goes through it so
+// the format lives in exactly one place (nothing parses it back — plan
+// bookkeeping is keyed by service and number, not by resource ID).
+func serviceReplicaID(service string, number int) string {
+	return fmt.Sprintf("service:%s:%d", service, number)
+}
+
+// startGroupID is the event-group key of one replica's start chain.
+func startGroupID(resID string) string {
+	return "start:" + strings.TrimPrefix(resID, "service:")
+}
+
+// setContainerNode records the create-phase node materializing a replica.
+func (r *reconciler) setContainerNode(service string, number int, node *PlanNode) {
+	if r.containerNodes[service] == nil {
+		r.containerNodes[service] = map[int]*PlanNode{}
+	}
+	r.containerNodes[service][number] = node
+}
+
+// startPhaseReplicas collects the replicas to start, ascending number:
+// containers materialized by the create phase plus observed up-to-date
+// containers not running — exactly the isNotRunning set the imperative start
+// phase acts on. anyRunning reports whether a replica will be running when
+// the start phase looks: running at observation and left untouched by the
+// plan, or brought to running by the create phase itself (the bare restart
+// of exceptional states). Both gate pre_start and take no start node — the
+// imperative engine neither re-starts nor injects into a running container.
+func (r *reconciler) startPhaseReplicas(service types.ServiceConfig) (replicas []startReplica, anyRunning bool) {
+	planned := r.containerNodes[service.Name]
+	seen := map[int]bool{}
+	for i := range r.observed.Containers[service.Name] {
+		oc := &r.observed.Containers[service.Name][i]
+		resID := serviceReplicaID(service.Name, oc.Number)
+		if r.removedByPlan[resID] {
+			// condemned by the create phase (scale-down): gone by the time
+			// the imperative start phase would look, so it neither starts
+			// nor counts as running for the pre_start gating
+			seen[oc.Number] = true
+			continue
+		}
+		if node, ok := planned[oc.Number]; ok {
+			seen[oc.Number] = true
+			if node.Operation.Type == OpStartContainer {
+				// exceptional-state restart (paused, dead, ...): the
+				// create-phase bare start already brings it to running
+				anyRunning = true
+				continue
+			}
+			replicas = append(replicas, plannedReplica(service.Name, oc.Number, node))
+			continue
+		}
+		if oc.State == container.StateRunning {
+			if stopNode, stopped := r.stoppedByPlan[oc.ID]; stopped {
+				// the create phase stops this container WITHOUT recreating
+				// it (network recreate): it will be down when the start
+				// phase looks, and the imperative engine restarts it from
+				// its second snapshot — so does the plan, ordered after the
+				// container's last reconnect (else its stop). Not running
+				// for the pre_start gating, like in the imperative engine.
+				after := stopNode
+				if reconnects := r.connectNodes[oc.ID]; len(reconnects) > 0 {
+					after = reconnects[len(reconnects)-1]
+				}
+				seen[oc.Number] = true
+				replicas = append(replicas, startReplica{resID: resID, number: oc.Number, container: &oc.Summary, after: after})
+				continue
+			}
+			anyRunning = true
+			continue
+		}
+		seen[oc.Number] = true
+		replicas = append(replicas, startReplica{resID: resID, number: oc.Number, container: &oc.Summary})
+	}
+	for number, node := range planned {
+		if !seen[number] {
+			replicas = append(replicas, plannedReplica(service.Name, number, node))
+		}
+	}
+	// the map iteration above is unordered: this sort CARRIES the plan's
+	// determinism, on top of expressing the numeric start order
+	slices.SortFunc(replicas, func(a, b startReplica) int { return cmp.Compare(a.number, b.number) })
+	return replicas, anyRunning
+}
+
+// startPhaseDependencies turns the service's depends_on into plan
+// prerequisites: a service_started condition is a plain edge to the
+// dependency's chain end, any other condition a deduplicated OpWaitCondition
+// node re-evaluated at execution time. Which dependencies need a wait node
+// is delegated to shouldWaitForDependency — the imperative engine's own
+// gate — errors included: a dependency that is neither declared nor
+// disabled is the same hard failure it is today.
+func (r *reconciler) startPhaseDependencies(service types.ServiceConfig) ([]*PlanNode, error) {
+	var depNodes []*PlanNode
+	for _, dep := range sortedKeys(service.DependsOn) {
+		cfg := service.DependsOn[dep]
+		targets := r.startChainEnds[dep]
+		if len(targets) == 0 {
+			if node, ok := r.serviceNodes[dep]; ok {
+				targets = []*PlanNode{node}
+			}
+		}
+		shouldWait, err := shouldWaitForDependency(dep, cfg, r.project)
+		if err != nil {
+			return nil, err
+		}
+		if !shouldWait {
+			depNodes = append(depNodes, targets...)
+			continue
+		}
+		depNodes = append(depNodes, r.waitConditionNode(dep, cfg, targets))
+	}
+	return depNodes, nil
+}
+
+// waitConditionNode returns the shared wait node for (dep, condition),
+// creating it on first use. required:false marks it best-effort — a missing
+// dependency is skipped, not fatal; one required dependent upgrades the
+// shared node for everyone.
+func (r *reconciler) waitConditionNode(dep string, cfg types.ServiceDependency, targets []*PlanNode) *PlanNode {
+	key := dep + ":" + cfg.Condition
+	wait, ok := r.waitNodes[key]
+	if !ok {
+		wait = r.plan.addNode(Operation{
+			Type:       OpWaitCondition,
+			ResourceID: fmt.Sprintf("wait:%s:%s", dep, cfg.Condition),
+			Cause:      "depends_on condition",
+			Name:       dep,
+			Condition:  cfg.Condition,
+			BestEffort: !cfg.Required,
+		}, "", targets...)
+		wait.Phase = PhaseStart
+		r.waitNodes[key] = wait
+		return wait
+	}
+	if cfg.Required && wait.Operation.BestEffort {
+		wait.Operation.BestEffort = false
+	}
+	// merge this caller's prerequisites into the shared node. Today every
+	// caller passes the same targets (startChainEnds[dep] is fixed before
+	// any dependent is visited), so this is defensive — but relying on that
+	// silently would break the day the targets diverge per caller.
+	for _, target := range targets {
+		if !slices.Contains(wait.DependsOn, target) {
+			wait.DependsOn = append(wait.DependsOn, target)
+		}
+	}
+	return wait
+}
+
+// planProviderStart is the start-phase visit of a provider service: no
+// container to start, but its own depends_on still applies — the imperative
+// startService waits on it for every service, providers included. Its chain
+// end is those prerequisites, else its create-phase RunProvider node.
+func (r *reconciler) planProviderStart(service types.ServiceConfig) error {
+	depNodes, err := r.startPhaseDependencies(service)
+	if err != nil {
+		return err
+	}
+	ends := depNodes
+	if len(ends) == 0 {
+		if node, ok := r.serviceNodes[service.Name]; ok {
+			ends = []*PlanNode{node}
+		}
+	}
+	if len(ends) > 0 {
+		r.startChainEnds[service.Name] = ends
+	}
+	return nil
+}
+
+func (r *reconciler) planServiceStart(service types.ServiceConfig) error {
+	if service.Provider != nil {
+		return r.planProviderStart(service)
+	}
+	if service.GetScale() == 0 {
+		return nil
+	}
+
+	replicas, anyRunning := r.startPhaseReplicas(service)
+	// dependency conditions are evaluated even when nothing has to start:
+	// the imperative engine calls waitDependencies for every visited service
+	// BEFORE looking at what to start, so an up with everything running
+	// still fails on an unhealthy required dependency — and a dependency
+	// error wins over "no container to start", in that same order
+	depNodes, err := r.startPhaseDependencies(service)
+	if err != nil {
+		return err
+	}
+	if len(replicas) == 0 && !anyRunning && r.options.Scope == ScopeStart {
+		// imperative parity (startService): a scale>0 service with no
+		// container at all cannot be started — only reachable under scope
+		// Start, since CreateStart would have planned the missing creates
+		return errNoContainerToStart(service.Name)
+	}
+	if len(replicas) == 0 {
+		// the visit still happened: dependents order after its prerequisites
+		// (waits, service_started edges), else after the create phase
+		ends := depNodes
+		if len(ends) == 0 {
+			if node, ok := r.serviceNodes[service.Name]; ok {
+				ends = []*PlanNode{node}
+			}
+		}
+		if len(ends) > 0 {
+			r.startChainEnds[service.Name] = ends
+		}
+		// no entry otherwise (ScopeStart, all running, no depends_on): the
+		// visit had no effect, so dependents have nothing to order after —
+		// a service_started condition on a running dependency is already
+		// satisfied, exactly like the imperative engine's empty visit
+		return nil
+	}
+
+	prev := depNodes
+
+	// pre_start runs once per service, only when no replica was running at
+	// observation — the imperative gating (initial up, force-recreate, or
+	// spec change), decided at plan time
+	preStarted := len(service.PreStart) > 0 && !anyRunning
+	if preStarted {
+		serviceCopy := service
+		first := replicas[0]
+		op := Operation{
+			Type:         OpRunPreStart,
+			ResourceID:   first.resID,
+			Cause:        "pre_start hooks",
+			Service:      &serviceCopy,
+			Container:    first.container,
+			CreateNodeID: first.createNodeID,
+		}
+		// clone: appending into prev's backing array would silently mutate
+		// depNodes' hidden capacity (they share it)
+		deps := slices.Clone(prev)
+		if first.after != nil {
+			deps = append(deps, first.after)
+		}
+		// the hooks execute the runners the create phase prepared: they must
+		// exist before RunPreStart runs
+		deps = append(deps, r.hookRunnerNodes[service.Name]...)
+		preStart := r.plan.addNode(op, startGroupID(first.resID), deps...)
+		preStart.Phase = PhaseStart
+		prev = []*PlanNode{preStart}
+	}
+
+	// the replica chain: inject+start then post_start of replica n+1 waits
+	// for the end of replica n's chain — today's sequential start order
+	var chainEnd *PlanNode
+	for i, rep := range replicas {
+		serviceCopy := service
+		group := startGroupID(rep.resID)
+		op := Operation{
+			Type:         OpStartContainer,
+			ResourceID:   rep.resID,
+			Cause:        "start",
+			Service:      &serviceCopy,
+			Container:    rep.container,
+			CreateNodeID: rep.createNodeID,
+		}
+		deps := slices.Clone(prev)
+		if rep.after != nil && (i > 0 || !preStarted) {
+			// the first replica's create node is already carried through the
+			// pre_start node when one was planned: no redundant direct edge
+			deps = append(deps, rep.after)
+		}
+		start := r.plan.addNode(op, group, deps...)
+		start.Phase = PhaseStart
+		chainEnd = start
+		if len(service.PostStart) > 0 {
+			post := r.plan.addNode(Operation{
+				Type:         OpRunPostStart,
+				ResourceID:   rep.resID,
+				Cause:        "post_start hooks",
+				Service:      &serviceCopy,
+				Container:    rep.container,
+				CreateNodeID: op.CreateNodeID,
+			}, group, start)
+			post.Phase = PhaseStart
+			chainEnd = post
+		}
+		prev = []*PlanNode{chainEnd}
+	}
+	r.startChainEnds[service.Name] = []*PlanNode{chainEnd}
+	return nil
+}
+
+// planRecreateContainer decomposes container recreation into 4 atomic operations:
+// CreateContainer(tmpName) → StopContainer → RemoveContainer → RenameContainer
+func (r *reconciler) planRecreateContainer(service types.ServiceConfig, oc *ObservedContainer, infraDeps []*PlanNode) *PlanNode {
+	resID := serviceReplicaID(service.Name, oc.Number)
+	group := fmt.Sprintf("recreate:%s:%d", service.Name, oc.Number)
+	tmpName := fmt.Sprintf("%s_%s", oc.ID[:min(12, len(oc.ID))], getContainerName(r.project.Name, service, oc.Number))
+	serviceCopy := service // copy for pointer stability
+
+	// Stop dependents first
+	depStopNodes := r.planStopDependents(service)
+
+	// All deps: infrastructure + dependent stops
+	allDeps := append(slices.Clone(infraDeps), depStopNodes...)
+
+	var inherited *container.Summary
+	if r.options.Inherit {
+		inherited = &oc.Summary
+	}
+
+	// 1. Create new container with temporary name
+	createNode := r.plan.addNode(Operation{
+		Type:       OpCreateContainer,
+		ResourceID: resID,
+		Cause:      "config changed (tmpName)",
+		Service:    &serviceCopy,
+		Inherited:  inherited,
+		Number:     oc.Number,
+		Name:       tmpName,
+	}, group, allDeps...)
+
+	// 2. Stop old container. If an earlier stage of the plan (e.g.
+	// planRecreateNetwork) already scheduled a Stop for this container,
+	// reuse it instead of emitting a second one against an already-stopped
+	// container. The reused node carries no group, which is fine: the
+	// recreate's group tracker still drives Working/Done from the create.
+	stopNode, alreadyStopped := r.stoppedByPlan[oc.ID]
+	if !alreadyStopped {
+		stopNode = r.plan.addNode(Operation{
+			Type:       OpStopContainer,
+			ResourceID: resID,
+			Cause:      fmt.Sprintf("replaced by #%d", createNode.ID),
+			Container:  &oc.Summary,
+			Timeout:    r.options.Timeout,
+		}, group, createNode)
+		r.stoppedByPlan[oc.ID] = stopNode
+	}
+
+	// 3. Remove old container. The invariant is "new container exists before
+	// old one is removed":
+	//   - !alreadyStopped: stopNode is the one we just created with
+	//     DependsOn=[createNode], so the chain remove → stop → create
+	//     guarantees the invariant transitively.
+	//   - alreadyStopped: stopNode comes from planRecreateNetwork and was
+	//     emitted before createNode. The transitive guarantee no longer
+	//     holds, so we add createNode to removeDeps explicitly. If anyone
+	//     ever drops the stop → create edge from the !alreadyStopped case,
+	//     they must add createNode here unconditionally.
+	removeDeps := []*PlanNode{stopNode}
+	if alreadyStopped {
+		removeDeps = append(removeDeps, createNode)
+	}
+	// If planRecreateNetworks scheduled reconnects for this container (network
+	// recreation), let them complete before the old container is removed so the
+	// reconnect does not race the removal.
+	removeDeps = append(removeDeps, r.connectNodes[oc.ID]...)
+	removeNode := r.plan.addNode(Operation{
+		Type:       OpRemoveContainer,
+		ResourceID: resID,
+		Cause:      fmt.Sprintf("replaced by #%d", createNode.ID),
+		Container:  &oc.Summary,
+	}, group, removeDeps...)
+
+	// 4. Rename to final name. Link to the create node so the executor can
+	// fetch the resulting container ID directly.
+	finalName := getContainerName(r.project.Name, service, oc.Number)
+	renameNode := r.plan.addNode(Operation{
+		Type:         OpRenameContainer,
+		ResourceID:   resID,
+		Cause:        "finalize recreate",
+		Name:         finalName,
+		CreateNodeID: createNode.ID,
+	}, group, removeNode)
+
+	return renameNode
+}
+
+// planStopDependents plans stop operations for containers of services that
+// depend on the given service with restart: true. Each emitted Stop is
+// recorded in stoppedByPlan so a later planRecreateContainer for the same
+// dependent reuses it instead of emitting a duplicate Stop.
+func (r *reconciler) planStopDependents(service types.ServiceConfig) []*PlanNode {
+	dependents := r.project.GetDependentsForService(service, func(dep types.ServiceDependency) bool {
+		return dep.Restart
+	})
+	var nodes []*PlanNode
+	for _, depName := range dependents {
+		for i, oc := range r.observed.Containers[depName] {
+			if _, already := r.stoppedByPlan[oc.ID]; already {
+				continue
+			}
+			node := r.plan.addNode(Operation{
+				Type:       OpStopContainer,
+				ResourceID: serviceReplicaID(depName, oc.Number),
+				Cause:      fmt.Sprintf("dependency %s being recreated", service.Name),
+				Container:  &r.observed.Containers[depName][i].Summary,
+				Timeout:    r.options.Timeout,
+			}, "")
+			r.stoppedByPlan[oc.ID] = node
+			nodes = append(nodes, node)
+		}
+	}
+	return nodes
+}
+
+// infrastructureDeps returns the plan nodes that a container creation for this
+// service should depend on: network creates and volume creates that the service
+// references, plus the last node of dependency services.
+func (r *reconciler) infrastructureDeps(service types.ServiceConfig) []*PlanNode {
+	var deps []*PlanNode
+	// Sort map keys for deterministic plan output in tests
+	for _, net := range sortedKeys(service.Networks) {
+		if node, ok := r.networkNodes[net]; ok {
+			deps = append(deps, node)
+		}
+	}
+	for _, vol := range service.Volumes {
+		if vol.Type == string(mmount.TypeVolume) && vol.Source != "" {
+			if node, ok := r.volumeNodes[vol.Source]; ok {
+				deps = append(deps, node)
+			}
+		}
+	}
+	for _, depName := range sortedKeys(service.DependsOn) {
+		if node, ok := r.serviceNodes[depName]; ok && node != nil {
+			deps = append(deps, node)
+		}
+	}
+	return deps
+}
+
+// sortContainers orders the slice so that, read from the front, up-to-date
+// containers come first in ascending replica-number order, followed by the
+// containers that must be recreated (the comparator sorts obsolete-first and
+// number-descending, then the slice is reversed). Scale-down trims the tail
+// of this slice (i >= expected in reconcileService), so this ordering is what
+// guarantees that obsolete containers and the highest replica numbers are
+// removed first while low-numbered healthy replicas survive.
+//
+// mustRecreate is evaluated once per container before sorting to avoid
+// quadratic re-evaluation in the comparator.
+func (r *reconciler) sortContainers(containers []ObservedContainer, service types.ServiceConfig, expectedHash string, parentRecreated bool, policy string) {
+	obsolete := make(map[string]bool, len(containers))
+	for _, oc := range containers {
+		obsolete[oc.ID] = r.mustRecreate(service, expectedHash, parentRecreated, oc, policy)
+	}
+	sort.Slice(containers, func(i, j int) bool {
+		obsi, obsj := obsolete[containers[i].ID], obsolete[containers[j].ID]
+		if obsi != obsj {
+			return obsi // obsolete first
+		}
+		// preserve low container numbers
+		if containers[i].Number != containers[j].Number {
+			return containers[i].Number > containers[j].Number
+		}
+		return containers[i].Summary.Created < containers[j].Summary.Created
+	})
+	slices.Reverse(containers)
+}
+
+// reconcileOrphans plans stop + remove for orphaned containers.
+func (r *reconciler) reconcileOrphans() {
+	for i, oc := range r.observed.Orphans {
+		stopNode := r.plan.addNode(Operation{
+			Type:       OpStopContainer,
+			ResourceID: "orphan:" + oc.Name,
+			Cause:      "orphaned container",
+			Container:  &r.observed.Orphans[i].Summary,
+			Timeout:    r.options.Timeout,
+		}, "")
+		r.plan.addNode(Operation{
+			Type:       OpRemoveContainer,
+			ResourceID: "orphan:" + oc.Name,
+			Cause:      "orphaned container",
+			Container:  &r.observed.Orphans[i].Summary,
+		}, "", stopNode)
+	}
+}
+
+// observedSummaries returns the raw container.Summary list for a service,
+// needed by nextContainerNumber which expects []container.Summary.
+func (r *reconciler) observedSummaries(serviceName string) []container.Summary {
+	observedContainers := r.observed.Containers[serviceName]
+	result := make([]container.Summary, len(observedContainers))
+	for i, observedContainer := range observedContainers {
+		result[i] = observedContainer.Summary
+	}
+	return result
+}
+
+// sortedKeys returns the keys of a map sorted alphabetically.
+// This ensures deterministic iteration order for reproducible plan output in tests.
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}

@@ -1,0 +1,122 @@
+/*
+   Copyright 2020 Docker Compose CLI authors
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+
+package compose
+
+import (
+	"context"
+	"fmt"
+	"maps"
+	"slices"
+	"strconv"
+	"strings"
+
+	"github.com/compose-spec/compose-go/v2/cli"
+	"github.com/compose-spec/compose-go/v2/types"
+	"github.com/docker/cli/cli/command"
+	"github.com/spf13/cobra"
+
+	"github.com/docker/compose/v5/pkg/api"
+	"github.com/docker/compose/v5/pkg/compose"
+)
+
+type scaleOptions struct {
+	*ProjectOptions
+	noDeps bool
+}
+
+func scaleCommand(p *ProjectOptions, dockerCli command.Cli, backendOptions *BackendOptions) *cobra.Command {
+	opts := scaleOptions{
+		ProjectOptions: p,
+	}
+	scaleCmd := &cobra.Command{
+		Use:   "scale [SERVICE=REPLICAS...]",
+		Short: "Scale services ",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: Adapt(func(ctx context.Context, args []string) error {
+			serviceTuples, err := parseServicesReplicasArgs(args)
+			if err != nil {
+				return err
+			}
+			return runScale(ctx, dockerCli, backendOptions, opts, serviceTuples)
+		}),
+		ValidArgsFunction: completeScaleArgs(dockerCli, p),
+	}
+	flags := scaleCmd.Flags()
+	flags.BoolVar(&opts.noDeps, "no-deps", false, "Don't start linked services")
+
+	return scaleCmd
+}
+
+func runScale(ctx context.Context, dockerCli command.Cli, backendOptions *BackendOptions, opts scaleOptions, serviceReplicaTuples map[string]int) error {
+	backend, err := compose.NewComposeService(dockerCli, backendOptions.Options...)
+	if err != nil {
+		return err
+	}
+
+	services := slices.Sorted(maps.Keys(serviceReplicaTuples))
+	project, _, err := opts.ToProject(ctx, dockerCli, backend, services, warnUnsupportedAttributes, cli.WithoutEnvironmentResolution)
+	if err != nil {
+		return err
+	}
+
+	// resolve environment after the project has been reduced to selected services,
+	// so env_file declared by unrelated services doesn't need to exist
+	project, err = project.WithServicesEnvironmentResolved(true)
+	if err != nil {
+		return err
+	}
+
+	// resolve DOCKER_DEFAULT_PLATFORM into service.Platform exactly like
+	// `up`/`create` do: Platform feeds the service config-hash, so scale
+	// hashing a different value would recreate every container. scale never
+	// builds, so build.platforms conflicts are not validated here.
+	resolvePlatforms(project)
+
+	if opts.noDeps {
+		if project, err = project.WithSelectedServices(services, types.IgnoreDependencies); err != nil {
+			return err
+		}
+	}
+
+	return backend.Scale(ctx, project, api.ScaleOptions{Replicas: serviceReplicaTuples})
+}
+
+func setServiceScale(project *types.Project, name string, replicas int) error {
+	service, err := project.GetService(name)
+	if err != nil {
+		return err
+	}
+	service.SetScale(replicas)
+	project.Services[name] = service
+	return nil
+}
+
+func parseServicesReplicasArgs(args []string) (map[string]int, error) {
+	serviceReplicaTuples := map[string]int{}
+	for _, arg := range args {
+		key, val, ok := strings.Cut(arg, "=")
+		if !ok || key == "" || val == "" {
+			return nil, fmt.Errorf("invalid scale specifier: %s", arg)
+		}
+		intValue, err := strconv.Atoi(val)
+		if err != nil {
+			return nil, fmt.Errorf("invalid scale specifier: can't parse replica value as int: %v", arg)
+		}
+		serviceReplicaTuples[key] = intValue
+	}
+	return serviceReplicaTuples, nil
+}

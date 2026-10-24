@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"golang.org/x/crypto/ssh"
 	"strings"
 )
 
@@ -15,22 +16,83 @@ import (
 const secretRounds = 600000
 
 type User struct {
-	Secret    string `json:"secret"`
-	Privilege int    `json:"privilege"`
+	Secret    string   `json:"secret"`
+	Privilege int      `json:"privilege"`
+	SSHKeys   []string `json:"ssh_keys,omitempty"`
 }
+
+// AuthVerifier revokes existing sessions when either credential set changes.
+func (u User) AuthVerifier() string {
+	if len(u.SSHKeys) == 0 {
+		return u.Secret
+	}
+	h := sha256.Sum256([]byte(u.Secret + "\x00" + strings.Join(u.SSHKeys, "\x00")))
+	return fmt.Sprintf("keys:%x", h)
+}
+
+func NormalizeSSHKey(value string) (string, error) {
+	if len(value) > 16384 || strings.ContainsAny(value, "\x00\r\n") {
+		return "", errors.New("invalid SSH public key")
+	}
+	key, _, options, rest, err := ssh.ParseAuthorizedKey([]byte(value))
+	if err != nil || len(options) != 0 || len(rest) != 0 {
+		return "", errors.New("expected one SSH public key without authorized_keys options")
+	}
+	switch key.Type() {
+	case ssh.KeyAlgoED25519, ssh.KeyAlgoRSA, ssh.KeyAlgoECDSA256, ssh.KeyAlgoECDSA384, ssh.KeyAlgoECDSA521:
+	default:
+		return "", errors.New("unsupported SSH public key type")
+	}
+	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key))), nil
+}
+
 type AAA struct {
-	Enabled        bool            `json:"enabled"`
-	Users          map[string]User `json:"users,omitempty"`
-	EnableSecret   string          `json:"enable_secret,omitempty"`
-	SSH            bool            `json:"ssh"`
-	SSHPort        int             `json:"ssh_port,omitempty"`
-	ConsoleTimeout int             `json:"console_timeout_seconds"`
-	VTYTimeout     int             `json:"vty_timeout_seconds"`
+	Enabled           bool            `json:"enabled"`
+	Users             map[string]User `json:"users,omitempty"`
+	EnableSecret      string          `json:"enable_secret,omitempty"`
+	SSH               bool            `json:"ssh"`
+	SSHPort           int             `json:"ssh_port,omitempty"`
+	ConsoleTimeout    int             `json:"console_timeout_seconds"`
+	VTYTimeout        int             `json:"vty_timeout_seconds"`
+	VTY               map[int]VTYLine `json:"vty,omitempty"`
+	PasswordMinLength int             `json:"password_min_length,omitempty"`
+}
+
+const VTYCount = 16
+
+type VTYLine struct {
+	Timeout int  `json:"timeout_seconds"`
+	SSH     bool `json:"ssh"`
+}
+
+// Older configurations supplied one policy for all VTYs. Unmodified lines
+// inherit it, while a selected line/range can now be configured independently.
+func (a AAA) Line(number int) VTYLine {
+	if line, ok := a.VTY[number]; ok {
+		return line
+	}
+	return VTYLine{Timeout: a.VTYTimeout, SSH: a.SSH}
+}
+
+func (a AAA) SSHAvailable() bool {
+	for i := 0; i < VTYCount; i++ {
+		if a.Line(i).SSH {
+			return true
+		}
+	}
+	return false
+}
+
+func (a AAA) HashPassword(password string) (string, error) {
+	if len(password) < a.PasswordMinLength {
+		return "", fmt.Errorf("password is shorter than the configured minimum of %d characters", a.PasswordMinLength)
+	}
+	return HashSecret(password)
 }
 
 func HashSecret(password string) (string, error) {
-	if len(password) < 12 || len(password) > 256 || strings.ContainsAny(password, "\x00\r\n") {
-		return "", errors.New("secret must contain 12..256 characters without control line delimiters")
+	if len(password) < 1 || len(password) > 256 || strings.ContainsAny(password, "\x00\r\n") {
+		return "", errors.New("password must contain 1..256 characters without control line delimiters")
 	}
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {
@@ -71,15 +133,25 @@ func (a AAA) Validate() error {
 		if !Name.MatchString(name) || u.Privilege < 0 || u.Privilege > 15 {
 			return errors.New("invalid local username or privilege (0..15)")
 		}
-		if _, _, err := secretParts(u.Secret); err != nil {
-			return fmt.Errorf("user %s: %w", name, err)
+		if u.Secret != "" || len(u.SSHKeys) == 0 {
+			if _, _, err := secretParts(u.Secret); err != nil {
+				return fmt.Errorf("user %s: %w", name, err)
+			}
+		}
+		if len(u.SSHKeys) > 16 {
+			return errors.New("at most 16 SSH keys per user")
+		}
+		for _, key := range u.SSHKeys {
+			if _, err := NormalizeSSHKey(key); err != nil {
+				return fmt.Errorf("user %s: %w", name, err)
+			}
 		}
 		admin = admin || u.Privilege == 15
 	}
 	if a.Enabled && !admin {
 		return errors.New("AAA requires at least one privilege 15 local user")
 	}
-	if a.SSH && !a.Enabled {
+	if a.SSHAvailable() && !a.Enabled {
 		return errors.New("SSH requires local AAA")
 	}
 	if a.SSHPort < 0 || a.SSHPort > 65535 {
@@ -87,6 +159,14 @@ func (a AAA) Validate() error {
 	}
 	if a.ConsoleTimeout < 0 || a.ConsoleTimeout > 86400 || a.VTYTimeout < 0 || a.VTYTimeout > 86400 {
 		return errors.New("session timeout must be 0..86400 seconds")
+	}
+	if a.PasswordMinLength < 0 || a.PasswordMinLength > 256 {
+		return errors.New("invalid password minimum length (0..256)")
+	}
+	for number, line := range a.VTY {
+		if number < 0 || number >= VTYCount || line.Timeout < 0 || line.Timeout > 86400 {
+			return errors.New("invalid virtual terminal line or timeout")
+		}
 	}
 	if a.EnableSecret != "" {
 		_, _, err := secretParts(a.EnableSecret)

@@ -17,7 +17,7 @@ func Recovery(line string, out io.Writer) error {
 	s := &cli.Session{Running: config.Default(), Recovery: true}
 	r := reply{Prompt: "ctr# "}
 	switch {
-	case line == "__connect" || line == "__end":
+	case line == "__connect" || line == "__end" || line == "__tick":
 	case strings.HasPrefix(line, "__help "):
 		r.Output = s.ContextHelp(strings.TrimPrefix(line, "__help "))
 	case strings.HasPrefix(line, "__complete "):

@@ -3,12 +3,16 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"path/filepath"
+	"strings"
 )
 
 type Command struct {
-	Purpose string   `json:"purpose"`
-	Argv    []string `json:"argv"`
+	Purpose string         `json:"purpose"`
+	Method  string         `json:"method"`
+	Path    string         `json:"path"`
+	Body    map[string]any `json:"body"`
 }
 
 // Render produces reviewable runtime inputs. It never executes commands,
@@ -37,8 +41,22 @@ func (c Config) Render() (map[string][]byte, error) {
 			"options":     map[string]string{"ConfigPath": "/run/kata-containers/configuration.toml"},
 		}}
 	}
+	c.Engine.ApplyDaemon(daemon)
 	db, _ := json.MarshalIndent(daemon, "", "  ")
 	files := map[string][]byte{"docker/daemon.json": append(db, '\n')}
+	factorySettings, _ := json.Marshal(map[string]bool{"enabled": c.Isolation.VMFactory})
+	files["kata-containers/factory.json"] = factorySettings
+	files["containerd.toml"] = []byte(`version = 3
+root = "/datastore/data0/containerd"
+state = "/run/fractal-containerd"
+disabled_plugins = ["io.containerd.grpc.v1.cri", "io.containerd.cri.v1.images", "io.containerd.cri.v1.runtime"]
+[grpc]
+address = "/run/fractal-containerd/containerd.sock"
+[plugins."io.containerd.snapshotter.v1.blockfile"]
+scratch_file = "/datastore/data0/containerd-scratch.ext4"
+fs_type = "ext4"
+mount_options = ["loop"]
+`)
 	if c.Isolation.Installed {
 		// This is an appliance-owned minimal CLH configuration, not a generic
 		// replacement for arbitrary upstream Kata release configurations.
@@ -66,6 +84,11 @@ internetworking_model = "tcfilter"
 disable_guest_seccomp = true
 create_container_timeout = 60
 `, c.Isolation.MemoryMiB))
+		if c.Isolation.VMFactory {
+			profile := strings.Replace(string(files["kata-containers/configuration.toml"]), `shared_fs = "virtio-fs"`, `shared_fs = "none"`, 1)
+			profile += "\n[factory]\nenable_template = true\ntemplate_path = \"/run/kata-containers/template\"\n"
+			files["kata-containers/configuration.toml"] = []byte(profile)
+		}
 	}
 	var commands []Command
 	for _, name := range Keys(c.Containers) {
@@ -73,9 +96,13 @@ create_container_timeout = 60
 		if v.Image == "" {
 			continue
 		}
+		body, err := c.ContainerRequest(name)
+		if err != nil {
+			return nil, err
+		}
 		commands = append(commands, Command{
 			Purpose: "create " + name + "; existing containers require explicit recreation",
-			Argv:    []string{"docker", "create", "--name", name, "--runtime", c.EffectiveRuntime(name), v.Image},
+			Method:  "POST", Path: "/containers/create?name=" + url.QueryEscape(name), Body: body,
 		})
 	}
 	cb, _ := json.MarshalIndent(commands, "", "  ")

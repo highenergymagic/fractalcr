@@ -1,11 +1,11 @@
 param(
     [string]$TestHost = "freyja@sascha",
     [string]$ArtifactDirectory,
-    [string[]]$Cases = @("containers", "no-datastore", "invalid-config", "optional-firmware", "blank-datastore", "cli", "container-tools", "kata", "debug-container", "aaa", "swarm-multinode")
+    [string[]]$Cases = @("containers", "no-datastore", "invalid-config", "optional-firmware", "blank-datastore", "cli", "container-tools", "kata", "kata-factory", "debug-container", "aaa", "swarm-multinode")
 )
 $ErrorActionPreference = "Stop"
 if ($TestHost -notmatch '^[a-zA-Z0-9_.@-]+$' -or $TestHost.StartsWith("-")) { throw "Invalid SSH host" }
-$allowed = @("containers", "no-datastore", "invalid-config", "optional-firmware", "blank-datastore", "cli", "container-tools", "kata", "debug-container", "aaa", "swarm-multinode")
+$allowed = @("containers", "no-datastore", "invalid-config", "optional-firmware", "blank-datastore", "cli", "container-tools", "kata", "kata-factory", "debug-container", "aaa", "swarm-multinode")
 foreach ($case in $Cases) { if ($case -notin $allowed) { throw "Invalid case: $case" } }
 $repo = Split-Path -Parent $PSScriptRoot
 if (-not $ArtifactDirectory) { $ArtifactDirectory = Join-Path $repo "out\carbon\os" }

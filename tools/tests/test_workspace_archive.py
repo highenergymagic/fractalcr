@@ -3,6 +3,9 @@ from pathlib import Path
 import tarfile
 import tempfile
 import unittest
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 spec = importlib.util.spec_from_file_location('workspace_archive', Path(__file__).resolve().parents[1] / 'workspace-archive.py')
 snapshot = importlib.util.module_from_spec(spec)
@@ -10,6 +13,17 @@ spec.loader.exec_module(snapshot)
 
 
 class WorkspaceArchiveTests(unittest.TestCase):
+    def test_external_public_trust_directory(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as trustdir:
+            root, trust = Path(directory), Path(trustdir)
+            for name in snapshot.INPUTS:
+                (root/name).mkdir()
+            for name in ['firmware.crt', 'release.pub', 'trust.json']:
+                (trust/name).write_text('public fixture')
+            snapshot.create(root, root/'source.tar.gz', trust)
+            with tarfile.open(root/'source.tar.gz') as archive:
+                self.assertIn('release-trust/release.pub', archive.getnames())
+
     def test_lf_binary_preservation_and_determinism(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

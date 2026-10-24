@@ -23,6 +23,15 @@ jobs:
           cache: false
       - run: go test -mod=vendor -race ./...
       - run: go vet -mod=vendor ./...
+      - name: Validate GitHub Actions workflows
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck=
+      - name: Verify CLI catalogs match linked API clients
+        run: |
+          go build -mod=vendor -o /tmp/fractal-workload ./cmd/fractal-workload
+          /tmp/fractal-workload catalog > /tmp/workload-catalog.json
+          /tmp/fractal-workload build-catalog > /tmp/buildkit-catalog.json
+          cmp internal/cli/workload-catalog.json /tmp/workload-catalog.json
+          cmp internal/cli/buildkit-catalog.json /tmp/buildkit-catalog.json
       - name: Exercise command and configuration parsers
         run: |
           go test -mod=vendor ./internal/cli -run='^$' -fuzz=FuzzResolveAndHelp -fuzztime=30s -parallel=2
@@ -32,6 +41,7 @@ jobs:
           go mod download
           go mod verify
           go mod vendor
+          python3 tools/apply-vendor-api.py
           git diff --exit-code -- go.mod go.sum vendor
           test -z "$(git ls-files --others --exclude-standard vendor)"
       - name: Reachability-aware Go vulnerability scan
@@ -79,6 +89,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libjson-c-dev libblkid-dev libssl-dev python3-cryptography
       - run: /usr/bin/python3 -m unittest discover -s tools/tests -v
+      - name: Verify sparse seed encoding is allocation independent
+        run: /usr/bin/python3 os/tests/test-block-seed.py
       - name: Compile and test C services
         run: |
           sudo ln -s "$GITHUB_WORKSPACE" /src

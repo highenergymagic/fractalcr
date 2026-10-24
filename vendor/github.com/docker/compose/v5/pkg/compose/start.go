@@ -1,0 +1,120 @@
+/*
+   Copyright 2020 Docker Compose CLI authors
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+
+package compose
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/compose-spec/compose-go/v2/types"
+
+	"github.com/docker/compose/v5/pkg/api"
+)
+
+func (s *composeService) Start(ctx context.Context, projectName string, options api.StartOptions) error {
+	return Run(ctx, func(ctx context.Context) error {
+		return s.start(ctx, strings.ToLower(projectName), options, nil)
+	}, "start", s.events)
+}
+
+func (s *composeService) start(ctx context.Context, projectName string, options api.StartOptions, listener api.ContainerEventListener) error {
+	project := options.Project
+	if project == nil {
+		var containers Containers
+		containers, err := s.getContainers(ctx, projectName, oneOffExclude, true)
+		if err != nil {
+			return err
+		}
+
+		project, err = s.projectFromName(containers, projectName, options.AttachTo...)
+		if err != nil {
+			return err
+		}
+	}
+	// resolve the model once: optional depends_on references left dangling by
+	// profiles or service selection are pruned before the dependency graph
+	// and the dependency waits read them
+	project = project.WithoutUnresolvedOptionalDependencies()
+
+	// getContainers filters on ConfigHashLabel presence (getDefaultFilters),
+	// which every service container carries and hook runners deliberately do
+	// not: pre_start runners never leak into the start flow at the source
+	// (isNotHookContainer downstream stays as defense-in-depth).
+	containers, err := s.getContainers(ctx, project.Name, oneOffExclude, true)
+	if err != nil {
+		return err
+	}
+
+	// the node-level bound is a correct proxy for --parallel here, unlike
+	// restart/down/stop: startService starts a service's containers in a
+	// plain sequential loop, so one engine-call burst per node is all this
+	// traversal ever dispatches concurrently.
+	err = InDependencyOrder(ctx, project, func(c context.Context, name string) error {
+		service, err := project.GetService(name)
+		if err != nil {
+			return err
+		}
+
+		return s.startService(ctx, project, service, containers, listener, options.WaitTimeout)
+	}, func(traversal *graphTraversal) {
+		traversal.maxConcurrency = s.maxConcurrency
+	})
+	if err != nil {
+		return err
+	}
+
+	if options.Wait {
+		depends := types.DependsOnConfig{}
+		for _, s := range project.Services {
+			depends[s.Name] = types.ServiceDependency{
+				Condition: getDependencyCondition(s, project),
+				Required:  true,
+			}
+		}
+		if options.WaitTimeout > 0 {
+			withTimeout, cancel := context.WithTimeout(ctx, options.WaitTimeout)
+			ctx = withTimeout
+			defer cancel()
+		}
+
+		err = s.waitDependencies(ctx, project, project.Name, depends, containers, 0)
+		if err != nil {
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return fmt.Errorf("application not healthy after %s", options.WaitTimeout)
+			}
+			return err
+		}
+	}
+
+	return nil
+}
+
+// getDependencyCondition checks if service is depended on by other services
+// with service_completed_successfully condition, and applies that condition
+// instead, or --wait will never finish waiting for one-shot containers
+func getDependencyCondition(service types.ServiceConfig, project *types.Project) string {
+	for _, services := range project.Services {
+		for dependencyService, dependencyConfig := range services.DependsOn {
+			if dependencyService == service.Name && dependencyConfig.Condition == types.ServiceConditionCompletedSuccessfully {
+				return types.ServiceConditionCompletedSuccessfully
+			}
+		}
+	}
+	return ServiceConditionRunningOrHealthy
+}

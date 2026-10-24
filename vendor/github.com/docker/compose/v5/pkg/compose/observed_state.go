@@ -1,0 +1,489 @@
+/*
+   Copyright 2020 Docker Compose CLI authors
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+
+package compose
+
+import (
+	"context"
+	"slices"
+	"sort"
+	"strconv"
+	"strings"
+
+	"github.com/compose-spec/compose-go/v2/types"
+	"github.com/containerd/errdefs"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
+
+	"github.com/docker/compose/v5/pkg/api"
+)
+
+// ObservedState captures the current state of all Docker resources belonging to
+// a Compose project. It is a snapshot taken before reconciliation so that the
+// reconciler can compare desired state (types.Project) with reality without
+// making any further API calls.
+type ObservedState struct {
+	ProjectName string
+	Containers  map[string][]ObservedContainer // service name → containers
+	Orphans     []ObservedContainer            // containers with no matching service
+	// Networks/Volumes map a compose key to *all* live resources bearing that
+	// compose label. Collection makes no premature choice: when several
+	// resources share a key (e.g. a leftover after a rename), they are all
+	// recorded here and the reconciler selects the right one and reports the
+	// others as orphans (see selectNetwork/selectVolume).
+	Networks map[string][]ObservedNetwork // compose network key → observed
+	Volumes  map[string][]ObservedVolume  // compose volume key → observed
+	// HookContainers are ephemeral lifecycle-hook runners (HookLabel set),
+	// per service: fresh runners prepared by a previous plan and not yet
+	// consumed, or leftovers of a run that failed before removing them.
+	// Whenever the hooks are going to run again, the reconciler purges every
+	// observed runner and plans fresh ones (see planPreStartHookRunners), so
+	// the set always converges to the current service definition.
+	HookContainers map[string][]ObservedContainer // service name → hook containers
+}
+
+// selectNetwork picks, among the live networks recorded for a compose key, the
+// one that best matches the desired name, and returns the remaining ones as
+// orphans. Selection is deterministic: an exact name match wins; otherwise the
+// lexicographically smallest name is chosen so repeated runs are stable
+// regardless of the daemon's list order.
+func (s *ObservedState) selectNetwork(key, desiredName string) (ObservedNetwork, []ObservedNetwork, bool) {
+	matches := s.Networks[key]
+	if len(matches) == 0 {
+		return ObservedNetwork{}, nil, false
+	}
+	sorted := slices.Clone(matches)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
+	selected := sorted[0]
+	for _, m := range sorted {
+		if m.Name == desiredName {
+			selected = m
+			break
+		}
+	}
+	var orphans []ObservedNetwork
+	for _, m := range sorted {
+		if m.Name != selected.Name {
+			orphans = append(orphans, m)
+		}
+	}
+	return selected, orphans, true
+}
+
+// selectVolume is the volume counterpart of selectNetwork.
+func (s *ObservedState) selectVolume(key, desiredName string) (ObservedVolume, []ObservedVolume, bool) {
+	matches := s.Volumes[key]
+	if len(matches) == 0 {
+		return ObservedVolume{}, nil, false
+	}
+	sorted := slices.Clone(matches)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
+	selected := sorted[0]
+	for _, m := range sorted {
+		if m.Name == desiredName {
+			selected = m
+			break
+		}
+	}
+	var orphans []ObservedVolume
+	for _, m := range sorted {
+		if m.Name != selected.Name {
+			orphans = append(orphans, m)
+		}
+	}
+	return selected, orphans, true
+}
+
+// ObservedContainer holds the relevant state extracted from a running or stopped
+// container, with label values pre-parsed for efficient comparison.
+type ObservedContainer struct {
+	ID                string
+	Name              string
+	State             container.ContainerState // "running", "exited", "created", "restarting", etc.
+	ConfigHash        string                   // label com.docker.compose.config-hash
+	ImageDigest       string                   // label com.docker.compose.image
+	ImageVolumeDigest string                   // label com.docker.compose.image-volume-digest
+	Number            int                      // label com.docker.compose.container-number
+
+	// ConnectedNetworks maps network IDs found in the container's network
+	// settings. Key is the network name as seen by Docker, value is the
+	// network ID.
+	ConnectedNetworks map[string]string
+
+	// Raw summary kept for the executor which needs it to call Moby APIs.
+	Summary container.Summary
+}
+
+// ObservedNetwork holds the state of a Docker network that belongs to the
+// project, identified by the com.docker.compose.network label.
+type ObservedNetwork struct {
+	ID          string
+	Name        string
+	ConfigHash  string // label com.docker.compose.config-hash
+	ProjectName string // label com.docker.compose.project
+}
+
+// ObservedVolume holds the state of a Docker volume that belongs to the
+// project, identified by the com.docker.compose.volume label.
+type ObservedVolume struct {
+	Name        string
+	ConfigHash  string // label com.docker.compose.config-hash
+	ProjectName string // label com.docker.compose.project
+	Driver      string
+}
+
+// collectObservedState queries the Docker daemon for all resources belonging to
+// the given project and returns a structured snapshot.
+// mergeHookContainers appends the pre_start hook runner containers to raw.
+// Runners deliberately carry no ConfigHashLabel (kept invisible to ps/start's
+// default listing, which requires it -- see createPreStartContainer) -- so
+// getContainers' filters never return them, and they must be listed
+// separately, by project+hook label alone, or the classification loop never
+// sees them: stale runners would never be purged, and the next deterministic
+// create would fail with a name conflict against the one left behind. The
+// extra round-trip is only paid when the model declares pre_start hooks at
+// all. Accepted corner: a runner whose service left the model is only
+// classified (and swept by --remove-orphans) while some remaining service
+// still declares pre_start hooks -- `down` removes it by hook label
+// regardless (see removePreStartHookContainers).
+func (s *composeService) mergeHookContainers(ctx context.Context, project *types.Project, raw Containers) (Containers, error) {
+	hasPreStartHooks := false
+	for _, svc := range project.Services {
+		if len(svc.PreStart) > 0 {
+			hasPreStartHooks = true
+			break
+		}
+	}
+	if !hasPreStartHooks {
+		return raw, nil
+	}
+	hookRaw, err := s.getHookContainers(ctx, project.Name)
+	if err != nil {
+		return nil, err
+	}
+	// A legacy runner created before this ConfigHashLabel exclusion existed
+	// (or by an older compose version) can still carry the label, and so
+	// already be present in raw: append only the IDs raw doesn't already
+	// have, or it would be classified -- and scheduled for removal -- twice.
+	seen := make(map[string]bool, len(raw))
+	for _, ctr := range raw {
+		seen[ctr.ID] = true
+	}
+	for _, ctr := range hookRaw {
+		if !seen[ctr.ID] {
+			raw = append(raw, ctr)
+		}
+	}
+	return raw, nil
+}
+
+// The project model is used to classify containers by service and to identify
+// orphans, and to scope network/volume queries to declared resources.
+func (s *composeService) collectObservedState(ctx context.Context, project *types.Project) (*ObservedState, error) {
+	state := &ObservedState{
+		ProjectName: project.Name,
+		Containers:  map[string][]ObservedContainer{},
+		Networks:    map[string][]ObservedNetwork{},
+		Volumes:     map[string][]ObservedVolume{},
+
+		HookContainers: map[string][]ObservedContainer{},
+	}
+
+	// --- Containers ---
+	// One-off (run) containers are included in the listing on purpose:
+	// FINISHED ones are classified as orphans below (see isOrphaned), so `up`
+	// can warn about them and `--remove-orphans` can clean them up.
+	raw, err := s.getContainers(ctx, project.Name, oneOffInclude, true)
+	if err != nil {
+		return nil, err
+	}
+	raw, err = s.mergeHookContainers(ctx, project, raw)
+	if err != nil {
+		return nil, err
+	}
+
+	knownServices := map[string]bool{}
+	for _, service := range project.Services {
+		knownServices[service.Name] = true
+		state.Containers[service.Name] = nil // ensure key exists even if empty
+	}
+	for _, ds := range project.DisabledServices {
+		knownServices[ds.Name] = true
+	}
+
+	for _, ctr := range raw {
+		svcName := ctr.Labels[api.ServiceLabel]
+		if ctr.Labels[api.HookLabel] != "" && knownServices[svcName] {
+			// lifecycle-hook containers (ephemeral pre_start runners) are
+			// neither service replicas nor one-offs: classified apart, so
+			// they never masquerade as a replica (they carry no
+			// container-number label and would otherwise read as number 0)
+			// and the reconciler can plan purging stale ones. A hook
+			// container whose service left the model falls through to the
+			// orphan check below instead — nothing plans purges for an
+			// unknown service, and --remove-orphans must keep cleaning it.
+			state.HookContainers[svcName] = append(state.HookContainers[svcName], toObservedContainer(ctr))
+			continue
+		}
+		if isNotOneOff(ctr) && knownServices[svcName] {
+			state.Containers[svcName] = append(state.Containers[svcName], toObservedContainer(ctr))
+		} else if isOrphaned(project)(ctr) {
+			state.Orphans = append(state.Orphans, toObservedContainer(ctr))
+		}
+		// else: a still-RUNNING one-off. Deliberately absent from the
+		// observed state: it is somebody's live `compose run` session — up
+		// neither reconciles it, nor warns about it, nor removes it (only
+		// `down` stops running one-offs).
+	}
+
+	// --- Networks ---
+	networkList, err := s.apiClient().NetworkList(ctx, client.NetworkListOptions{
+		Filters: projectFilter(project.Name),
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, network := range networkList.Items {
+		key := network.Labels[api.NetworkLabel]
+		if key == "" {
+			continue
+		}
+		state.Networks[key] = append(state.Networks[key], ObservedNetwork{
+			ID:          network.ID,
+			Name:        network.Name,
+			ConfigHash:  network.Labels[api.ConfigHashLabel],
+			ProjectName: network.Labels[api.ProjectLabel],
+		})
+	}
+
+	// --- Volumes ---
+	volList, err := s.apiClient().VolumeList(ctx, client.VolumeListOptions{
+		Filters: projectFilter(project.Name),
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, vol := range volList.Items {
+		key := vol.Labels[api.VolumeLabel]
+		if key == "" {
+			continue
+		}
+		state.Volumes[key] = append(state.Volumes[key], ObservedVolume{
+			Name:        vol.Name,
+			ConfigHash:  vol.Labels[api.ConfigHashLabel],
+			ProjectName: vol.Labels[api.ProjectLabel],
+			Driver:      vol.Driver,
+		})
+	}
+
+	if err := s.discoverUnmanagedNetworks(ctx, project, state); err != nil {
+		return nil, err
+	}
+
+	if err := s.discoverUnmanagedVolumes(ctx, project, state); err != nil {
+		return nil, err
+	}
+
+	return state, nil
+}
+
+// discoverUnmanagedNetworks augments the observed state with networks that match
+// a declared network by name but carry no compose label — pre-label Compose or
+// manually created networks, missed by the label-filtered NetworkList. Each is
+// recorded as an unmanaged match with an empty ConfigHash: the reconciler then
+// reuses it untouched instead of scheduling a CreateNetwork. See
+// warnUnmanagedNetworks for the accompanying user warning.
+func (s *composeService) discoverUnmanagedNetworks(ctx context.Context, project *types.Project, state *ObservedState) error {
+	for _, key := range project.NetworkNames() {
+		networkConfig := project.Networks[key]
+		if networkConfig.External {
+			continue
+		}
+		if len(state.Networks[key]) > 0 {
+			continue
+		}
+		inspected, err := s.apiClient().NetworkInspect(ctx, networkConfig.Name, client.NetworkInspectOptions{})
+		if err != nil {
+			if errdefs.IsNotFound(err) {
+				continue // absent: it will be created by the reconciliation plan
+			}
+			return err
+		}
+		// NetworkInspect matches on ID prefix, so guard against a partial match
+		// (e.g. a network whose ID starts with the requested name).
+		if inspected.Network.Name != networkConfig.Name && inspected.Network.ID != networkConfig.Name {
+			continue
+		}
+		state.Networks[key] = append(state.Networks[key], ObservedNetwork{
+			ID:          inspected.Network.ID,
+			Name:        inspected.Network.Name,
+			ProjectName: inspected.Network.Labels[api.ProjectLabel],
+			// Preserve the config-hash only when the network belongs to this
+			// project (e.g. an older Compose wrote the project label but not the
+			// network-key label): the reconciler then still detects genuine
+			// divergence. For a network we don't own the hash is left empty so we
+			// reuse it untouched rather than recreate it.
+			ConfigHash: ownedConfigHash(inspected.Network.Labels, project.Name),
+		})
+	}
+	return nil
+}
+
+// ownedConfigHash returns the config-hash label only when the resource belongs
+// to the given project; otherwise it returns "" so the reconciler treats the
+// resource as an unmanaged match to be reused untouched.
+func ownedConfigHash(labels map[string]string, projectName string) string {
+	if labels[api.ProjectLabel] != projectName {
+		return ""
+	}
+	return labels[api.ConfigHashLabel]
+}
+
+// discoverUnmanagedVolumes augments the observed state with volumes that match a
+// declared volume by name but carry no compose label — pre-label Compose or
+// manually created volumes, missed by the label-filtered VolumeList. Each is
+// recorded as an unmanaged match with an empty ConfigHash: the reconciler then
+// reuses it untouched instead of scheduling a (possibly failing) VolumeCreate.
+// See warnUnmanagedVolumes for the accompanying user warning.
+func (s *composeService) discoverUnmanagedVolumes(ctx context.Context, project *types.Project, state *ObservedState) error {
+	for _, key := range project.VolumeNames() {
+		vol := project.Volumes[key]
+		if vol.External {
+			continue
+		}
+		if len(state.Volumes[key]) > 0 {
+			continue
+		}
+		inspected, err := s.apiClient().VolumeInspect(ctx, vol.Name, client.VolumeInspectOptions{})
+		if err != nil {
+			if errdefs.IsNotFound(err) {
+				continue // absent: it will be created by the reconciliation plan
+			}
+			return err
+		}
+		state.Volumes[key] = append(state.Volumes[key], ObservedVolume{
+			Name:        inspected.Volume.Name,
+			ProjectName: inspected.Volume.Labels[api.ProjectLabel],
+			Driver:      inspected.Volume.Driver,
+			// Preserve the config-hash only when the volume belongs to this
+			// project (older Compose wrote the project label but not the
+			// volume-key label): the reconciler then still detects divergence.
+			// For a volume we don't own the hash is left empty so we reuse it
+			// untouched rather than recreate it.
+			ConfigHash: ownedConfigHash(inspected.Volume.Labels, project.Name),
+		})
+	}
+	return nil
+}
+
+// toObservedContainer extracts the relevant fields from a container.Summary,
+// parsing labels into typed values.
+func toObservedContainer(c container.Summary) ObservedContainer {
+	number, _ := strconv.Atoi(c.Labels[api.ContainerNumberLabel])
+
+	networks := map[string]string{}
+	if c.NetworkSettings != nil {
+		for name, settings := range c.NetworkSettings.Networks {
+			networks[name] = settings.NetworkID
+		}
+	}
+
+	return ObservedContainer{
+		ID:                c.ID,
+		Name:              getCanonicalContainerName(c),
+		State:             c.State,
+		ConfigHash:        c.Labels[api.ConfigHashLabel],
+		ImageDigest:       c.Labels[api.ImageDigestLabel],
+		ImageVolumeDigest: c.Labels[api.ImageVolumeDigestLabel],
+		Number:            number,
+		ConnectedNetworks: networks,
+		Summary:           c,
+	}
+}
+
+// setResolvedNetworks injects network IDs already resolved by ensureNetworks
+// into the observed state, so the reconciler can compare container connections
+// against actual network IDs.
+func (s *ObservedState) setResolvedNetworks(networks map[string]string, project *types.Project) {
+	// Only external networks are passed here; they carry no compose label and so
+	// are absent from the collected state, hence a plain append.
+	for key, id := range networks {
+		networkConfig := project.Networks[key]
+		s.Networks[key] = append(s.Networks[key], ObservedNetwork{ID: id, Name: networkConfig.Name})
+	}
+}
+
+// setResolvedVolumes injects volume names already resolved by checkVolumes
+// (external volumes) into the observed state. Managed volumes are discovered
+// directly by collectObservedState, so only external ones need injecting.
+func (s *ObservedState) setResolvedVolumes(volumes map[string]string) {
+	// Only external volumes are passed here; they carry no compose label and so
+	// are absent from the collected state, hence a plain append.
+	for key, id := range volumes {
+		s.Volumes[key] = append(s.Volumes[key], ObservedVolume{Name: id})
+	}
+}
+
+// emitRunningEvents emits "Running" progress events for containers that are already
+// running and have no operations planned for them, so the progress display
+// accounts for every container of the project — including the up-to-date ones
+// the plan deliberately leaves alone.
+//
+// Iterates project.Services (not observed.Containers) so that containers of
+// disabled services (e.g. dependencies untouched by `compose run --no-deps`)
+// are not falsely reported as Running — see issue 13882.
+func emitRunningEvents(project *types.Project, observed *ObservedState, plan *Plan, events api.EventProcessor) {
+	planned := map[string]bool{}
+	for _, node := range plan.Nodes {
+		if node.Operation.Container != nil {
+			planned[node.Operation.Container.ID] = true
+		}
+	}
+
+	for _, service := range project.Services {
+		for _, observedContainer := range observed.Containers[service.Name] {
+			if observedContainer.State == container.StateRunning && !planned[observedContainer.ID] {
+				events.On(newEvent("Container "+observedContainer.Name, api.Done, api.StatusRunning))
+			}
+		}
+	}
+}
+
+// orphanNames returns the names of orphaned containers as a comma-separated string.
+func (s *ObservedState) orphanNames() string {
+	names := make([]string, len(s.Orphans))
+	for i, o := range s.Orphans {
+		names[i] = o.Name
+	}
+	return strings.Join(names, ", ")
+}
+
+// containersByService flattens the observed containers into the shape
+// resolveServiceReferences expects: project service name → raw Summaries.
+func (s *ObservedState) containersByService() map[string]Containers {
+	if s == nil {
+		return map[string]Containers{}
+	}
+	result := make(map[string]Containers, len(s.Containers))
+	for serviceName, observedContainers := range s.Containers {
+		summaries := make(Containers, len(observedContainers))
+		for i, observedContainer := range observedContainers {
+			summaries[i] = observedContainer.Summary
+		}
+		result[serviceName] = summaries
+	}
+	return result
+}

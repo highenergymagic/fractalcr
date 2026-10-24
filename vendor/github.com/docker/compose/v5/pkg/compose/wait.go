@@ -1,0 +1,89 @@
+/*
+   Copyright 2020 Docker Compose CLI authors
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+
+package compose
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/moby/moby/client"
+	"golang.org/x/sync/errgroup"
+
+	"github.com/docker/compose/v5/pkg/api"
+)
+
+func (s *composeService) Wait(ctx context.Context, projectName string, options api.WaitOptions) (int64, error) {
+	if s.dryRun {
+		// dry-run never starts a real container, so there is nothing for
+		// wait to observe: refuse upfront instead of racing the fake API
+		// client into a misleading "no containers" error.
+		return 0, errors.New("wait is not supported in dry-run mode")
+	}
+	containers, err := s.getContainers(ctx, projectName, oneOffInclude, false, options.Services...)
+	if err != nil {
+		return 0, err
+	}
+	if len(containers) == 0 {
+		// The condition wait observes — container no longer running — may
+		// already hold: a target that exited between up and this listing (a
+		// fast run, or a service long finished) is a SATISFIED wait, not an
+		// error; ContainerWait below returns its recorded exit code
+		// immediately. The second listing runs only when no container is
+		// running so a stale exited one-off can never short-circuit a wait
+		// that has live containers to observe.
+		containers, err = s.getContainers(ctx, projectName, oneOffInclude, true, options.Services...)
+		if err != nil {
+			return 0, err
+		}
+	}
+	if len(containers) == 0 {
+		return 0, fmt.Errorf("no containers for project %q", projectName)
+	}
+
+	// ContainerWait blocks until the container exits, so it must not be
+	// bound by --parallel: capping concurrency here would serialize waits
+	// that are meant to run together (same rationale as waitDependencies).
+	eg, waitCtx := errgroup.WithContext(ctx)
+	var statusCode int64
+	for _, ctr := range containers {
+		eg.Go(func() error {
+			var err error
+			res := s.apiClient().ContainerWait(waitCtx, ctr.ID, client.ContainerWaitOptions{})
+			select {
+			case result := <-res.Result:
+				_, _ = fmt.Fprintf(s.stdout(), "container %q exited with status code %d\n", ctr.ID, result.StatusCode)
+				statusCode = result.StatusCode
+			case err = <-res.Error:
+			}
+			return err
+		})
+	}
+
+	err = eg.Wait()
+	if err != nil {
+		return 42, err // Ignore abort flag in case of error in wait
+	}
+
+	if options.DownProjectOnContainerExit {
+		return statusCode, s.Down(ctx, projectName, api.DownOptions{
+			RemoveOrphans: true,
+		})
+	}
+
+	return statusCode, err
+}

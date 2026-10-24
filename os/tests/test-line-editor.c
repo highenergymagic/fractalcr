@@ -27,6 +27,7 @@ int main(void) {
     editor_clear(&e); type("ab"); editor_feed(&e,20); assert(!strcmp(e.line,"ba"));
     assert(editor_feed(&e,3)==EDIT_CANCEL && !e.length);
     type("draft"); assert(editor_feed(&e,26)==EDIT_END && !e.length);
+    assert(editor_feed(&e,4)==EDIT_EOF && !e.length);
     puts("PASS transpose, cancellation and return to EXEC");
     for (unsigned i=0;i<LINE_CAPACITY-1;i++) editor_feed(&e,'x');
     assert(editor_feed(&e,'x')==EDIT_BELL && e.overflow && e.length==LINE_CAPACITY-1);

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -21,12 +22,15 @@ type Session struct {
 	Object           string
 	Apply            func(config.Config, config.Config) error
 	Platform         func([]string, config.Config) (string, error)
+	InterfaceName    func(string) (string, error)
+	InterfaceNames   func() []string
 	Save             func(config.Config) error
 	Recovery         bool
 	EnforcePrivilege bool
 	Privilege        int
 	Username         string
 	ConfigBase       string
+	Transactional    bool
 }
 
 func New(state string) (*Session, error) {
@@ -45,7 +49,11 @@ func (s *Session) Prompt() string {
 	if s.Mode != "" {
 		suffix = "(config"
 		if s.Mode != "config" {
-			suffix += "-" + s.Mode
+			mode := s.Mode
+			if mode == "line-console" || mode == "line-vty" {
+				mode = "line"
+			}
+			suffix += "-" + mode
 		}
 		suffix += ")"
 	}
@@ -86,16 +94,56 @@ func (s *Session) Loop(in io.Reader, out io.Writer, batch bool) error {
 }
 
 func (s *Session) Execute(line string) (string, error) {
-	w, _, err := s.Resolve(line)
+	// Ordinary IOS configuration edits the running configuration one command at
+	// a time. Keep a private copy only while validating/applying that command.
+	// Explicit transactions remain available for changes with interdependencies.
+	if !s.Transactional {
+		s.Candidate = s.Running.Clone()
+		s.ConfigBase = string(s.Running.JSON())
+	}
+	before, mode, object := s.Candidate.Clone(), s.Mode, s.Object
+	output, err := s.execute(line)
+	if err == nil && !s.Transactional && string(s.Candidate.JSON()) != string(s.Running.JSON()) {
+		err = s.applyCandidate()
+	}
+	if err != nil {
+		s.Candidate, s.Mode, s.Object = before, mode, object
+		return "", err
+	}
+	return output, nil
+}
+
+func (s *Session) applyCandidate() error {
+	if s.ConfigBase != "" && s.ConfigBase != string(s.Running.JSON()) {
+		return errors.New("running configuration changed in another session; abort and re-enter configuration mode")
+	}
+	if err := s.Candidate.Validate(); err != nil {
+		return err
+	}
+	if string(s.Candidate.JSON()) != string(s.Running.JSON()) && s.Apply != nil {
+		if err := s.Apply(s.Running, s.Candidate); err != nil {
+			return err
+		}
+	}
+	s.Running = s.Candidate.Clone()
+	s.ConfigBase = string(s.Running.JSON())
+	return nil
+}
+
+func (s *Session) execute(line string) (string, error) {
+	w, _, mode, err := s.resolveMode(line)
 	if err != nil {
 		return "", err
+	}
+	if mode != s.Mode {
+		s.Mode, s.Object = mode, ""
 	}
 	base, filter, err := SplitFilter(w)
 	if err != nil {
 		return "", err
 	}
 	if filter != nil {
-		result, e := s.Execute(Join(base))
+		result, e := s.execute(Join(base))
 		if e != nil {
 			return "", e
 		}
@@ -120,63 +168,71 @@ func (s *Session) Execute(line string) (string, error) {
 	switch line {
 	case "help":
 		return Help, nil
-	case "config", "configure terminal":
+	case "config", "configure terminal", "configure candidate":
 		if s.Mode == "" {
+			s.Transactional = line == "configure candidate"
 			s.Candidate = s.Running.Clone()
 			s.ConfigBase = string(s.Running.JSON())
 		}
 		s.Mode, s.Object = "config", ""
 		return "", nil
 	case "end":
+		if s.Transactional && string(s.Candidate.JSON()) != string(s.Running.JSON()) {
+			return "", errors.New("uncommitted transaction; commit or abort before leaving configuration mode")
+		}
 		s.Mode, s.Object = "", ""
+		s.Transactional = false
 		return "", nil
 	case "exit":
 		if s.Mode != "config" && s.Mode != "" {
 			s.Mode, s.Object = "config", ""
 		} else {
+			if s.Transactional && string(s.Candidate.JSON()) != string(s.Running.JSON()) {
+				return "", errors.New("uncommitted transaction; commit or abort before leaving configuration mode")
+			}
 			s.Mode = ""
+			s.Transactional = false
 		}
 		return "", nil
 	case "abort":
+		transactional := s.Transactional
 		s.Candidate = s.Running.Clone()
 		s.Mode, s.Object = "", ""
-		return "Candidate discarded.", nil
+		s.Transactional = false
+		if transactional {
+			return "Candidate discarded.", nil
+		}
+		return "Configuration mode ended; accepted commands remain in running-config.", nil
 	case "commit":
 		if s.Mode == "" {
 			return "", errors.New("enter configuration mode first")
 		}
-		if s.ConfigBase != "" && s.ConfigBase != string(s.Running.JSON()) {
-			return "", errors.New("running configuration changed in another session; abort and re-enter configuration mode")
-		}
-		if err := s.Candidate.Validate(); err != nil {
+		if err := s.applyCandidate(); err != nil {
 			return "", err
 		}
-		if s.Apply != nil {
-			if err := s.Apply(s.Running, s.Candidate); err != nil {
-				return "", err
-			}
-		}
-		s.Running = s.Candidate.Clone()
-		s.ConfigBase = string(s.Running.JSON())
 		return "Running configuration committed. Use copy running-config startup-config to persist.", nil
 	}
-	if w[0] == "show" || w[0] == "copy" || w[0] == "request" || w[0] == "write" || w[0] == "ping" {
+	if w[0] == "show" || w[0] == "copy" || w[0] == "request" || w[0] == "write" || w[0] == "ping" || w[0] == "dir" || w[0] == "delete" || w[0] == "move" || w[0] == "rename" || w[0] == "mkdir" || w[0] == "rmdir" {
 		return s.operational(w)
 	}
 	if s.Mode == "" {
 		return "", errors.New("enter config to change configuration; ? lists commands")
 	}
 	if len(w) == 2 && w[0] == "interface" {
+		if name, _, _, _ := config.VirtualInterface(w[1]); name != "" {
+			w[1] = name
+		}
+		if s.InterfaceName != nil {
+			name, err := s.InterfaceName(w[1])
+			if err != nil {
+				return "", err
+			}
+			w[1] = name
+		}
 		if !config.Interface.MatchString(w[1]) {
 			return "", errors.New("invalid interface")
 		}
-		if s.Candidate.Network == nil {
-			s.Candidate.Network = &config.Network{}
-		}
-		if s.Candidate.Network.Interface != "" && s.Candidate.Network.Interface != w[1] {
-			return "", errors.New("one management interface is supported; remove it with no interface NAME first")
-		}
-		s.Candidate.Network.Interface = w[1]
+		s.Candidate.EditInterface(w[1])
 		s.Mode, s.Object = "interface", w[1]
 		return "", nil
 	}
@@ -190,6 +246,17 @@ func (s *Session) Execute(line string) (string, error) {
 			}
 			return "", nil
 		case "interface":
+			if name, _, _, _ := config.VirtualInterface(w[2]); name != "" {
+				w[2] = name
+			}
+			if s.InterfaceName != nil {
+				name, err := s.InterfaceName(w[2])
+				if err != nil {
+					return "", err
+				}
+				w[2] = name
+			}
+			delete(s.Candidate.Interfaces, w[2])
 			if s.Candidate.Network != nil && s.Candidate.Network.Interface == w[2] {
 				s.Candidate.Network = nil
 			}
@@ -200,31 +267,115 @@ func (s *Session) Execute(line string) (string, error) {
 			return "", nil
 		}
 	}
+	if handled, err := s.staticRoute(w); handled {
+		return "", err
+	}
+	if handled, err := s.volumeConfiguration(w); handled {
+		return "", err
+	}
+	if line == "system container-engine" {
+		s.Mode, s.Object = "engine", ""
+		return "", nil
+	}
+	if s.Mode == "engine" {
+		return s.engine(w)
+	}
 	if s.Mode == "interface" {
-		if s.Candidate.Network == nil {
+		n := s.Candidate.AllInterfaces()[s.Object]
+		if n == nil {
 			return "", errors.New("interface no longer exists; re-enter configuration mode")
+		}
+		if handled, err := s.configureVirtualInterface(n, w); handled {
+			return "", err
+		}
+		if configureInterfaceOptions(n, w) {
+			return "", nil
 		}
 		if len(w) == 3 && w[0] == "ip" {
 			switch w[1] {
 			case "address":
-				s.Candidate.Network.Address = w[2]
+				if w[2] == "dhcp" {
+					n.DHCP = true
+					n.SecondaryAddresses = nil
+					n.Address, n.Gateway, n.DNS = "", "", ""
+				} else {
+					n.Address = w[2]
+					n.DHCP = false
+				}
 			case "gateway":
-				s.Candidate.Network.Gateway = w[2]
+				n.Gateway = w[2]
 			case "name-server":
-				s.Candidate.Network.DNS = w[2]
+				n.DNS = w[2]
 			default:
 				return "", errors.New("expected ip address, ip gateway, or ip name-server")
 			}
 			return "", nil
 		}
 		if line == "no ip gateway" {
-			s.Candidate.Network.Gateway = ""
+			n.Gateway = ""
 			return "", nil
 		}
 		if line == "no ip name-server" {
-			s.Candidate.Network.DNS = ""
+			n.DNS = ""
 			return "", nil
 		}
+		if len(w) == 2 && w[0] == "role" {
+			n.Role = w[1]
+			return "", nil
+		}
+		if line == "shutdown" || line == "no shutdown" {
+			n.Shutdown = line == "shutdown"
+			return "", nil
+		}
+		if line == "no ip address" {
+			n.Address = ""
+			n.SecondaryAddresses = nil
+			n.DHCP = false
+			n.Gateway = ""
+			n.DNS = ""
+			return "", nil
+		}
+	}
+	if len(w) == 3 && w[0] == "ntp" && w[1] == "server" {
+		for _, v := range s.Candidate.NTP.Servers {
+			if v == w[2] {
+				return "", nil
+			}
+		}
+		s.Candidate.NTP.Servers = append(s.Candidate.NTP.Servers, w[2])
+		return "", nil
+	}
+	if len(w) == 4 && w[0] == "no" && w[1] == "ntp" && w[2] == "server" {
+		for i, v := range s.Candidate.NTP.Servers {
+			if v == w[3] {
+				s.Candidate.NTP.Servers = append(s.Candidate.NTP.Servers[:i], s.Candidate.NTP.Servers[i+1:]...)
+				break
+			}
+		}
+		return "", nil
+	}
+	if len(w) == 2 && w[0] == "network" && s.Mode != "container" {
+		if !config.Name.MatchString(w[1]) {
+			return "", errors.New("invalid network name")
+		}
+		if s.Candidate.Networks == nil {
+			s.Candidate.Networks = map[string]config.DockerNetwork{}
+		}
+		if _, ok := s.Candidate.Networks[w[1]]; !ok {
+			s.Candidate.Networks[w[1]] = config.DockerNetwork{Driver: "bridge"}
+		}
+		s.Mode, s.Object = "network", w[1]
+		return "", nil
+	}
+	if len(w) == 3 && w[0] == "no" && w[1] == "network" {
+		delete(s.Candidate.Networks, w[2])
+		if s.Mode == "network" && s.Object == w[2] {
+			s.Mode, s.Object = "config", ""
+		}
+		return "", nil
+	}
+	if s.Mode == "network" {
+		return s.network(w)
 	}
 	if len(w) == 2 && w[0] == "hostname" {
 		if !config.Name.MatchString(w[1]) {
@@ -301,6 +452,18 @@ func (s *Session) datastore(w []string) (string, error) {
 
 func (s *Session) container(w []string) (string, error) {
 	c := s.Candidate.Containers[s.Object]
+	if handled, err := configureAttachments(&c, w); handled {
+		if err == nil {
+			s.Candidate.Containers[s.Object] = c
+		}
+		return "", err
+	}
+	if handled, err := configureContainerOptions(&c, w); handled {
+		if err == nil {
+			s.Candidate.Containers[s.Object] = c
+		}
+		return "", err
+	}
 	switch strings.Join(w, " ") {
 	case "read-only":
 		c.ReadOnly = true
@@ -316,6 +479,8 @@ func (s *Session) container(w []string) (string, error) {
 		c.DropAllCapabilities = false
 	case "no volume":
 		c.Volumes = nil
+	case "no network":
+		c.Network = ""
 	case "no container-isolation":
 		c.Isolation = "none"
 	case "container-isolation inherit":
@@ -323,10 +488,13 @@ func (s *Session) container(w []string) (string, error) {
 	case "container-isolation kata-containers enable":
 		c.Isolation = "kata"
 	default:
-		if len(w) >= 3 && len(w) <= 4 && w[0] == "volume" {
+		if len(w) == 2 && w[0] == "network" {
+			c.Network = w[1]
+		} else if len(w) >= 3 && len(w) <= 4 && w[0] == "volume" {
 			if len(w) == 4 && w[3] != "read-only" {
 				return "", errors.New("expected volume NAME TARGET [read-only]")
 			}
+			c.Volumes = slices.DeleteFunc(c.Volumes, func(v config.Volume) bool { return v.Target == w[2] })
 			c.Volumes = append(c.Volumes, config.Volume{Name: w[1], Target: w[2], ReadOnly: len(w) == 4})
 		} else if len(w) == 2 && w[0] == "memory" {
 			m, err := memorySize(w[1], 4)
@@ -350,7 +518,9 @@ func (s *Session) container(w []string) (string, error) {
 			}
 			c.Environment[w[1]] = w[2]
 		} else if len(w) == 2 && w[0] == "publish" {
-			c.Publish = append(c.Publish, w[1])
+			if !slices.Contains(c.Publish, w[1]) {
+				c.Publish = append(c.Publish, w[1])
+			}
 		} else if len(w) == 2 && w[0] == "restart-policy" {
 			c.Restart = w[1]
 		} else if len(w) == 3 && w[0] == "no" && w[1] == "environment" {
@@ -383,7 +553,7 @@ func (s *Session) isolation(w []string) (string, error) {
 	case "kata-containers apply-to explicit":
 		i.ApplyTo = "explicit"
 	case "kata-containers runtime clh vm-factory enable":
-		return "", errors.New("VM factory is not implemented for this clh integration; configuration unchanged")
+		i.VMFactory = true
 	case "kata-containers runtime clh vm-factory disable":
 		i.VMFactory = false
 	default:
@@ -432,15 +602,20 @@ func (s *Session) operational(w []string) (string, error) {
 	line := strings.Join(w, " ")
 	switch line {
 	case "show running-config":
+		return "Building configuration...\n\nCurrent configuration:\n" + s.Running.CLI(), nil
+	case "show running-config json":
 		return string(s.Running.JSON()), nil
 	case "show candidate-config":
-		return string(s.Candidate.JSON()), nil
-	case "show startup-config":
+		return s.Candidate.CLI(), nil
+	case "show startup-config", "show startup-config json":
 		c, err := config.Load(filepath.Join(s.StateDir, "startup-config.json"))
 		if err != nil {
 			return "", err
 		}
-		return string(c.JSON()), nil
+		if line == "show startup-config json" {
+			return string(c.JSON()), nil
+		}
+		return c.CLI(), nil
 	case "show container-isolation":
 		var b strings.Builder
 		fmt.Fprintf(&b, "enabled=%t default=%s runtime=%s memory=%dMiB\n", s.Running.Isolation.Enabled, s.Running.Isolation.ApplyTo, s.Running.Isolation.Runtime, s.Running.Isolation.MemoryMiB)
@@ -449,6 +624,9 @@ func (s *Session) operational(w []string) (string, error) {
 		}
 		return strings.TrimSpace(b.String()), nil
 	case "copy running-config startup-config", "write memory":
+		if s.Transactional && string(s.Candidate.JSON()) != string(s.Running.JSON()) {
+			return "", errors.New("uncommitted transaction; commit before saving")
+		}
 		if s.Save != nil {
 			if err := s.Save(s.Running); err != nil {
 				return "", err
@@ -465,14 +643,17 @@ func (s *Session) operational(w []string) (string, error) {
 		}
 		return s.isolation([]string{"install", "runtime", "kata-containers"})
 	case "request system container-isolation kata-containers vm-factory create":
-		return "", errors.New("VM factory is unavailable in this clh integration")
+		if s.Platform != nil {
+			return s.Platform(w, s.Running)
+		}
+		return "", errors.New("VM factory requires a live platform")
 	case "request platform debug service-container enable", "request platform debug service-container enter", "request platform debug service-container disable":
 		if s.Platform != nil {
 			return s.Platform(w, s.Running)
 		}
 		return "", errors.New("debug service-container requires the Linux platform adapter; not available in the configuration CLI")
 	case "show version":
-		return "FractalCR Software, Version 0.5 (development)\nOffline configuration session; no live platform attached.", nil
+		return "FractalCR offline configuration compiler\nFractal Microsystems - Copyright (c) 2025-2026\nNo live platform attached.", nil
 	}
 	if len(w) == 4 && strings.Join(w[:3], " ") == "request system render" {
 		if s.Platform != nil {

@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 )
@@ -13,24 +12,48 @@ import (
 const debugName = "fractal-platform-debug"
 const debugImage = "debian:trixie-slim"
 
-var debugRun = func(args ...string) (string, error) {
-	return runTimeout(30*time.Second, "docker", args...)
+type debugContainer struct {
+	ID     string
+	Names  []string
+	Labels map[string]string
+}
+
+var debugContainers = func() ([]debugContainer, error) {
+	var entries []debugContainer
+	err := engineJSON("GET", "/containers/json?all=1", nil, &entries)
+	return entries, err
+}
+var deleteDebugContainer = func(id string) error {
+	_, err := engineAction("DELETE", "/containers/"+id+"?force=1", nil, "")
+	return err
 }
 
 func removeDebug() error {
-	owner, err := debugRun("ps", "--all", "--filter", "name=^/"+debugName+"$", "--format", `{{.ID}} {{.Label "com.fractalcr.debug"}}`)
+	entries, err := debugContainers()
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(owner) == "" {
+	var owned *debugContainer
+	for i := range entries {
+		entry := &entries[i]
+		matched := false
+		for _, name := range entry.Names {
+			if name == "/"+debugName {
+				matched = true
+			}
+		}
+		if !matched {
+			continue
+		}
+		if owned != nil || entry.ID == "" || entry.Labels["com.fractalcr.debug"] != "true" {
+			return fmt.Errorf("debug container name is occupied by another container")
+		}
+		owned = entry
+	}
+	if owned == nil {
 		return nil
 	}
-	fields := strings.Fields(owner)
-	if len(fields) != 2 || fields[1] != "true" {
-		return fmt.Errorf("debug container name is occupied by another container")
-	}
-	_, err = debugRun("rm", "-f", fields[0])
-	return err
+	return deleteDebugContainer(owned.ID)
 }
 
 func debugDisable() (string, error) {
@@ -51,8 +74,8 @@ func debugDisable() (string, error) {
 }
 
 func debugEnable() (string, error) {
-	if _, err := run("docker", "image", "inspect", debugImage); err != nil {
-		if _, err = run("docker", "pull", debugImage); err != nil {
+	if _, err := engineRequest("GET", "/images/"+debugImage+"/json", nil); err != nil {
+		if _, err = pullImage(debugImage); err != nil {
 			return "", err
 		}
 	}
@@ -75,9 +98,14 @@ func DebugService() (result error) {
 			result = fmt.Errorf("debug container cleanup failed: %w", err)
 		}
 	}()
-	_, err := run("docker", "run", "-d", "--name", debugName, "--label", "com.fractalcr.debug=true",
-		"--runtime", "runc", "--privileged", "--pid", "host", "--network", "host", "--volume", "/:/host:ro", debugImage, "sleep", "infinity")
+	_, err := engineAction("POST", "/containers/create?name="+debugName, map[string]any{
+		"Image": debugImage, "Cmd": []string{"sleep", "infinity"}, "Labels": map[string]string{"com.fractalcr.debug": "true"},
+		"HostConfig": map[string]any{"Runtime": "runc", "Privileged": true, "PidMode": "host", "NetworkMode": "host", "Binds": []string{"/:/host:ro"}},
+	}, "")
 	if err != nil {
+		return err
+	}
+	if _, err = engineAction("POST", "/containers/"+debugName+"/start", nil, ""); err != nil {
 		return err
 	}
 	if fd, e := strconv.Atoi(os.Getenv("FCR_READY_FD")); e == nil {
@@ -93,8 +121,9 @@ func DebugService() (result error) {
 		case <-signals:
 			return nil
 		case <-timer.C:
-			state, err := run("docker", "inspect", "--format", "{{.State.Running}}", debugName)
-			if err != nil || strings.TrimSpace(state) != "true" {
+			var container struct{ State struct{ Running bool } }
+			err := engineJSON("GET", "/containers/"+debugName+"/json", nil, &container)
+			if err != nil || !container.State.Running {
 				return fmt.Errorf("debug container exited")
 			}
 		}

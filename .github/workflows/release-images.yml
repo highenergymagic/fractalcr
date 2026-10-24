@@ -1,0 +1,144 @@
+name: Release firmware images
+on:
+  push:
+    tags: ['v[0-9]*']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: firmware-release-builder
+  cancel-in-progress: false
+jobs:
+  build:
+    # Development signing only; no release-key environment or secrets.
+    # An ordinary larger build-runner label may be selected for cold OE builds.
+    runs-on: ${{ vars.FIRMWARE_BUILD_RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 360
+    outputs:
+      source_commit: ${{ steps.pins.outputs.commit }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - id: pins
+        shell: bash
+        run: |
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "boot=$(git ls-tree HEAD boot | awk '{print $3}')" >> "$GITHUB_OUTPUT"
+          echo "service=$(git ls-tree HEAD service | awk '{print $3}')" >> "$GITHUB_OUTPUT"
+          echo "layer=$(git ls-tree HEAD os/meta-fractal | awk '{print $3}')" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: highenergymagic/fractalcr-rommon
+          ref: ${{ steps.pins.outputs.boot }}
+          path: boot
+          ssh-key: ${{ secrets.ROMMON_READ_KEY }}
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: highenergymagic/fractalcr-supervisor
+          ref: ${{ steps.pins.outputs.service }}
+          path: service
+          ssh-key: ${{ secrets.SUPERVISOR_READ_KEY }}
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: highenergymagic/meta-fractalcr
+          ref: ${{ steps.pins.outputs.layer }}
+          path: os/meta-fractal
+          ssh-key: ${{ secrets.LAYER_READ_KEY }}
+          persist-credentials: false
+      - name: Validate version and clean source pins
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          args=()
+          if [[ "$REF_TYPE" == tag ]]; then args+=(--tag "$REF_NAME"); fi
+          python3 tools/version-metadata.py --output /tmp/fractal-release.h "${args[@]}"
+          cmp service/release.h /tmp/fractal-release.h
+          python3 tools/source-archive.py --output "$RUNNER_TEMP/fractal-source.tar.gz"
+      - name: Prepare hosted build capacity
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-cryptography rsync
+          if [[ "$RUNNER_ENVIRONMENT" == github-hosted ]]; then
+            # Disposable runner SDKs unused by the pinned Docker builders.
+            sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/share/swift
+            docker image prune -af
+          fi
+          df -h .
+      - name: Build and qualify pinned firmware
+        env:
+          FCR_DOCKER_DIRECT: '1'
+        run: bash tools/build.sh all All
+      - name: Package USB and VPS images
+        run: |
+          mkdir -p release-stage
+          docker run --rm --user "$(id -u):$(id -g)" --network none --cap-drop ALL --security-opt no-new-privileges \
+            -e "FCR_BUILDER_ID=$(docker image inspect --format '{{.Id}}' fractalcr-os-builder)" \
+            --mount "type=bind,source=$PWD,target=/src,readonly" \
+            --mount "type=bind,source=$PWD/release-stage,target=/output" \
+            --mount type=volume,source=fractalcr-os-work,target=/work,readonly \
+            fractalcr-os-builder bash /src/tools/release-media.sh /src /work/artifacts /output/images
+          cp "$RUNNER_TEMP/fractal-source.tar.gz" release-stage/images/source.tar.gz
+      - name: Qualify single-disk NoCloud boot and SSH
+        run: |
+          devices=(); accel=tcg
+          if [[ -c /dev/kvm ]]; then devices=(--device /dev/kvm); accel=kvm; fi
+          docker run --rm "${devices[@]}" --network none \
+            --mount "type=bind,source=$PWD,target=/src,readonly" \
+            --mount type=volume,source=fractalcr-os-work,target=/work,readonly \
+            --mount "type=bind,source=$PWD/release-stage,target=/output" \
+            fractalcr-os-builder python3 /src/os/tests/qemu-cloud.py \
+              --artifacts /work/artifacts --image "/output/images/fractalcr-$(cat VERSION)-x86_64-devsigned-vps.qcow2" --output /output/cloud-test --accel "$accel"
+      - name: Qualify both distributed USB images
+        run: |
+          devices=(); accel=tcg
+          if [[ -c /dev/kvm ]]; then devices=(--device /dev/kvm); accel=kvm; fi
+          docker run --rm "${devices[@]}" --network none \
+            --mount "type=bind,source=$PWD,target=/src,readonly" \
+            --mount type=volume,source=fractalcr-os-work,target=/work,readonly \
+            --mount "type=bind,source=$PWD/release-stage,target=/output" \
+            fractalcr-os-builder python3 /src/os/tests/qemu-release-usb.py \
+              --artifacts /work/artifacts --images /output/images --output /output/usb-test --accel "$accel"
+      - name: Finalize release checksums
+        run: |
+          cp release-stage/cloud-test/result.json release-stage/images/qualification.json
+          cp release-stage/usb-test/result.json release-stage/images/usb-qualification.json
+          cd release-stage/images
+          find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: firmware-release
+          path: release-stage/images/
+          compression-level: 0
+          retention-days: 30
+          if-no-files-found: error
+  publish:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: firmware-release
+          path: release/images
+      - name: Create release with qualified development-signed images
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          SOURCE_COMMIT: ${{ needs.build.outputs.source_commit }}
+        run: |
+          cd release/images
+          sha256sum --check SHA256SUMS
+          test "$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha)" = "$SOURCE_COMMIT"
+          gh release create "$TAG" --draft --verify-tag --title "FractalCR $TAG — development signed" \
+            --prerelease --notes-file README.md README.md *.img.gz *.qcow2 *.img.json system.bin rommon.efi firmware.crt release.pub \
+            SHA256SUMS release-manifest.json system.spdx.json system.oe-vex.json packages.manifest \
+            system-licenses.tar.gz buildroot-packages.json boot-sources.json oe-sources.json kernel-security.json builder-packages.txt \
+            nocloud-examples.tar.gz source.tar.gz qualification.json usb-qualification.json
+          gh release edit "$TAG" --draft=false

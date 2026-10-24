@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 import subprocess
 import tarfile
+from archive_policy import check_private_keys
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -35,8 +36,7 @@ def inventory(root, prefix='', repositories=None):
         elif mode in ('100644', '100755') and not path.is_symlink():
             # Export committed bytes, independent of Windows checkout line endings.
             data = git(root, 'cat-file', 'blob', revision)
-            if re.search(rb'-----BEGIN (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----', data):
-                raise ValueError('private key marker in export: ' + name)
+            check_private_keys(prefix + name, data)
             yield prefix + name, data, int(mode[-3:], 8)
         else:
             raise ValueError('unresolved or unsupported file in export: ' + name)

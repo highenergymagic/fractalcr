@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strconv"
@@ -30,6 +31,22 @@ type reply struct {
 	Filter      *cli.Filter `json:"filter,omitempty"`
 }
 
+func readManagementRequest(r io.Reader) (managementRequest, error) {
+	var request managementRequest
+	scanner := bufio.NewScanner(r)
+	// The editor accepts 2047 bytes. JSON escaping can expand each byte to
+	// six characters, in addition to the session's authentication fields.
+	scanner.Buffer(make([]byte, 4096), 16*1024)
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return request, err
+		}
+		return request, io.EOF
+	}
+	err := json.Unmarshal(scanner.Bytes(), &request)
+	return request, err
+}
+
 func Serve() error {
 	path := "/run/fractal-management.sock"
 	os.Remove(path)
@@ -47,7 +64,7 @@ func Serve() error {
 		if e != nil {
 			c = config.Default()
 		}
-		return &loginSession{cli: &cli.Session{Running: c, Candidate: c.Clone(), StateDir: "/datastore/data0/config", Apply: Apply, Platform: Operations, Save: Save, EnforcePrivilege: true}, stage: "username", last: time.Now()}
+		return &loginSession{cli: &cli.Session{Running: c, Candidate: c.Clone(), StateDir: "/datastore/data0/config", Apply: Apply, Platform: Operations, InterfaceName: canonicalInterface, InterfaceNames: interfaceNames, Save: Save, EnforcePrivilege: true}, stage: "username", last: time.Now()}
 	}
 	// Malformed configuration fails closed; ROMMON 0x2142 selects explicit
 	// physical-console recovery without discarding the saved configuration.
@@ -80,14 +97,8 @@ func Serve() error {
 			conn.Close()
 			continue
 		}
-		scanner := bufio.NewScanner(conn)
-		scanner.Buffer(make([]byte, 4096), 4096)
-		if !scanner.Scan() {
-			conn.Close()
-			continue
-		}
-		var request managementRequest
-		if json.Unmarshal(scanner.Bytes(), &request) != nil {
+		request, decodeErr := readManagementRequest(conn)
+		if decodeErr != nil {
 			conn.Close()
 			continue
 		}
@@ -110,6 +121,11 @@ func Serve() error {
 			sessions[peerPID] = login
 		}
 		session := login.cli
+		respond := func(response reply) {
+			login.commandCompleted(request.Command, time.Now())
+			conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			json.NewEncoder(conn).Encode(response)
+		}
 		current, loadErr := loadRunning()
 		if loadErr != nil {
 			json.NewEncoder(conn).Encode(reply{Error: "Configuration unavailable; authentication fails closed.", Close: true})
@@ -121,17 +137,77 @@ func Serve() error {
 			connect.Command = "__connect"
 			response, _ := login.authenticate(connect, current, time.Now())
 			if !login.authenticated {
-				json.NewEncoder(conn).Encode(response)
+				respond(response)
 				conn.Close()
 				continue
 			}
 		}
 		if response, handled := login.authenticate(request, current, time.Now()); handled {
-			json.NewEncoder(conn).Encode(response)
+			if request.Command == "__connect" && login.authenticated && login.transport == "console" && !current.AAA.Enabled && !recoveryBoot() {
+				if _, e := os.Stat(startupPath); os.IsNotExist(e) {
+					login.setup = newSetup(current)
+					response = login.setup.prompt()
+				}
+			} else if login.setup != nil && login.authenticated && request.Command == "__tick" {
+				response = login.setup.prompt()
+				response.Output = ""
+			}
+			if login.authenticated && len(login.pendingFile) > 0 && request.Command == "__tick" {
+				response = reply{Prompt: "Delete " + login.pendingFile[1] + "? [confirm]", Challenge: true}
+			}
+			respond(response)
 			conn.Close()
 			continue
 		}
 		line := strings.TrimSpace(request.Command)
+		if len(login.pendingFile) > 0 {
+			pending := login.pendingFile
+			login.pendingFile = nil
+			response := reply{Prompt: session.Prompt()}
+			if session.Privilege != 15 {
+				response.Error = "Authorization failed."
+			} else if line == "" || strings.EqualFold(line, "y") || strings.EqualFold(line, "yes") {
+				out, err := fileOperation(pending)
+				response.Output = out
+				if err != nil {
+					response.Error = err.Error()
+				}
+			} else {
+				response.Output = "Delete cancelled."
+			}
+			respond(response)
+			conn.Close()
+			continue
+		}
+		if login.setup != nil || line == "setup" {
+			response := reply{Prompt: session.Prompt()}
+			if recoveryErr != nil {
+				response.Error = "Configuration recovery must complete before setup."
+			} else if login.transport != "console" || session.Privilege != 15 {
+				response.Error = "Setup requires privileged physical-console access."
+			} else {
+				if login.setup == nil {
+					login.setup = newSetup(current)
+					response = login.setup.prompt()
+				} else {
+					response = login.setup.answer(request.Command, session)
+					if !response.Challenge {
+						completed := login.setup.stage == "complete"
+						login.setup = nil
+						if completed {
+							login.logout()
+							challenge := login.challenge()
+							challenge.Output = response.Output
+							response = challenge
+						}
+					}
+				}
+			}
+			conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			respond(response)
+			conn.Close()
+			continue
+		}
 		var output string
 		var err error
 		var completion *string
@@ -148,7 +224,7 @@ func Serve() error {
 			completion = &completed
 			output = matches
 		} else if strings.HasPrefix(request.Command, "__help ") {
-			output = session.ContextHelp(strings.TrimPrefix(request.Command, "__help "))
+			output, err = session.QueryHelp(strings.TrimPrefix(request.Command, "__help "))
 		} else {
 			var words []string
 			var local bool
@@ -170,17 +246,26 @@ func Serve() error {
 			if err == nil && current.AAA.Enabled && line != "__end" {
 				err = audit(login.user, login.transport, "command", line)
 			}
+			if err == nil {
+				fwords := words
+				if len(fwords) > 0 && fwords[0] == "do" {
+					fwords = fwords[1:]
+				}
+				if len(fwords) == 2 && fwords[0] == "delete" {
+					login.pendingFile = append([]string(nil), fwords...)
+					respond(reply{Prompt: "Delete " + fwords[1] + "? [confirm]", Challenge: true})
+					conn.Close()
+					continue
+				}
+			}
 			if err == nil && (line == "logout" || (line == "exit" && session.Mode == "")) {
 				if current.AAA.Enabled {
 					_ = audit(login.user, login.transport, "logout", "")
 				}
 				login.logout()
 				response := login.challenge()
-				response.Close = login.transport == "ssh"
-				if !current.AAA.Enabled {
-					response, _ = login.authenticate(managementRequest{Command: "__connect"}, current, time.Now())
-				}
-				json.NewEncoder(conn).Encode(response)
+				response.Close = login.transport == "ssh" || !current.AAA.Enabled
+				respond(response)
 				conn.Close()
 				continue
 			}
@@ -194,7 +279,7 @@ func Serve() error {
 						response = login.challenge()
 					}
 				}
-				json.NewEncoder(conn).Encode(response)
+				respond(response)
 				conn.Close()
 				continue
 			}
@@ -202,18 +287,20 @@ func Serve() error {
 			if len(native) > 0 && native[0] == "do" {
 				native = native[1:]
 			}
-			if err == nil && len(native) >= 3 && native[0] == "request" && (native[1] == "container-engine" || native[1] == "container-build") {
-				program := "/usr/bin/docker"
-				if native[1] == "container-build" {
-					program = "/usr/bin/buildctl"
+			if service, args, ok := cli.WorkloadArguments(native); err == nil && ok {
+				if service == "help" {
+					output = session.ContextHelp(cli.Join(native[:len(native)-1]) + " ")
+				} else {
+					argv = append([]string{"/usr/libexec/fractal-workload", service}, args...)
 				}
-				argv = append([]string{program}, native[2:]...)
 			} else if local && err == nil {
 				localCommand = line
 			} else if err == nil {
 				switch line {
 				case "__end":
-					session.Mode, session.Object = "", ""
+					if session.Mode != "" {
+						output, err = session.Execute("end")
+					}
 				case "__connect":
 					session.Mode = ""
 					session.Object = ""
@@ -223,14 +310,18 @@ func Serve() error {
 				case "show users":
 					for _, user := range sessions {
 						if user.authenticated {
-							output += fmt.Sprintf("%-20s %-8s privilege %d\n", user.user, user.transport, user.cli.Privilege)
+							line := "console 0"
+							if user.transport == "ssh" {
+								line = fmt.Sprintf("vty %d", user.vty)
+							}
+							output += fmt.Sprintf("%-20s %-12s privilege %d\n", user.user, line, user.cli.Privilege)
 						}
 					}
 				case "show configuration diff":
 					output = configDiff(session.Running, session.Candidate)
 				case "copy startup-config candidate-config":
-					if session.Mode == "" {
-						err = fmt.Errorf("enter configuration mode first")
+					if !session.Transactional {
+						err = fmt.Errorf("enter configure candidate to stage startup configuration")
 					} else {
 						var candidate config.Config
 						candidate, err = config.Load(startupPath)
@@ -263,7 +354,7 @@ func Serve() error {
 			}
 		}
 		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-		json.NewEncoder(conn).Encode(response)
+		respond(response)
 		conn.Close()
 	}
 }

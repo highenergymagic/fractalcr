@@ -7,36 +7,65 @@ configured or unreadable AAA cannot be bypassed through that fallback.
 
 [Appliance management and AAA](docs/aaa-and-management.md) covers local login,
 enable/disable, privilege levels, SSH VTY, session expiry, accounting, output
-filters and physical-console password recovery. Each authenticated session has
-its own configuration candidate; stale commits are rejected.
+filters and physical-console password recovery. Normal configuration edits
+running state immediately. Explicit candidate
+transactions have independent staging; stale commits are rejected.
 
 ## Configuration
+
+An empty datastore starts the serial setup dialog. `setup` runs it again from
+privileged physical-console EXEC. It collects a hostname, management NIC,
+DHCP/static addressing, an optional NTP server, and a local administrator.
+The password is hidden and stored as a salted verifier. Review the summary
+before applying and saving. `abort` leaves the dialog; disk initialization,
+when explicitly requested, is a separate irreversible operation.
+
+Prepared single-disk media already has an empty Btrfs datastore. With separate
+blank data storage, setup lists disks and requires `INITIALIZE` for the selected
+whole disk. Existing filesystems, partition tables, mounted disks and disks in
+use are refused. Setup never silently erases an existing installation.
 
 ```
 ctr# configure terminal
 ctr(config)# hostname edge
-ctr(config)# interface eth0
-ctr(config-interface)# ip address 192.0.2.10/24
-ctr(config-interface)# ip gateway 192.0.2.1
-ctr(config-interface)# ip name-server 192.0.2.53
-ctr(config-interface)# exit
-ctr(config)# do show configuration diff
-ctr(config)# commit
+edge(config)# interface GigabitEthernet0
+edge(config-interface)# ip address 192.0.2.10/24
+edge(config-interface)# ip gateway 192.0.2.1
+edge(config-interface)# ip name-server 192.0.2.53
+edge(config-interface)# exit
 edge(config)# end
 edge# write memory
 ```
 
-Changes are staged until `commit`. `abort` discards the candidate. `end` returns
-to operational mode; entering a new configuration session loads running state.
+Each accepted command in `configure terminal` applies to running configuration
+immediately. `end` and Ctrl-Z return to EXEC without discarding changes;
+`write memory` saves running configuration for the next boot. Failed edits are
+rolled back and failed saves return an error. Hostname and account edits do not
+restart workloads.
+
+Use `configure candidate` when several dependent changes must apply together.
+In that explicit mode, `commit` applies the transaction and `abort` discards it.
+Leaving or saving with uncommitted changes is refused. In ordinary configuration
+mode, `abort` exits without undoing accepted commands.
 `do` executes operational commands from configuration modes. Keywords accept
 unique abbreviations (`sh ver`). `sh?` lists matching words; `show ?` lists only
 the next command level. Both retain the input line. Tab completes a unique
 keyword; up/down recall history; Ctrl-U deletes back to the start of the line
-and Ctrl-Z returns to operational mode. Ctrl-V inserts a literal question mark.
+and Ctrl-Z returns to operational mode. On an empty line Ctrl-D leaves the
+current configuration context, or logs out from EXEC. With text present it
+deletes at the cursor. `logout` and EXEC `exit` close the session; the console
+returns to login, or waits for RETURN if local login is not configured.
+Ctrl-V inserts a literal question mark.
 Quoted arguments have no shell expansion or substitution. `terminal length 0`
 disables pagination; `show history` and `show terminal` inspect session settings.
 
-Hostname, network and runtime changes stop the configuration service's consumers,
+Local accounts accept `user freya priv 15 password 0 TEXT` and
+`username freya privilege 15 secret 0 TEXT`. Both hash the plaintext input;
+passwords may contain 1..256 characters. Use `security passwords min-length 12` to enforce a minimum on newly configured passwords. Use `username NAME ?` or
+`username NAME privilege 15 ?` to see the available account settings.
+`show version` includes the source-build identifier of the running image.
+
+Network and runtime changes stop the configuration service's consumers,
 apply the new state, then wait for readiness. Failed apply attempts to restore
 the previous state. Interrupted commits leave a RAM-backed rollback journal for
 management restart. Reboot always reloads startup-config. Container definition
@@ -48,10 +77,63 @@ Running state in `/run/running-config.json` survives management/console restarts
 The network worker retains its applied snapshot until shutdown to remove the
 old address before applying its replacement.
 
+## Interfaces, Docker networks and time
+
+```
+ctr(config)# interface eth0
+ctr(config-interface)# role management
+ctr(config-interface)# ip address dhcp
+ctr(config-interface)# exit
+ctr(config)# interface eth1
+ctr(config-interface)# role container
+ctr(config-interface)# no ip address
+ctr(config-interface)# exit
+ctr(config)# network external
+ctr(config-network)# driver macvlan
+ctr(config-network)# parent eth1
+ctr(config-network)# subnet 192.0.2.0/24
+ctr(config-network)# gateway 192.0.2.1
+ctr(config-network)# exit
+ctr(config)# ntp server time.example.net
+ctr(config)# commit
+ctr(config)# end
+ctr# request network external create
+ctr# show networks
+ctr# show network external detail
+ctr# show ntp status
+ctr# show ntp associations
+ctr# write memory
+```
+
+Select one management interface. SSH binds to its IPv4 address **and device**.
+Container-role interfaces can use static IPv4, DHCP, or no host address for a
+macvlan/ipvlan parent. Only management supplies the host default route and DNS;
+DHCP on a container NIC does not replace them. `shutdown`/`no shutdown` controls
+the link. Switching to DHCP clears static address/gateway/DNS. `show interfaces`
+and `show ip route` report actual runtime state, including acquired leases.
+
+Docker network drivers are `bridge`, `overlay`, `macvlan` and `ipvlan`.
+`internal` and `attachable` are optional. Overlay creation requires an initialized
+Swarm. Network definitions are staged inventory: explicit `request network NAME
+create` and `remove` control their lifecycle; commit never destroys an existing
+network. `request network NAME connect CONTAINER` and `disconnect CONTAINER`
+manage membership. Within container configuration, `network NAME` selects the
+network used by `request container NAME create`. Native Engine network options
+remain available through `request container-engine network ...`.
+
+The `networking` service owns DHCP clients and configured addresses. The
+`time-sync` service runs chronyd with reduced privileges, a syscall filter and
+local-only command access. No NTP server or remote command port is opened.
+`show clock` reports UTC; `show ntp status` reports synchronization separately
+from service readiness. With no NTP servers configured, the clock remains
+unsynchronized. `no ntp server NAME` removes a source.
+
 The version-1 schema accepts the earlier hostname/network files and adds
 datastores, isolation and container definitions. Unknown fields, duplicate JSON
 keys, symlinks, nonregular files and files over 64 KiB are rejected.
-Currently one static IPv4 interface and one datastore, `data0`, are supported.
+Configure one management interface and additional container interfaces. Interfaces
+support DHCP or static IPv4, secondary IPv4 addresses, IPv6, MTU, and static routes.
+The appliance currently uses one datastore, `data0`.
 DHCP, IPv6 configuration and multiple management interfaces are not implemented.
 
 ## Containers
@@ -116,13 +198,63 @@ Kata for that container. `container-isolation inherit` restores inheritance.
 Existing containers keep their creation-time runtime.
 `show container-isolation detail` displays the Kata runtime's parsed profile.
 
-VM factory and arbitrary guest OS imports are rejected. TCG acceptance checks
+The CLH factory uses block-backed container roots. Select it on an empty engine:
+
+```
+ctr(config)# system container-engine
+ctr(config-engine)# storage backend blockfile
+ctr(config-engine)# exit
+ctr(config)# system container-isolation install runtime kata-containers
+ctr(config)# system container-isolation enable
+ctr(config)# system container-isolation kata-containers apply-to all-containers
+ctr(config)# system container-isolation kata-containers runtime clh vm-factory enable
+ctr(config)# end
+ctr# request system container-isolation kata-containers vm-factory create
+ctr# show container-isolation detail
+ctr# write memory
+```
+
+Export/remove existing containers, images and build cache before changing storage
+backends. Block snapshots have an 8 GiB filesystem capacity and consume datastore
+space as blocks are written; Btrfs reflinks share unchanged extents. Template RAM
+is separate from the memory of each running guest. The supervised `vm-factory`
+service rebuilds its template after reboot or configuration changes. Repeating
+the create request returns the existing ready factory.
+
+Eligible containers restore from the template with refreshed wall time and RNG
+state. Containers with application bind mounts or volumes use fresh Kata VMs
+with virtio-fs so shared writes retain their normal behavior. Stop a block-backed
+Kata container before copying, exporting or committing its root filesystem.
+The API client enforces this for direct Engine and Compose operations.
+`overlay2` remains the default storage backend. Arbitrary guest OS imports remain
+unsupported; the authenticated system image supplies the guest kernel and OS.
+
+TCG acceptance checks
 artifact availability and rejection without KVM; it cannot validate Kata guest
 execution or the configured guest memory limit.
 Sources: [Kata release](https://github.com/kata-containers/kata-containers/releases/tag/4.3.1),
 [Docker runtimes](https://docs.docker.com/engine/daemon/alternative-runtimes/).
 
 ## Storage and recovery
+
+Online datastore maintenance uses kernel APIs:
+
+```
+ctr# request storage datastore data0 scrub start
+ctr# show storage datastore data0 scrub
+ctr# request storage datastore data0 scrub cancel
+ctr# request storage datastore data0 balance start
+ctr# show storage datastore data0 balance
+ctr# request storage datastore data0 balance cancel
+ctr# request storage datastore data0 snapshot create before-change
+ctr# show storage datastore data0 snapshots
+ctr# request storage datastore data0 snapshot delete before-change confirm before-change
+```
+
+Scrub and balance return control to the console while management tracks the
+operation. Results are saved on the datastore. Snapshots are read-only filesystem
+snapshots; they do not coordinate application-level transactions inside containers.
+These commands do not launch `btrfs` or other filesystem utilities.
 
 ```
 ctr# show storage disks
@@ -136,12 +268,14 @@ ctr(config-storage-datastore)# exit
 ctr(config)# do request storage datastore data0 format confirm data0
 ```
 
-The explicit format command uses the candidate disk list. Commit never formats.
+The explicit format command uses the configured disk list (the candidate list
+inside an explicit transaction). Configuration edits never format disks.
+Incomplete disk definitions can be saved; formatting requires the full disk set.
 The datastore service must be stopped. Formatting rejects mounted disks,
 partitions, active holders and duplicate aliases. It does not use force: disks
 containing filesystems or partition tables need a separate erase/reprovision
 workflow, not implemented here. Format labels the filesystem `FRDATA` and
-starts services. After readiness, commit and save.
+starts services. After readiness, save with `write memory`.
 
 Malformed startup-config leaves management available. Build a valid candidate,
 commit and save it. `show logging configuration` shows the original parse error.
@@ -159,3 +293,113 @@ reserved name is never removed. The worker has a bounded cleanup grace period
 before the supervisor stops its providers.
 Its filesystem is ephemeral. The Debian tag is a runtime download, not part of
 the reproducible OS image. Guest VM debugging is not implemented.
+
+## Workload command discovery
+
+`request container-engine` uses the linked Engine, Compose, and Buildx clients.
+`request container-build` uses the linked BuildKit client. Their command catalogs
+are generated from those clients, embedded in management, and checked for drift
+in CI and the image build. Help and completion do not launch a workload process.
+
+Direct families include `request compose`, `request buildx`, `request buildkit`,
+`request swarm`, `request service`, `request stack`, `request node`,
+`request secret`, `request registry`, and `request context`.
+
+```
+ctr# request compose ?
+ctr# request buildx build ?
+ctr# request service create replicas ?
+ctr# request container-engine client-context lab container inspect application
+ctr# request compose file data0:compose.yaml up detach enable
+ctr# request container-engine run rm enable arguments alpine echo --help
+```
+
+`?` lists only the immediate children or settings at the current position. Partial
+keywords accept unambiguous abbreviations; Tab completes one unique match.
+Argument values retain their spelling and boundaries. Incomplete command groups
+and missing setting values are rejected without leaving the current mode. Container
+command arguments are passed as values, not interpreted by a host shell.
+Settings use keyword/value pairs; booleans take `enable` or `disable`. Unix
+options such as `--detach` and `-d` are rejected. `argument VALUE` supplies one
+literal operand and `arguments VALUE...` supplies all remaining operands,
+including container command arguments that happen to match appliance keywords.
+`help` describes the current operation without invoking a client help process.
+Global Engine connection settings precede the command family. Saved contexts are
+honored. `build`, `image build`, and `builder build` use linked Buildx, including
+its builder selection setting.
+
+File operands accept the same `data0:` namespace as `dir`, `copy`, `move`, and
+`delete`. For example, `request compose file data0:compose.yaml up detach enable` and
+`request buildx build file data0:Dockerfile data0:` read files from the appliance
+file volume. Build output/cache paths, BuildKit local contexts, and bind-mount
+sources also accept this namespace. Container argv, environment values, and
+container-side paths are preserved verbatim.
+Browser actions print a link for the operator to open on their workstation.
+
+This catalog describes the linked client surface. Runtime prerequisites still
+apply: manager-only Swarm operations require a manager, devices must exist, and
+plugin/provider implementations must be installed and supported. Catalog
+coverage is not a claim that every external provider has been qualified.
+
+## Extended persistent configuration
+
+Container mode includes CPU allocation (`cpus`, `cpu-shares`, `cpu-set`), memory
+reservation and swap, shared memory (`memory-shared`), process limits, user,
+guest hostname, entrypoint, working directory, labels, logging, health checks,
+capabilities, namespace modes, security options, devices/GPUs, DNS, host mappings,
+sysctls, tmpfs and bind mounts, and multiple network attachments. Settings have
+`no` forms and are represented in running/startup configuration. Creating a
+container uses the same API object builder as offline configuration export.
+Editing a definition does not silently recreate an existing container.
+
+```
+ctr(config)# container application
+ctr(config-container)# user 1000:1000
+ctr(config-container)# guest-hostname application
+ctr(config-container)# cpus 1.5
+ctr(config-container)# memory 256M
+ctr(config-container)# memory-reservation 128M
+ctr(config-container)# memory-shared 32M
+ctr(config-container)# logging driver local
+ctr(config-container)# logging option max-size 10m
+ctr(config-container)# healthcheck command /app/check
+ctr(config-container)# healthcheck interval 30s
+ctr(config-container)# network attach front alias application
+ctr(config-container)# network attach back
+```
+
+Named volume definitions support driver selection, driver options, and labels:
+`volume NAME` enters volume mode; `request volume NAME create` creates the defined
+volume through the Engine API. Docker network mode includes driver options,
+labels, IPv6, IPAM drivers/options, multiple allocation pools, gateways,
+allocation ranges, and reserved addresses. For example:
+
+```
+ctr(config-network)# ipv6 enable
+ctr(config-network)# ipam pool 10.80.0.0/24 gateway 10.80.0.1
+ctr(config-network)# ipam pool 10.80.0.0/24 range 10.80.0.128/25
+ctr(config-network)# ipam pool 10.80.0.0/24 reserve router 10.80.0.2
+ctr(config-network)# ipam pool fd80::/64 gateway fd80::1
+```
+
+`system container-engine` enters engine configuration mode. It includes registry
+mirrors and insecure registries, default address pools, logging, live restore,
+transfer concurrency, shutdown timeout, bridge addressing, IPv6, MTU, DNS, and
+engine labels. These settings render into the managed daemon configuration;
+platform configuration application retains its existing rollback behavior.
+
+Physical interface configuration supports descriptions, MTU, secondary IPv4
+addresses, IPv6 addresses, and an IPv6 management gateway. Static routes use
+`ip route PREFIX INTERFACE GATEWAY metric NUMBER` or its `ipv6 route` equivalent.
+Use `direct` for an on-link route. `no ip route PREFIX INTERFACE` removes a route.
+`show ipv6 interface brief` and `show ipv6 route` read kernel state directly.
+
+Virtual interfaces use `interface Vlan100` and `interface Port-channel1`.
+`Vl100` and `Po1` abbreviations are accepted. A VLAN takes a `parent INTERFACE`;
+a port-channel takes `member INTERFACE` and `channel-mode MODE`. Supported modes
+are active-backup (default), 802.3ad, balance-xor, balance-rr, broadcast,
+balance-tlb, and balance-alb. Configure physical members as container interfaces
+without addresses, then configure the port-channel and its VLANs. Members inherit
+the port-channel MTU. VLAN MTU cannot exceed its parent. Creation, membership,
+addressing, and teardown use native netlink operations. The system kernel must
+include bonding and 802.1Q support; the kernel configuration enables both.

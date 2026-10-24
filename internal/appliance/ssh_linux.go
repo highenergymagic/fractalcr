@@ -1,17 +1,18 @@
 package appliance
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -87,7 +88,7 @@ func SSHService() error {
 	var mu sync.Mutex
 	failures := map[string]loginFailure{}
 	active := map[net.Conn]map[string]string{}
-	slots := make(chan struct{}, 16)
+	slots := [config.VTYCount]bool{}
 	settings := &ssh.ServerConfig{MaxAuthTries: 3, ServerVersion: "SSH-2.0-FractalCR"}
 	settings.PasswordCallback = func(meta ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
 		address, _, _ := net.SplitHostPort(meta.RemoteAddr().String())
@@ -100,7 +101,7 @@ func SSHService() error {
 		}
 		c, e := loadRunning()
 		u, exists := c.AAA.Users[meta.User()]
-		if e != nil || !c.AAA.Enabled || !c.AAA.SSH || !exists || !config.CheckSecret(u.Secret, string(password)) {
+		if e != nil || !c.AAA.Enabled || !c.AAA.SSHAvailable() || !exists || !config.CheckSecret(u.Secret, string(password)) {
 			if c.AAA.Enabled {
 				_ = audit(meta.User(), "ssh", "authentication-failed", "")
 			}
@@ -125,11 +126,25 @@ func SSHService() error {
 		mu.Lock()
 		delete(failures, address)
 		mu.Unlock()
-		return &ssh.Permissions{Extensions: map[string]string{"user": meta.User(), "verifier": u.Secret, "privilege": strconv.Itoa(u.Privilege)}}, nil
+		return &ssh.Permissions{Extensions: map[string]string{"user": meta.User(), "verifier": u.AuthVerifier(), "privilege": strconv.Itoa(u.Privilege)}}, nil
+	}
+	settings.PublicKeyCallback = func(meta ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+		c, err := loadRunning()
+		u, exists := c.AAA.Users[meta.User()]
+		if err == nil && c.AAA.Enabled && c.AAA.SSHAvailable() && exists {
+			for _, value := range u.SSHKeys {
+				normalized, e := config.NormalizeSSHKey(value)
+				if e == nil && normalized == strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key))) {
+					return &ssh.Permissions{Extensions: map[string]string{"user": meta.User(), "verifier": u.AuthVerifier(), "privilege": strconv.Itoa(u.Privilege)}}, nil
+				}
+			}
+		}
+		return nil, errors.New("authentication failed")
 	}
 	settings.AddHostKey(signer)
 	var listener net.Listener
 	var address string
+	var boundInterface string
 	defer func() {
 		if listener != nil {
 			listener.Close()
@@ -138,12 +153,33 @@ func SSHService() error {
 	for {
 		c, e := loadRunning()
 		desired := ""
-		if e == nil && c.AAA.Enabled && c.AAA.SSH {
+		desiredInterface := ""
+		if e == nil && c.AAA.Enabled && c.AAA.SSHAvailable() {
 			port := c.AAA.SSHPort
 			if port == 0 {
 				port = 22
 			}
-			desired = fmt.Sprintf(":%d", port)
+			for name, n := range c.AllInterfaces() {
+				if !n.IsManagement() || n.Shutdown {
+					continue
+				}
+				iface, err := interfaceByName(name)
+				if err != nil {
+					continue
+				}
+				addresses, err := iface.Addrs()
+				if err != nil {
+					continue
+				}
+				for _, a := range addresses {
+					ip, _, err := net.ParseCIDR(a.String())
+					if err == nil && ip.To4() != nil && ip.IsGlobalUnicast() {
+						desired = net.JoinHostPort(ip.String(), strconv.Itoa(port))
+						desiredInterface = iface.Name
+						break
+					}
+				}
+			}
 		}
 		// Revocation must also close sessions occupied by a streaming native
 		// client, whose console cannot issue its ordinary authentication tick.
@@ -151,13 +187,14 @@ func SSHService() error {
 		for conn, principal := range active {
 			if principal != nil {
 				u, exists := c.AAA.Users[principal["user"]]
-				if e != nil || !c.AAA.Enabled || !c.AAA.SSH || !exists || u.Secret != principal["verifier"] || strconv.Itoa(u.Privilege) != principal["privilege"] {
+				line, lineErr := strconv.Atoi(principal["vty"])
+				if e != nil || lineErr != nil || line < 0 || line >= config.VTYCount || !c.AAA.Line(line).SSH || !c.AAA.Enabled || !c.AAA.SSHAvailable() || !exists || u.AuthVerifier() != principal["verifier"] || strconv.Itoa(u.Privilege) != principal["privilege"] {
 					conn.Close()
 				}
 			}
 		}
 		mu.Unlock()
-		if desired != address {
+		if desired != address || desiredInterface != boundInterface {
 			if listener != nil {
 				listener.Close()
 				listener = nil
@@ -168,8 +205,19 @@ func SSHService() error {
 			}
 			mu.Unlock()
 			address = desired
+			boundInterface = desiredInterface
 			if address != "" {
-				listener, e = net.Listen("tcp", address)
+				lc := net.ListenConfig{Control: func(_, _ string, raw syscall.RawConn) error {
+					var bindErr error
+					err := raw.Control(func(fd uintptr) {
+						bindErr = syscall.SetsockoptString(int(fd), syscall.SOL_SOCKET, syscall.SO_BINDTODEVICE, boundInterface)
+					})
+					if err != nil {
+						return err
+					}
+					return bindErr
+				}}
+				listener, e = lc.Listen(context.Background(), "tcp4", address)
 				if e != nil {
 					return e
 				}
@@ -187,28 +235,44 @@ func SSHService() error {
 			}
 			return e
 		}
-		select {
-		case slots <- struct{}{}:
-		default:
+		// Accept may have blocked while the administrator changed line policy.
+		// Allocate against the configuration at connection time, not the snapshot
+		// used to maintain the listener before Accept.
+		policy, loadErr := loadRunning()
+		if loadErr != nil || !policy.AAA.Enabled {
 			conn.Close()
 			continue
 		}
 		mu.Lock()
+		vty := -1
+		for i := range slots {
+			if !slots[i] && policy.AAA.Line(i).SSH {
+				vty = i
+				slots[i] = true
+				break
+			}
+		}
+		if vty < 0 {
+			mu.Unlock()
+			conn.Close()
+			continue
+		}
 		active[conn] = nil
 		mu.Unlock()
-		go func() {
-			defer func() { conn.Close(); mu.Lock(); delete(active, conn); mu.Unlock(); <-slots }()
-			serveSSH(conn, settings, func(principal map[string]string) { mu.Lock(); active[conn] = principal; mu.Unlock() })
-		}()
+		go func(conn net.Conn, vty int) {
+			defer func() { conn.Close(); mu.Lock(); delete(active, conn); slots[vty] = false; mu.Unlock() }()
+			serveSSH(conn, settings, vty, func(principal map[string]string) { mu.Lock(); active[conn] = principal; mu.Unlock() })
+		}(conn, vty)
 	}
 }
-func serveSSH(conn net.Conn, settings *ssh.ServerConfig, register func(map[string]string)) {
+func serveSSH(conn net.Conn, settings *ssh.ServerConfig, vty int, register func(map[string]string)) {
 	conn.SetDeadline(time.Now().Add(20 * time.Second))
 	server, channels, requests, err := ssh.NewServerConn(conn, settings)
 	if err != nil {
 		return
 	}
 	defer server.Close()
+	server.Permissions.Extensions["vty"] = strconv.Itoa(vty)
 	register(server.Permissions.Extensions)
 	defer audit(server.User(), "ssh", "disconnect", "")
 	conn.SetDeadline(time.Now().Add(30 * time.Second))
@@ -223,11 +287,11 @@ func serveSSH(conn net.Conn, settings *ssh.ServerConfig, register func(map[strin
 			return
 		}
 		// One PTY per connection; closing the console also closes this connection.
-		handleSSHSession(conn, channel, requests, server.Permissions.Extensions["user"], server.Permissions.Extensions["verifier"])
+		handleSSHSession(conn, channel, requests, server.Permissions.Extensions["user"], server.Permissions.Extensions["verifier"], vty)
 		return
 	}
 }
-func handleSSHSession(conn net.Conn, channel ssh.Channel, requests <-chan *ssh.Request, user, verifier string) {
+func handleSSHSession(conn net.Conn, channel ssh.Channel, requests <-chan *ssh.Request, user, verifier string, vty int) {
 	defer channel.Close()
 	size := pty.Winsize{Rows: 24, Cols: 80}
 	gotPTY := false
@@ -253,7 +317,7 @@ func handleSSHSession(conn net.Conn, channel ssh.Channel, requests <-chan *ssh.R
 			}
 			cmd := exec.Command("/usr/libexec/fractal-platform", "console")
 			cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
-			cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "TERM=vt100", "FCR_SSH_USER=" + user, "FCR_SSH_VERIFIER=" + verifier}
+			cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "TERM=vt100", "FCR_SSH_USER=" + user, "FCR_SSH_VERIFIER=" + verifier, "FCR_SSH_VTY=" + strconv.Itoa(vty)}
 			terminal, err := pty.StartWithSize(cmd, &size)
 			if err != nil {
 				request.Reply(false, nil)

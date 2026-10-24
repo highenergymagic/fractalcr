@@ -1,0 +1,233 @@
+/*
+   Copyright 2020 Docker Compose CLI authors
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+
+package compose
+
+import (
+	"context"
+	"fmt"
+	"slices"
+	"sort"
+	"strconv"
+
+	"github.com/compose-spec/compose-go/v2/types"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
+
+	"github.com/docker/compose/v5/pkg/api"
+)
+
+// Containers is a set of moby Container
+type Containers []container.Summary
+
+type oneOff int
+
+const (
+	oneOffInclude = oneOff(iota)
+	oneOffExclude
+	oneOffOnly
+)
+
+func (s *composeService) getContainers(ctx context.Context, projectName string, oneOff oneOff, all bool, selectedServices ...string) (Containers, error) {
+	res, err := s.apiClient().ContainerList(ctx, client.ContainerListOptions{
+		Filters: getDefaultFilters(projectName, oneOff, selectedServices...),
+		All:     all,
+	})
+	if err != nil {
+		return nil, err
+	}
+	containers := Containers(res.Items)
+	if len(selectedServices) > 1 {
+		containers = containers.filter(isService(selectedServices...))
+	}
+	return containers, nil
+}
+
+// getHookContainers returns every pre_start hook runner container in the
+// project, in any state. Hook runners deliberately carry no ConfigHashLabel
+// (see createPreStartContainer), so they are invisible to getContainers'
+// default filters and must be listed by project+hook label alone.
+func (s *composeService) getHookContainers(ctx context.Context, projectName string) (Containers, error) {
+	f := projectFilter(projectName)
+	f.Add("label", hookFilter(preStartHookType))
+	res, err := s.apiClient().ContainerList(ctx, client.ContainerListOptions{
+		All:     true,
+		Filters: f,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return Containers(res.Items), nil
+}
+
+// getContainersByService returns all non-oneoff containers for the project, grouped by service name.
+func (s *composeService) getContainersByService(ctx context.Context, projectName string) (map[string]Containers, error) {
+	all, err := s.getContainers(ctx, projectName, oneOffExclude, true)
+	if err != nil {
+		return nil, err
+	}
+	result := map[string]Containers{}
+	for _, ctr := range all.filter(isNotOneOff) {
+		serviceName := ctr.Labels[api.ServiceLabel]
+		result[serviceName] = append(result[serviceName], ctr)
+	}
+	return result, nil
+}
+
+func getDefaultFilters(projectName string, oneOff oneOff, selectedServices ...string) client.Filters {
+	f := projectFilter(projectName)
+	if len(selectedServices) == 1 {
+		f.Add("label", serviceFilter(selectedServices[0]))
+	}
+	f.Add("label", api.ConfigHashLabel)
+	switch oneOff {
+	case oneOffOnly:
+		f.Add("label", oneOffFilter(true))
+	case oneOffExclude:
+		f.Add("label", oneOffFilter(false))
+	case oneOffInclude:
+	}
+	return f
+}
+
+func (s *composeService) getSpecifiedContainer(ctx context.Context, projectName string, oneOff oneOff, all bool, serviceName string, containerIndex int) (container.Summary, error) {
+	defaultFilters := getDefaultFilters(projectName, oneOff, serviceName)
+	if containerIndex > 0 {
+		defaultFilters.Add("label", containerNumberFilter(containerIndex))
+	}
+	res, err := s.apiClient().ContainerList(ctx, client.ContainerListOptions{
+		Filters: defaultFilters,
+		All:     all,
+	})
+	if err != nil {
+		return container.Summary{}, err
+	}
+	containers := res.Items
+	if len(containers) < 1 {
+		if containerIndex > 0 {
+			return container.Summary{}, fmt.Errorf("service %q is not running container #%d", serviceName, containerIndex)
+		}
+		return container.Summary{}, fmt.Errorf("service %q is not running", serviceName)
+	}
+
+	// Sort by container number first, then put one-off containers at the end
+	sort.Slice(containers, func(i, j int) bool {
+		numberLabelX, _ := strconv.Atoi(containers[i].Labels[api.ContainerNumberLabel])
+		numberLabelY, _ := strconv.Atoi(containers[j].Labels[api.ContainerNumberLabel])
+		IsOneOffLabelTrueX := containers[i].Labels[api.OneoffLabel] == "True"
+		IsOneOffLabelTrueY := containers[j].Labels[api.OneoffLabel] == "True"
+
+		if IsOneOffLabelTrueX || IsOneOffLabelTrueY {
+			return !IsOneOffLabelTrueX && IsOneOffLabelTrueY
+		}
+
+		return numberLabelX < numberLabelY
+	})
+	return containers[0], nil
+}
+
+// containerPredicate define a predicate we want container to satisfy for filtering operations
+type containerPredicate func(c container.Summary) bool
+
+func matches(c container.Summary, predicates ...containerPredicate) bool {
+	for _, predicate := range predicates {
+		if !predicate(c) {
+			return false
+		}
+	}
+	return true
+}
+
+func isService(services ...string) containerPredicate {
+	return func(c container.Summary) bool {
+		service := c.Labels[api.ServiceLabel]
+		return slices.Contains(services, service)
+	}
+}
+
+// isOrphaned selects the containers `--remove-orphans` cleans up — and that
+// `up` warns about otherwise. A container is orphaned when:
+//
+//   - it is a one-off (`compose run`) that FINISHED its task (exited/dead):
+//     one-offs are ephemeral by design, a terminated one is a leftover. A
+//     still-RUNNING one-off is somebody's live session and is deliberately
+//     NOT an orphan: `up --remove-orphans` must never kill it. `down` does
+//     stop running one-offs, but on purpose and through the per-service
+//     removal path — down stops the application, and a running one-off is
+//     part of what goes down (see down.go);
+//   - or it carries this project's labels but its service is not defined by
+//     the compose model (neither enabled nor disabled) — the typical leftover
+//     after the compose file was edited and a service removed or renamed.
+func isOrphaned(project *types.Project) containerPredicate {
+	services := append(project.ServiceNames(), project.DisabledServiceNames()...)
+	return func(c container.Summary) bool {
+		if v, ok := c.Labels[api.OneoffLabel]; ok && v == "True" {
+			return c.State == container.StateExited || c.State == container.StateDead
+		}
+		return !slices.Contains(services, c.Labels[api.ServiceLabel])
+	}
+}
+
+func isNotOneOff(c container.Summary) bool {
+	v, ok := c.Labels[api.OneoffLabel]
+	return !ok || v == "False"
+}
+
+// isNotHookContainer excludes pre_start hook runners: they carry the same
+// project/service labels as a real replica (and no one-off label either)
+// while being none -- starting one, or counting it as a surviving replica,
+// is always wrong.
+func isNotHookContainer(c container.Summary) bool {
+	return c.Labels[api.HookLabel] == ""
+}
+
+func isNotRunning(c container.Summary) bool {
+	return c.State != container.StateRunning
+}
+
+// filter return Containers with elements to match predicate
+func (containers Containers) filter(predicates ...containerPredicate) Containers {
+	var filtered Containers
+	for _, ctr := range containers {
+		if matches(ctr, predicates...) {
+			filtered = append(filtered, ctr)
+		}
+	}
+	return filtered
+}
+
+// forEachContainerConcurrent runs fn for every container concurrently and
+// waits for all goroutines. Use forEachWithLimiter (compose.go)
+// instead when the concurrency budget must be shared across several
+// concurrently-dispatched calls, e.g. one per service visited by
+// InDependencyOrder.
+func forEachContainerConcurrent(ctx context.Context, maxConcurrency int, containers Containers, fn func(context.Context, container.Summary) error) error {
+	eg, ctx := newLimitedErrgroup(ctx, maxConcurrency)
+	for _, ctr := range containers {
+		eg.Go(func() error {
+			return fn(ctx, ctr)
+		})
+	}
+	return eg.Wait()
+}
+
+// sorted sorts containers in place by canonical name and returns the (same) slice.
+func (containers Containers) sorted() Containers {
+	sort.Slice(containers, func(i, j int) bool {
+		return getCanonicalContainerName(containers[i]) < getCanonicalContainerName(containers[j])
+	})
+	return containers
+}

@@ -1,5 +1,8 @@
 # FractalCR
 
+Fractal Microsystems — Copyright (c) 2025–2026.
+[Technical support](https://www.fractalmicro.org/techsupport).
+
 A serial-managed container appliance: “Cisco IOS, but for containers.”
 
 The private integration repository pins ROMMON, supervisor and OE layer
@@ -7,6 +10,7 @@ repositories at exact commits. Clone with `--recurse-submodules`; GitHub's sourc
 zip does not include those components. Start with [repository architecture](docs/architecture.md),
 [portable builds](docs/building.md), [dependency maintenance](docs/dependencies.md),
 [release policy](docs/releases.md), and the [security review](docs/security-review.md).
+See [USB/VPS image releases and initial SSH provisioning](os/docs/releases.md).
 Current images are development-signed. This is not yet an independently audited
 production release.
 

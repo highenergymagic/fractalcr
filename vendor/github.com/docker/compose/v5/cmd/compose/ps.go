@@ -1,0 +1,179 @@
+/*
+   Copyright 2020 Docker Compose CLI authors
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+
+package compose
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"slices"
+	"sort"
+	"strings"
+
+	"github.com/docker/cli/cli/command"
+	cliformatter "github.com/docker/cli/cli/command/formatter"
+	cliflags "github.com/docker/cli/cli/flags"
+	"github.com/spf13/cobra"
+
+	"github.com/docker/compose/v5/cmd/formatter"
+	"github.com/docker/compose/v5/pkg/api"
+	"github.com/docker/compose/v5/pkg/compose"
+)
+
+type psOptions struct {
+	*ProjectOptions
+	Format   string
+	All      bool
+	Quiet    bool
+	Services bool
+	Filter   string
+	Status   []string
+	noTrunc  bool
+	Orphans  bool
+}
+
+func (p *psOptions) parseFilter() error {
+	if p.Filter == "" {
+		return nil
+	}
+	key, val, ok := strings.Cut(p.Filter, "=")
+	if !ok {
+		return errors.New("arguments to --filter should be in form KEY=VAL")
+	}
+	switch key {
+	case "status":
+		p.Status = append(p.Status, val)
+		return nil
+	case "source":
+		return api.ErrNotImplemented
+	default:
+		return fmt.Errorf("unknown filter %s", key)
+	}
+}
+
+func psCommand(p *ProjectOptions, dockerCli command.Cli, backendOptions *BackendOptions) *cobra.Command {
+	opts := psOptions{
+		ProjectOptions: p,
+	}
+	psCmd := &cobra.Command{
+		Use:   "ps [OPTIONS] [SERVICE...]",
+		Short: "List containers",
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			return opts.parseFilter()
+		},
+		RunE: Adapt(func(ctx context.Context, args []string) error {
+			return runPs(ctx, dockerCli, backendOptions, args, opts)
+		}),
+		ValidArgsFunction: completeServiceNames(dockerCli, p),
+	}
+	flags := psCmd.Flags()
+	flags.StringVar(&opts.Format, "format", "", cliflags.FormatHelp)
+	flags.StringVar(&opts.Filter, "filter", "", "Filter services by a property (supported filters: status)")
+	flags.StringArrayVar(&opts.Status, "status", []string{}, "Filter services by status. Values: [paused | restarting | removing | running | dead | created | exited]")
+	flags.BoolVarP(&opts.Quiet, "quiet", "q", false, "Only display IDs")
+	flags.BoolVar(&opts.Services, "services", false, "Display services")
+	flags.BoolVar(&opts.Orphans, "orphans", true, "Include orphaned services (not declared by project)")
+	flags.BoolVarP(&opts.All, "all", "a", false, "Show all stopped containers (including those created by the run command)")
+	flags.BoolVar(&opts.noTrunc, "no-trunc", false, "Don't truncate output")
+	return psCmd
+}
+
+func runPs(ctx context.Context, dockerCli command.Cli, backendOptions *BackendOptions, services []string, opts psOptions) error {
+	project, name, err := opts.projectOrName(ctx, dockerCli, services...)
+	if err != nil {
+		return err
+	}
+
+	if project != nil {
+		names := project.ServiceNames()
+		if len(services) > 0 {
+			for _, service := range services {
+				if !slices.Contains(names, service) {
+					return fmt.Errorf("no such service: %s", service)
+				}
+			}
+		} else if !opts.Orphans {
+			// until user asks to list orphaned services, we only include those declared in project
+			services = names
+		}
+	}
+
+	backend, err := compose.NewComposeService(dockerCli, backendOptions.Options...)
+	if err != nil {
+		return err
+	}
+	containers, err := backend.Ps(ctx, name, api.PsOptions{
+		Project:  project,
+		All:      opts.All || len(opts.Status) != 0,
+		Services: services,
+	})
+	if err != nil {
+		return err
+	}
+
+	if len(opts.Status) != 0 {
+		containers = filterByStatus(containers, opts.Status)
+	}
+
+	sort.Slice(containers, func(i, j int) bool {
+		return containers[i].Name < containers[j].Name
+	})
+
+	if opts.Quiet {
+		for _, ctr := range containers {
+			_, _ = fmt.Fprintln(dockerCli.Out(), ctr.ID)
+		}
+		return nil
+	}
+
+	if opts.Services {
+		services := []string{}
+		for _, ctr := range containers {
+			s := ctr.Service
+			if !slices.Contains(services, s) {
+				services = append(services, s)
+			}
+		}
+		_, _ = fmt.Fprintln(dockerCli.Out(), strings.Join(services, "\n"))
+		return nil
+	}
+
+	if opts.Format == "" {
+		opts.Format = dockerCli.ConfigFile().PsFormat
+	}
+
+	showEngine := slices.ContainsFunc(containers, func(c api.ContainerSummary) bool {
+		return c.Labels[api.ContainerEngineLabel] != ""
+	})
+
+	containerCtx := cliformatter.Context{
+		Output: dockerCli.Out(),
+		Format: formatter.NewContainerFormat(opts.Format, opts.Quiet, false, showEngine),
+		Trunc:  !opts.noTrunc,
+	}
+	return formatter.ContainerWrite(containerCtx, containers)
+}
+
+func filterByStatus(containers []api.ContainerSummary, statuses []string) []api.ContainerSummary {
+	var filtered []api.ContainerSummary
+	for _, ctr := range containers {
+		if slices.Contains(statuses, string(ctr.State)) {
+			filtered = append(filtered, ctr)
+		}
+	}
+	return filtered
+}

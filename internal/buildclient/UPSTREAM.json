@@ -1,0 +1,19 @@
+{
+  "repository": "https://github.com/moby/buildkit",
+  "revision": "f5b59a1f2fb25a0cb7072c398cab9aed7835da4e",
+  "files_sha256": {
+    "build.go": "ddc92f62bf556af4bd7477bc4a48a701ca932b09d59f91d308c185b98edfa8ec",
+    "cachemetrics.go": "bdb1bd9a7f3b932f8d1e6c14236386a5d9f073c8704ab68a1e027eef6eccc961",
+    "debug.go": "eb724b818832b4354f44ed48a90c1e734c06ce22e8e4dc96f583eb6d4693b446",
+    "dialstdio.go": "5ca2b15672974ff7154cc694fe58be298605aeb912ee936692d65b00e2c4461d",
+    "diskusage.go": "41400c630eb31080574c422541c91074faf42d6d0db16fcc7b4fbce70d5ca7d6",
+    "main.go": "bb73f129a1ccbae11b16d9f50de4db1e41c510ba3b7511cbcbc09fdeb3794419",
+    "prune.go": "8405784d97e3c44d462ffc1fac584e5b4a5ecab37a52031a0e80db6c7dbce64c",
+    "prunehistories.go": "a585e1d18ae12687ee0d05350dda960e0867f11a871699a9fabd4a31c103bfee"
+  },
+  "changes": [
+    "Package renamed to buildclient, Run returns errors to appliance frontend.",
+    "External command connection helpers and automatic profiler/tracing discovery removed.",
+    "No process-wide umask override."
+  ]
+}

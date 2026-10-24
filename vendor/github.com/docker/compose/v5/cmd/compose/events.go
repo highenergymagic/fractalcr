@@ -1,0 +1,93 @@
+/*
+   Copyright 2020 Docker Compose CLI authors
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+
+package compose
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+
+	"github.com/docker/cli/cli/command"
+	"github.com/spf13/cobra"
+
+	"github.com/docker/compose/v5/pkg/api"
+	"github.com/docker/compose/v5/pkg/compose"
+)
+
+type eventsOpts struct {
+	*composeOptions
+	json  bool
+	since string
+	until string
+}
+
+func eventsCommand(p *ProjectOptions, dockerCli command.Cli, backendOptions *BackendOptions) *cobra.Command {
+	opts := eventsOpts{
+		composeOptions: &composeOptions{
+			ProjectOptions: p,
+		},
+	}
+	cmd := &cobra.Command{
+		Use:   "events [OPTIONS] [SERVICE...]",
+		Short: "Receive real time events from containers",
+		RunE: Adapt(func(ctx context.Context, args []string) error {
+			return runEvents(ctx, dockerCli, backendOptions, opts, args)
+		}),
+		ValidArgsFunction: completeServiceNames(dockerCli, p),
+	}
+
+	cmd.Flags().BoolVar(&opts.json, "json", false, "Output events as a stream of json objects")
+	cmd.Flags().StringVar(&opts.since, "since", "", "Show all events created since timestamp")
+	cmd.Flags().StringVar(&opts.until, "until", "", "Stream events until this timestamp")
+	return cmd
+}
+
+func runEvents(ctx context.Context, dockerCli command.Cli, backendOptions *BackendOptions, opts eventsOpts, services []string) error {
+	_, name, err := opts.projectOrName(ctx, dockerCli, services...)
+	if err != nil {
+		return err
+	}
+
+	backend, err := compose.NewComposeService(dockerCli, backendOptions.Options...)
+	if err != nil {
+		return err
+	}
+	return backend.Events(ctx, name, api.EventsOptions{
+		Services: services,
+		Since:    opts.since,
+		Until:    opts.until,
+		Consumer: func(event api.Event) error {
+			if opts.json {
+				marshal, err := json.Marshal(map[string]any{
+					"time":       event.Timestamp,
+					"type":       "container",
+					"service":    event.Service,
+					"id":         event.Container,
+					"action":     event.Status,
+					"attributes": event.Attributes,
+				})
+				if err != nil {
+					return err
+				}
+				_, _ = fmt.Fprintln(dockerCli.Out(), string(marshal))
+			} else {
+				_, _ = fmt.Fprintln(dockerCli.Out(), event)
+			}
+			return nil
+		},
+	})
+}

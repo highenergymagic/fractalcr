@@ -1,0 +1,2481 @@
+{
+  "name": "request container-build",
+  "description": "build utility",
+  "usage": "",
+  "runnable": true,
+  "flags": [
+    {
+      "name": "debug",
+      "description": "enable debug output in logs",
+      "type": "bool",
+      "boolean": true
+    },
+    {
+      "name": "addr",
+      "description": "buildkitd address",
+      "type": "string"
+    },
+    {
+      "name": "log-format",
+      "description": "log formatter: json or text",
+      "type": "string"
+    },
+    {
+      "name": "tlsservername",
+      "description": "buildkitd server name for certificate validation",
+      "type": "string"
+    },
+    {
+      "name": "tlscacert",
+      "description": "CA certificate for validation",
+      "type": "string"
+    },
+    {
+      "name": "tlscert",
+      "description": "client certificate",
+      "type": "string"
+    },
+    {
+      "name": "tlskey",
+      "description": "client key",
+      "type": "string"
+    },
+    {
+      "name": "tlsdir",
+      "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+      "type": "string"
+    },
+    {
+      "name": "timeout",
+      "description": "timeout backend connection after value seconds",
+      "type": "int"
+    },
+    {
+      "name": "wait",
+      "description": "block RPCs until the connection becomes available",
+      "type": "bool",
+      "boolean": true
+    },
+    {
+      "name": "help",
+      "short": "h",
+      "description": "show help",
+      "type": "bool",
+      "boolean": true
+    },
+    {
+      "name": "version",
+      "short": "v",
+      "description": "print the version",
+      "type": "bool",
+      "boolean": true
+    }
+  ],
+  "children": [
+    {
+      "name": "du",
+      "description": "disk usage",
+      "usage": "",
+      "runnable": true,
+      "flags": [
+        {
+          "name": "filter",
+          "short": "f",
+          "description": "Filter records",
+          "type": "string"
+        },
+        {
+          "name": "verbose",
+          "short": "v",
+          "description": "Verbose output",
+          "type": "bool",
+          "boolean": true
+        },
+        {
+          "name": "format",
+          "description": "Format the output using the given Go template, e.g, '{{json .}}'",
+          "type": "string"
+        },
+        {
+          "name": "help",
+          "short": "h",
+          "description": "show help",
+          "type": "bool",
+          "boolean": true
+        },
+        {
+          "name": "debug",
+          "description": "enable debug output in logs",
+          "type": "bool",
+          "boolean": true
+        },
+        {
+          "name": "addr",
+          "description": "buildkitd address",
+          "type": "string"
+        },
+        {
+          "name": "log-format",
+          "description": "log formatter: json or text",
+          "type": "string"
+        },
+        {
+          "name": "tlsservername",
+          "description": "buildkitd server name for certificate validation",
+          "type": "string"
+        },
+        {
+          "name": "tlscacert",
+          "description": "CA certificate for validation",
+          "type": "string"
+        },
+        {
+          "name": "tlscert",
+          "description": "client certificate",
+          "type": "string"
+        },
+        {
+          "name": "tlskey",
+          "description": "client key",
+          "type": "string"
+        },
+        {
+          "name": "tlsdir",
+          "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+          "type": "string"
+        },
+        {
+          "name": "timeout",
+          "description": "timeout backend connection after value seconds",
+          "type": "int"
+        },
+        {
+          "name": "wait",
+          "description": "block RPCs until the connection becomes available",
+          "type": "bool",
+          "boolean": true
+        }
+      ],
+      "children": [
+        {
+          "name": "help",
+          "aliases": [
+            "h"
+          ],
+          "description": "Shows a list of commands or help for one command",
+          "usage": "[command]",
+          "runnable": true,
+          "flags": [
+            {
+              "name": "filter",
+              "short": "f",
+              "description": "Filter records",
+              "type": "string"
+            },
+            {
+              "name": "verbose",
+              "short": "v",
+              "description": "Verbose output",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "format",
+              "description": "Format the output using the given Go template, e.g, '{{json .}}'",
+              "type": "string"
+            },
+            {
+              "name": "debug",
+              "description": "enable debug output in logs",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "addr",
+              "description": "buildkitd address",
+              "type": "string"
+            },
+            {
+              "name": "log-format",
+              "description": "log formatter: json or text",
+              "type": "string"
+            },
+            {
+              "name": "tlsservername",
+              "description": "buildkitd server name for certificate validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscacert",
+              "description": "CA certificate for validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscert",
+              "description": "client certificate",
+              "type": "string"
+            },
+            {
+              "name": "tlskey",
+              "description": "client key",
+              "type": "string"
+            },
+            {
+              "name": "tlsdir",
+              "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+              "type": "string"
+            },
+            {
+              "name": "timeout",
+              "description": "timeout backend connection after value seconds",
+              "type": "int"
+            },
+            {
+              "name": "wait",
+              "description": "block RPCs until the connection becomes available",
+              "type": "bool",
+              "boolean": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "prune",
+      "description": "clean up build cache",
+      "usage": "",
+      "runnable": true,
+      "flags": [
+        {
+          "name": "keep-duration",
+          "description": "Keep data newer than this limit",
+          "type": "duration"
+        },
+        {
+          "name": "keep-storage",
+          "description": "Keep data below this limit (in MB)",
+          "type": "float"
+        },
+        {
+          "name": "keep-storage-min",
+          "description": "Always allow data above this limit (in MB)",
+          "type": "float"
+        },
+        {
+          "name": "free-storage",
+          "description": "Keep free data below this limit (in MB)",
+          "type": "float"
+        },
+        {
+          "name": "filter",
+          "short": "f",
+          "description": "Filter records",
+          "type": "string"
+        },
+        {
+          "name": "all",
+          "description": "Include internal/frontend references",
+          "type": "bool",
+          "boolean": true
+        },
+        {
+          "name": "verbose",
+          "short": "v",
+          "description": "Verbose output",
+          "type": "bool",
+          "boolean": true
+        },
+        {
+          "name": "format",
+          "description": "Format the output using the given Go template, e.g, '{{json .}}'",
+          "type": "string"
+        },
+        {
+          "name": "help",
+          "short": "h",
+          "description": "show help",
+          "type": "bool",
+          "boolean": true
+        },
+        {
+          "name": "debug",
+          "description": "enable debug output in logs",
+          "type": "bool",
+          "boolean": true
+        },
+        {
+          "name": "addr",
+          "description": "buildkitd address",
+          "type": "string"
+        },
+        {
+          "name": "log-format",
+          "description": "log formatter: json or text",
+          "type": "string"
+        },
+        {
+          "name": "tlsservername",
+          "description": "buildkitd server name for certificate validation",
+          "type": "string"
+        },
+        {
+          "name": "tlscacert",
+          "description": "CA certificate for validation",
+          "type": "string"
+        },
+        {
+          "name": "tlscert",
+          "description": "client certificate",
+          "type": "string"
+        },
+        {
+          "name": "tlskey",
+          "description": "client key",
+          "type": "string"
+        },
+        {
+          "name": "tlsdir",
+          "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+          "type": "string"
+        },
+        {
+          "name": "timeout",
+          "description": "timeout backend connection after value seconds",
+          "type": "int"
+        },
+        {
+          "name": "wait",
+          "description": "block RPCs until the connection becomes available",
+          "type": "bool",
+          "boolean": true
+        }
+      ],
+      "children": [
+        {
+          "name": "help",
+          "aliases": [
+            "h"
+          ],
+          "description": "Shows a list of commands or help for one command",
+          "usage": "[command]",
+          "runnable": true,
+          "flags": [
+            {
+              "name": "keep-duration",
+              "description": "Keep data newer than this limit",
+              "type": "duration"
+            },
+            {
+              "name": "keep-storage",
+              "description": "Keep data below this limit (in MB)",
+              "type": "float"
+            },
+            {
+              "name": "keep-storage-min",
+              "description": "Always allow data above this limit (in MB)",
+              "type": "float"
+            },
+            {
+              "name": "free-storage",
+              "description": "Keep free data below this limit (in MB)",
+              "type": "float"
+            },
+            {
+              "name": "filter",
+              "short": "f",
+              "description": "Filter records",
+              "type": "string"
+            },
+            {
+              "name": "all",
+              "description": "Include internal/frontend references",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "verbose",
+              "short": "v",
+              "description": "Verbose output",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "format",
+              "description": "Format the output using the given Go template, e.g, '{{json .}}'",
+              "type": "string"
+            },
+            {
+              "name": "debug",
+              "description": "enable debug output in logs",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "addr",
+              "description": "buildkitd address",
+              "type": "string"
+            },
+            {
+              "name": "log-format",
+              "description": "log formatter: json or text",
+              "type": "string"
+            },
+            {
+              "name": "tlsservername",
+              "description": "buildkitd server name for certificate validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscacert",
+              "description": "CA certificate for validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscert",
+              "description": "client certificate",
+              "type": "string"
+            },
+            {
+              "name": "tlskey",
+              "description": "client key",
+              "type": "string"
+            },
+            {
+              "name": "tlsdir",
+              "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+              "type": "string"
+            },
+            {
+              "name": "timeout",
+              "description": "timeout backend connection after value seconds",
+              "type": "int"
+            },
+            {
+              "name": "wait",
+              "description": "block RPCs until the connection becomes available",
+              "type": "bool",
+              "boolean": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "prune-histories",
+      "description": "clean up build histories",
+      "usage": "",
+      "runnable": true,
+      "flags": [
+        {
+          "name": "format",
+          "description": "Format the output using the given Go template, e.g, '{{json .}}'",
+          "type": "string"
+        },
+        {
+          "name": "help",
+          "short": "h",
+          "description": "show help",
+          "type": "bool",
+          "boolean": true
+        },
+        {
+          "name": "debug",
+          "description": "enable debug output in logs",
+          "type": "bool",
+          "boolean": true
+        },
+        {
+          "name": "addr",
+          "description": "buildkitd address",
+          "type": "string"
+        },
+        {
+          "name": "log-format",
+          "description": "log formatter: json or text",
+          "type": "string"
+        },
+        {
+          "name": "tlsservername",
+          "description": "buildkitd server name for certificate validation",
+          "type": "string"
+        },
+        {
+          "name": "tlscacert",
+          "description": "CA certificate for validation",
+          "type": "string"
+        },
+        {
+          "name": "tlscert",
+          "description": "client certificate",
+          "type": "string"
+        },
+        {
+          "name": "tlskey",
+          "description": "client key",
+          "type": "string"
+        },
+        {
+          "name": "tlsdir",
+          "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+          "type": "string"
+        },
+        {
+          "name": "timeout",
+          "description": "timeout backend connection after value seconds",
+          "type": "int"
+        },
+        {
+          "name": "wait",
+          "description": "block RPCs until the connection becomes available",
+          "type": "bool",
+          "boolean": true
+        }
+      ],
+      "children": [
+        {
+          "name": "help",
+          "aliases": [
+            "h"
+          ],
+          "description": "Shows a list of commands or help for one command",
+          "usage": "[command]",
+          "runnable": true,
+          "flags": [
+            {
+              "name": "format",
+              "description": "Format the output using the given Go template, e.g, '{{json .}}'",
+              "type": "string"
+            },
+            {
+              "name": "debug",
+              "description": "enable debug output in logs",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "addr",
+              "description": "buildkitd address",
+              "type": "string"
+            },
+            {
+              "name": "log-format",
+              "description": "log formatter: json or text",
+              "type": "string"
+            },
+            {
+              "name": "tlsservername",
+              "description": "buildkitd server name for certificate validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscacert",
+              "description": "CA certificate for validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscert",
+              "description": "client certificate",
+              "type": "string"
+            },
+            {
+              "name": "tlskey",
+              "description": "client key",
+              "type": "string"
+            },
+            {
+              "name": "tlsdir",
+              "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+              "type": "string"
+            },
+            {
+              "name": "timeout",
+              "description": "timeout backend connection after value seconds",
+              "type": "int"
+            },
+            {
+              "name": "wait",
+              "description": "block RPCs until the connection becomes available",
+              "type": "bool",
+              "boolean": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "build",
+      "aliases": [
+        "b"
+      ],
+      "description": "build",
+      "usage": "",
+      "runnable": true,
+      "flags": [
+        {
+          "name": "output",
+          "short": "o",
+          "description": "Define exports for build result, e.g. --output type=image,name=docker.io/username/image,push=true",
+          "type": "string"
+        },
+        {
+          "name": "progress",
+          "description": "Set type of progress (auto, plain, tty, rawjson). Use plain to show container output",
+          "type": "string"
+        },
+        {
+          "name": "trace",
+          "description": "Path to trace file. Defaults to no tracing.",
+          "type": "string"
+        },
+        {
+          "name": "local",
+          "description": "Allow build access to the local directory",
+          "type": "string"
+        },
+        {
+          "name": "oci-layout",
+          "description": "Allow build access to the local OCI layout",
+          "type": "string"
+        },
+        {
+          "name": "frontend",
+          "description": "Define frontend used for build",
+          "type": "string"
+        },
+        {
+          "name": "opt",
+          "description": "Define custom options for frontend, e.g. --opt target=foo --opt build-arg:foo=bar",
+          "type": "string"
+        },
+        {
+          "name": "no-cache",
+          "description": "Disable cache for all the vertices",
+          "type": "bool",
+          "boolean": true
+        },
+        {
+          "name": "export-cache",
+          "description": "Export build cache, e.g. --export-cache type=registry,ref=example.com/foo/bar, or --export-cache type=local,dest=path/to/dir",
+          "type": "string"
+        },
+        {
+          "name": "import-cache",
+          "description": "Import build cache, e.g. --import-cache type=registry,ref=example.com/foo/bar, or --import-cache type=local,src=path/to/dir",
+          "type": "string"
+        },
+        {
+          "name": "secret",
+          "description": "Secret value exposed to the build. Format id=secretname,src=filepath",
+          "type": "string"
+        },
+        {
+          "name": "allow",
+          "description": "Allow extra privileged entitlement, e.g. network.host, security.insecure, device",
+          "type": "string"
+        },
+        {
+          "name": "ssh",
+          "description": "Allow forwarding SSH agent or a raw Unix socket to the builder. Format default|\u003cid\u003e[=\u003csocket\u003e[,raw=false]|\u003ckey\u003e[,\u003ckey\u003e]]",
+          "type": "string"
+        },
+        {
+          "name": "metadata-file",
+          "description": "Output build metadata (e.g., image digest) to a file as JSON",
+          "type": "string"
+        },
+        {
+          "name": "source-policy-file",
+          "description": "Read source policy file from a JSON file",
+          "type": "string"
+        },
+        {
+          "name": "proxy-network",
+          "description": "Run build with proxy network enforcement",
+          "type": "bool",
+          "boolean": true
+        },
+        {
+          "name": "ref-file",
+          "description": "Write build ref to a file",
+          "type": "string"
+        },
+        {
+          "name": "registry-auth-tlscontext",
+          "description": "Overwrite TLS configuration when authenticating with registries, e.g. --registry-auth-tlscontext host=https://myserver:2376,insecure=false,ca=/path/to/my/ca.crt,cert=/path/to/my/cert.crt,key=/path/to/my/key.crt",
+          "type": "string"
+        },
+        {
+          "name": "debug-json-cache-metrics",
+          "description": "Where to output json cache metrics, use 'stdout' or 'stderr' for standard (error) output.",
+          "type": "string"
+        },
+        {
+          "name": "help",
+          "short": "h",
+          "description": "show help",
+          "type": "bool",
+          "boolean": true
+        },
+        {
+          "name": "debug",
+          "description": "enable debug output in logs",
+          "type": "bool",
+          "boolean": true
+        },
+        {
+          "name": "addr",
+          "description": "buildkitd address",
+          "type": "string"
+        },
+        {
+          "name": "log-format",
+          "description": "log formatter: json or text",
+          "type": "string"
+        },
+        {
+          "name": "tlsservername",
+          "description": "buildkitd server name for certificate validation",
+          "type": "string"
+        },
+        {
+          "name": "tlscacert",
+          "description": "CA certificate for validation",
+          "type": "string"
+        },
+        {
+          "name": "tlscert",
+          "description": "client certificate",
+          "type": "string"
+        },
+        {
+          "name": "tlskey",
+          "description": "client key",
+          "type": "string"
+        },
+        {
+          "name": "tlsdir",
+          "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+          "type": "string"
+        },
+        {
+          "name": "timeout",
+          "description": "timeout backend connection after value seconds",
+          "type": "int"
+        },
+        {
+          "name": "wait",
+          "description": "block RPCs until the connection becomes available",
+          "type": "bool",
+          "boolean": true
+        }
+      ],
+      "children": [
+        {
+          "name": "help",
+          "aliases": [
+            "h"
+          ],
+          "description": "Shows a list of commands or help for one command",
+          "usage": "[command]",
+          "runnable": true,
+          "flags": [
+            {
+              "name": "output",
+              "short": "o",
+              "description": "Define exports for build result, e.g. --output type=image,name=docker.io/username/image,push=true",
+              "type": "string"
+            },
+            {
+              "name": "progress",
+              "description": "Set type of progress (auto, plain, tty, rawjson). Use plain to show container output",
+              "type": "string"
+            },
+            {
+              "name": "trace",
+              "description": "Path to trace file. Defaults to no tracing.",
+              "type": "string"
+            },
+            {
+              "name": "local",
+              "description": "Allow build access to the local directory",
+              "type": "string"
+            },
+            {
+              "name": "oci-layout",
+              "description": "Allow build access to the local OCI layout",
+              "type": "string"
+            },
+            {
+              "name": "frontend",
+              "description": "Define frontend used for build",
+              "type": "string"
+            },
+            {
+              "name": "opt",
+              "description": "Define custom options for frontend, e.g. --opt target=foo --opt build-arg:foo=bar",
+              "type": "string"
+            },
+            {
+              "name": "no-cache",
+              "description": "Disable cache for all the vertices",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "export-cache",
+              "description": "Export build cache, e.g. --export-cache type=registry,ref=example.com/foo/bar, or --export-cache type=local,dest=path/to/dir",
+              "type": "string"
+            },
+            {
+              "name": "import-cache",
+              "description": "Import build cache, e.g. --import-cache type=registry,ref=example.com/foo/bar, or --import-cache type=local,src=path/to/dir",
+              "type": "string"
+            },
+            {
+              "name": "secret",
+              "description": "Secret value exposed to the build. Format id=secretname,src=filepath",
+              "type": "string"
+            },
+            {
+              "name": "allow",
+              "description": "Allow extra privileged entitlement, e.g. network.host, security.insecure, device",
+              "type": "string"
+            },
+            {
+              "name": "ssh",
+              "description": "Allow forwarding SSH agent or a raw Unix socket to the builder. Format default|\u003cid\u003e[=\u003csocket\u003e[,raw=false]|\u003ckey\u003e[,\u003ckey\u003e]]",
+              "type": "string"
+            },
+            {
+              "name": "metadata-file",
+              "description": "Output build metadata (e.g., image digest) to a file as JSON",
+              "type": "string"
+            },
+            {
+              "name": "source-policy-file",
+              "description": "Read source policy file from a JSON file",
+              "type": "string"
+            },
+            {
+              "name": "proxy-network",
+              "description": "Run build with proxy network enforcement",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "ref-file",
+              "description": "Write build ref to a file",
+              "type": "string"
+            },
+            {
+              "name": "registry-auth-tlscontext",
+              "description": "Overwrite TLS configuration when authenticating with registries, e.g. --registry-auth-tlscontext host=https://myserver:2376,insecure=false,ca=/path/to/my/ca.crt,cert=/path/to/my/cert.crt,key=/path/to/my/key.crt",
+              "type": "string"
+            },
+            {
+              "name": "debug-json-cache-metrics",
+              "description": "Where to output json cache metrics, use 'stdout' or 'stderr' for standard (error) output.",
+              "type": "string"
+            },
+            {
+              "name": "debug",
+              "description": "enable debug output in logs",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "addr",
+              "description": "buildkitd address",
+              "type": "string"
+            },
+            {
+              "name": "log-format",
+              "description": "log formatter: json or text",
+              "type": "string"
+            },
+            {
+              "name": "tlsservername",
+              "description": "buildkitd server name for certificate validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscacert",
+              "description": "CA certificate for validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscert",
+              "description": "client certificate",
+              "type": "string"
+            },
+            {
+              "name": "tlskey",
+              "description": "client key",
+              "type": "string"
+            },
+            {
+              "name": "tlsdir",
+              "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+              "type": "string"
+            },
+            {
+              "name": "timeout",
+              "description": "timeout backend connection after value seconds",
+              "type": "int"
+            },
+            {
+              "name": "wait",
+              "description": "block RPCs until the connection becomes available",
+              "type": "bool",
+              "boolean": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "debug",
+      "description": "debug utilities",
+      "usage": "",
+      "runnable": false,
+      "flags": [
+        {
+          "name": "help",
+          "short": "h",
+          "description": "show help",
+          "type": "bool",
+          "boolean": true
+        },
+        {
+          "name": "debug",
+          "description": "enable debug output in logs",
+          "type": "bool",
+          "boolean": true
+        },
+        {
+          "name": "addr",
+          "description": "buildkitd address",
+          "type": "string"
+        },
+        {
+          "name": "log-format",
+          "description": "log formatter: json or text",
+          "type": "string"
+        },
+        {
+          "name": "tlsservername",
+          "description": "buildkitd server name for certificate validation",
+          "type": "string"
+        },
+        {
+          "name": "tlscacert",
+          "description": "CA certificate for validation",
+          "type": "string"
+        },
+        {
+          "name": "tlscert",
+          "description": "client certificate",
+          "type": "string"
+        },
+        {
+          "name": "tlskey",
+          "description": "client key",
+          "type": "string"
+        },
+        {
+          "name": "tlsdir",
+          "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+          "type": "string"
+        },
+        {
+          "name": "timeout",
+          "description": "timeout backend connection after value seconds",
+          "type": "int"
+        },
+        {
+          "name": "wait",
+          "description": "block RPCs until the connection becomes available",
+          "type": "bool",
+          "boolean": true
+        }
+      ],
+      "children": [
+        {
+          "name": "dump-llb",
+          "description": "dump LLB in human-readable format. LLB can be also passed via stdin. This command does not require the daemon to be running.",
+          "usage": "\u003cllbfile\u003e",
+          "runnable": true,
+          "flags": [
+            {
+              "name": "dot",
+              "description": "Output dot format",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "help",
+              "short": "h",
+              "description": "show help",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "debug",
+              "description": "enable debug output in logs",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "addr",
+              "description": "buildkitd address",
+              "type": "string"
+            },
+            {
+              "name": "log-format",
+              "description": "log formatter: json or text",
+              "type": "string"
+            },
+            {
+              "name": "tlsservername",
+              "description": "buildkitd server name for certificate validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscacert",
+              "description": "CA certificate for validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscert",
+              "description": "client certificate",
+              "type": "string"
+            },
+            {
+              "name": "tlskey",
+              "description": "client key",
+              "type": "string"
+            },
+            {
+              "name": "tlsdir",
+              "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+              "type": "string"
+            },
+            {
+              "name": "timeout",
+              "description": "timeout backend connection after value seconds",
+              "type": "int"
+            },
+            {
+              "name": "wait",
+              "description": "block RPCs until the connection becomes available",
+              "type": "bool",
+              "boolean": true
+            }
+          ],
+          "children": [
+            {
+              "name": "help",
+              "aliases": [
+                "h"
+              ],
+              "description": "Shows a list of commands or help for one command",
+              "usage": "[command]",
+              "runnable": true,
+              "flags": [
+                {
+                  "name": "dot",
+                  "description": "Output dot format",
+                  "type": "bool",
+                  "boolean": true
+                },
+                {
+                  "name": "debug",
+                  "description": "enable debug output in logs",
+                  "type": "bool",
+                  "boolean": true
+                },
+                {
+                  "name": "addr",
+                  "description": "buildkitd address",
+                  "type": "string"
+                },
+                {
+                  "name": "log-format",
+                  "description": "log formatter: json or text",
+                  "type": "string"
+                },
+                {
+                  "name": "tlsservername",
+                  "description": "buildkitd server name for certificate validation",
+                  "type": "string"
+                },
+                {
+                  "name": "tlscacert",
+                  "description": "CA certificate for validation",
+                  "type": "string"
+                },
+                {
+                  "name": "tlscert",
+                  "description": "client certificate",
+                  "type": "string"
+                },
+                {
+                  "name": "tlskey",
+                  "description": "client key",
+                  "type": "string"
+                },
+                {
+                  "name": "tlsdir",
+                  "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+                  "type": "string"
+                },
+                {
+                  "name": "timeout",
+                  "description": "timeout backend connection after value seconds",
+                  "type": "int"
+                },
+                {
+                  "name": "wait",
+                  "description": "block RPCs until the connection becomes available",
+                  "type": "bool",
+                  "boolean": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "dump-metadata",
+          "description": "dump the meta in human-readable format.  This command requires the daemon NOT to be running.",
+          "usage": "",
+          "runnable": true,
+          "flags": [
+            {
+              "name": "root",
+              "description": "path to state directory",
+              "type": "string"
+            },
+            {
+              "name": "help",
+              "short": "h",
+              "description": "show help",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "debug",
+              "description": "enable debug output in logs",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "addr",
+              "description": "buildkitd address",
+              "type": "string"
+            },
+            {
+              "name": "log-format",
+              "description": "log formatter: json or text",
+              "type": "string"
+            },
+            {
+              "name": "tlsservername",
+              "description": "buildkitd server name for certificate validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscacert",
+              "description": "CA certificate for validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscert",
+              "description": "client certificate",
+              "type": "string"
+            },
+            {
+              "name": "tlskey",
+              "description": "client key",
+              "type": "string"
+            },
+            {
+              "name": "tlsdir",
+              "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+              "type": "string"
+            },
+            {
+              "name": "timeout",
+              "description": "timeout backend connection after value seconds",
+              "type": "int"
+            },
+            {
+              "name": "wait",
+              "description": "block RPCs until the connection becomes available",
+              "type": "bool",
+              "boolean": true
+            }
+          ],
+          "children": [
+            {
+              "name": "help",
+              "aliases": [
+                "h"
+              ],
+              "description": "Shows a list of commands or help for one command",
+              "usage": "[command]",
+              "runnable": true,
+              "flags": [
+                {
+                  "name": "root",
+                  "description": "path to state directory",
+                  "type": "string"
+                },
+                {
+                  "name": "debug",
+                  "description": "enable debug output in logs",
+                  "type": "bool",
+                  "boolean": true
+                },
+                {
+                  "name": "addr",
+                  "description": "buildkitd address",
+                  "type": "string"
+                },
+                {
+                  "name": "log-format",
+                  "description": "log formatter: json or text",
+                  "type": "string"
+                },
+                {
+                  "name": "tlsservername",
+                  "description": "buildkitd server name for certificate validation",
+                  "type": "string"
+                },
+                {
+                  "name": "tlscacert",
+                  "description": "CA certificate for validation",
+                  "type": "string"
+                },
+                {
+                  "name": "tlscert",
+                  "description": "client certificate",
+                  "type": "string"
+                },
+                {
+                  "name": "tlskey",
+                  "description": "client key",
+                  "type": "string"
+                },
+                {
+                  "name": "tlsdir",
+                  "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+                  "type": "string"
+                },
+                {
+                  "name": "timeout",
+                  "description": "timeout backend connection after value seconds",
+                  "type": "int"
+                },
+                {
+                  "name": "wait",
+                  "description": "block RPCs until the connection becomes available",
+                  "type": "bool",
+                  "boolean": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "workers",
+          "description": "list workers",
+          "usage": "",
+          "runnable": true,
+          "flags": [
+            {
+              "name": "filter",
+              "short": "f",
+              "description": "containerd-style filter string slice",
+              "type": "string"
+            },
+            {
+              "name": "verbose",
+              "short": "v",
+              "description": "Verbose output",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "format",
+              "description": "Format the output using the given Go template, e.g, '{{json .}}'",
+              "type": "string"
+            },
+            {
+              "name": "help",
+              "short": "h",
+              "description": "show help",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "debug",
+              "description": "enable debug output in logs",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "addr",
+              "description": "buildkitd address",
+              "type": "string"
+            },
+            {
+              "name": "log-format",
+              "description": "log formatter: json or text",
+              "type": "string"
+            },
+            {
+              "name": "tlsservername",
+              "description": "buildkitd server name for certificate validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscacert",
+              "description": "CA certificate for validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscert",
+              "description": "client certificate",
+              "type": "string"
+            },
+            {
+              "name": "tlskey",
+              "description": "client key",
+              "type": "string"
+            },
+            {
+              "name": "tlsdir",
+              "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+              "type": "string"
+            },
+            {
+              "name": "timeout",
+              "description": "timeout backend connection after value seconds",
+              "type": "int"
+            },
+            {
+              "name": "wait",
+              "description": "block RPCs until the connection becomes available",
+              "type": "bool",
+              "boolean": true
+            }
+          ],
+          "children": [
+            {
+              "name": "help",
+              "aliases": [
+                "h"
+              ],
+              "description": "Shows a list of commands or help for one command",
+              "usage": "[command]",
+              "runnable": true,
+              "flags": [
+                {
+                  "name": "filter",
+                  "short": "f",
+                  "description": "containerd-style filter string slice",
+                  "type": "string"
+                },
+                {
+                  "name": "verbose",
+                  "short": "v",
+                  "description": "Verbose output",
+                  "type": "bool",
+                  "boolean": true
+                },
+                {
+                  "name": "format",
+                  "description": "Format the output using the given Go template, e.g, '{{json .}}'",
+                  "type": "string"
+                },
+                {
+                  "name": "debug",
+                  "description": "enable debug output in logs",
+                  "type": "bool",
+                  "boolean": true
+                },
+                {
+                  "name": "addr",
+                  "description": "buildkitd address",
+                  "type": "string"
+                },
+                {
+                  "name": "log-format",
+                  "description": "log formatter: json or text",
+                  "type": "string"
+                },
+                {
+                  "name": "tlsservername",
+                  "description": "buildkitd server name for certificate validation",
+                  "type": "string"
+                },
+                {
+                  "name": "tlscacert",
+                  "description": "CA certificate for validation",
+                  "type": "string"
+                },
+                {
+                  "name": "tlscert",
+                  "description": "client certificate",
+                  "type": "string"
+                },
+                {
+                  "name": "tlskey",
+                  "description": "client key",
+                  "type": "string"
+                },
+                {
+                  "name": "tlsdir",
+                  "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+                  "type": "string"
+                },
+                {
+                  "name": "timeout",
+                  "description": "timeout backend connection after value seconds",
+                  "type": "int"
+                },
+                {
+                  "name": "wait",
+                  "description": "block RPCs until the connection becomes available",
+                  "type": "bool",
+                  "boolean": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "info",
+          "description": "display internal information",
+          "usage": "",
+          "runnable": true,
+          "flags": [
+            {
+              "name": "format",
+              "description": "Format the output using the given Go template, e.g, '{{json .}}'",
+              "type": "string"
+            },
+            {
+              "name": "help",
+              "short": "h",
+              "description": "show help",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "debug",
+              "description": "enable debug output in logs",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "addr",
+              "description": "buildkitd address",
+              "type": "string"
+            },
+            {
+              "name": "log-format",
+              "description": "log formatter: json or text",
+              "type": "string"
+            },
+            {
+              "name": "tlsservername",
+              "description": "buildkitd server name for certificate validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscacert",
+              "description": "CA certificate for validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscert",
+              "description": "client certificate",
+              "type": "string"
+            },
+            {
+              "name": "tlskey",
+              "description": "client key",
+              "type": "string"
+            },
+            {
+              "name": "tlsdir",
+              "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+              "type": "string"
+            },
+            {
+              "name": "timeout",
+              "description": "timeout backend connection after value seconds",
+              "type": "int"
+            },
+            {
+              "name": "wait",
+              "description": "block RPCs until the connection becomes available",
+              "type": "bool",
+              "boolean": true
+            }
+          ],
+          "children": [
+            {
+              "name": "help",
+              "aliases": [
+                "h"
+              ],
+              "description": "Shows a list of commands or help for one command",
+              "usage": "[command]",
+              "runnable": true,
+              "flags": [
+                {
+                  "name": "format",
+                  "description": "Format the output using the given Go template, e.g, '{{json .}}'",
+                  "type": "string"
+                },
+                {
+                  "name": "debug",
+                  "description": "enable debug output in logs",
+                  "type": "bool",
+                  "boolean": true
+                },
+                {
+                  "name": "addr",
+                  "description": "buildkitd address",
+                  "type": "string"
+                },
+                {
+                  "name": "log-format",
+                  "description": "log formatter: json or text",
+                  "type": "string"
+                },
+                {
+                  "name": "tlsservername",
+                  "description": "buildkitd server name for certificate validation",
+                  "type": "string"
+                },
+                {
+                  "name": "tlscacert",
+                  "description": "CA certificate for validation",
+                  "type": "string"
+                },
+                {
+                  "name": "tlscert",
+                  "description": "client certificate",
+                  "type": "string"
+                },
+                {
+                  "name": "tlskey",
+                  "description": "client key",
+                  "type": "string"
+                },
+                {
+                  "name": "tlsdir",
+                  "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+                  "type": "string"
+                },
+                {
+                  "name": "timeout",
+                  "description": "timeout backend connection after value seconds",
+                  "type": "int"
+                },
+                {
+                  "name": "wait",
+                  "description": "block RPCs until the connection becomes available",
+                  "type": "bool",
+                  "boolean": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "monitor",
+          "description": "display build events",
+          "usage": "",
+          "runnable": true,
+          "flags": [
+            {
+              "name": "completed",
+              "description": "show completed builds",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "ref",
+              "description": "show events for a specific build",
+              "type": "string"
+            },
+            {
+              "name": "help",
+              "short": "h",
+              "description": "show help",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "debug",
+              "description": "enable debug output in logs",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "addr",
+              "description": "buildkitd address",
+              "type": "string"
+            },
+            {
+              "name": "log-format",
+              "description": "log formatter: json or text",
+              "type": "string"
+            },
+            {
+              "name": "tlsservername",
+              "description": "buildkitd server name for certificate validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscacert",
+              "description": "CA certificate for validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscert",
+              "description": "client certificate",
+              "type": "string"
+            },
+            {
+              "name": "tlskey",
+              "description": "client key",
+              "type": "string"
+            },
+            {
+              "name": "tlsdir",
+              "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+              "type": "string"
+            },
+            {
+              "name": "timeout",
+              "description": "timeout backend connection after value seconds",
+              "type": "int"
+            },
+            {
+              "name": "wait",
+              "description": "block RPCs until the connection becomes available",
+              "type": "bool",
+              "boolean": true
+            }
+          ],
+          "children": [
+            {
+              "name": "help",
+              "aliases": [
+                "h"
+              ],
+              "description": "Shows a list of commands or help for one command",
+              "usage": "[command]",
+              "runnable": true,
+              "flags": [
+                {
+                  "name": "completed",
+                  "description": "show completed builds",
+                  "type": "bool",
+                  "boolean": true
+                },
+                {
+                  "name": "ref",
+                  "description": "show events for a specific build",
+                  "type": "string"
+                },
+                {
+                  "name": "debug",
+                  "description": "enable debug output in logs",
+                  "type": "bool",
+                  "boolean": true
+                },
+                {
+                  "name": "addr",
+                  "description": "buildkitd address",
+                  "type": "string"
+                },
+                {
+                  "name": "log-format",
+                  "description": "log formatter: json or text",
+                  "type": "string"
+                },
+                {
+                  "name": "tlsservername",
+                  "description": "buildkitd server name for certificate validation",
+                  "type": "string"
+                },
+                {
+                  "name": "tlscacert",
+                  "description": "CA certificate for validation",
+                  "type": "string"
+                },
+                {
+                  "name": "tlscert",
+                  "description": "client certificate",
+                  "type": "string"
+                },
+                {
+                  "name": "tlskey",
+                  "description": "client key",
+                  "type": "string"
+                },
+                {
+                  "name": "tlsdir",
+                  "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+                  "type": "string"
+                },
+                {
+                  "name": "timeout",
+                  "description": "timeout backend connection after value seconds",
+                  "type": "int"
+                },
+                {
+                  "name": "wait",
+                  "description": "block RPCs until the connection becomes available",
+                  "type": "bool",
+                  "boolean": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "min_args": 1,
+          "name": "logs",
+          "description": "display build logs",
+          "usage": "\u003cBUILD-REF\u003e",
+          "runnable": true,
+          "flags": [
+            {
+              "name": "progress",
+              "description": "progress output type",
+              "type": "string"
+            },
+            {
+              "name": "trace",
+              "description": "show opentelemetry trace",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "help",
+              "short": "h",
+              "description": "show help",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "debug",
+              "description": "enable debug output in logs",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "addr",
+              "description": "buildkitd address",
+              "type": "string"
+            },
+            {
+              "name": "log-format",
+              "description": "log formatter: json or text",
+              "type": "string"
+            },
+            {
+              "name": "tlsservername",
+              "description": "buildkitd server name for certificate validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscacert",
+              "description": "CA certificate for validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscert",
+              "description": "client certificate",
+              "type": "string"
+            },
+            {
+              "name": "tlskey",
+              "description": "client key",
+              "type": "string"
+            },
+            {
+              "name": "tlsdir",
+              "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+              "type": "string"
+            },
+            {
+              "name": "timeout",
+              "description": "timeout backend connection after value seconds",
+              "type": "int"
+            },
+            {
+              "name": "wait",
+              "description": "block RPCs until the connection becomes available",
+              "type": "bool",
+              "boolean": true
+            }
+          ],
+          "children": [
+            {
+              "name": "help",
+              "aliases": [
+                "h"
+              ],
+              "description": "Shows a list of commands or help for one command",
+              "usage": "[command]",
+              "runnable": true,
+              "flags": [
+                {
+                  "name": "progress",
+                  "description": "progress output type",
+                  "type": "string"
+                },
+                {
+                  "name": "trace",
+                  "description": "show opentelemetry trace",
+                  "type": "bool",
+                  "boolean": true
+                },
+                {
+                  "name": "debug",
+                  "description": "enable debug output in logs",
+                  "type": "bool",
+                  "boolean": true
+                },
+                {
+                  "name": "addr",
+                  "description": "buildkitd address",
+                  "type": "string"
+                },
+                {
+                  "name": "log-format",
+                  "description": "log formatter: json or text",
+                  "type": "string"
+                },
+                {
+                  "name": "tlsservername",
+                  "description": "buildkitd server name for certificate validation",
+                  "type": "string"
+                },
+                {
+                  "name": "tlscacert",
+                  "description": "CA certificate for validation",
+                  "type": "string"
+                },
+                {
+                  "name": "tlscert",
+                  "description": "client certificate",
+                  "type": "string"
+                },
+                {
+                  "name": "tlskey",
+                  "description": "client key",
+                  "type": "string"
+                },
+                {
+                  "name": "tlsdir",
+                  "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+                  "type": "string"
+                },
+                {
+                  "name": "timeout",
+                  "description": "timeout backend connection after value seconds",
+                  "type": "int"
+                },
+                {
+                  "name": "wait",
+                  "description": "block RPCs until the connection becomes available",
+                  "type": "bool",
+                  "boolean": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "min_args": 1,
+          "name": "ctl",
+          "description": "control build records",
+          "usage": "\u003cBUILD-REF\u003e",
+          "runnable": true,
+          "flags": [
+            {
+              "name": "pin",
+              "description": "Pin build so it will not be garbage collected",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "unpin",
+              "description": "Unpin build so it will be garbage collected",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "delete",
+              "description": "Delete build record",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "help",
+              "short": "h",
+              "description": "show help",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "debug",
+              "description": "enable debug output in logs",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "addr",
+              "description": "buildkitd address",
+              "type": "string"
+            },
+            {
+              "name": "log-format",
+              "description": "log formatter: json or text",
+              "type": "string"
+            },
+            {
+              "name": "tlsservername",
+              "description": "buildkitd server name for certificate validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscacert",
+              "description": "CA certificate for validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscert",
+              "description": "client certificate",
+              "type": "string"
+            },
+            {
+              "name": "tlskey",
+              "description": "client key",
+              "type": "string"
+            },
+            {
+              "name": "tlsdir",
+              "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+              "type": "string"
+            },
+            {
+              "name": "timeout",
+              "description": "timeout backend connection after value seconds",
+              "type": "int"
+            },
+            {
+              "name": "wait",
+              "description": "block RPCs until the connection becomes available",
+              "type": "bool",
+              "boolean": true
+            }
+          ],
+          "children": [
+            {
+              "name": "help",
+              "aliases": [
+                "h"
+              ],
+              "description": "Shows a list of commands or help for one command",
+              "usage": "[command]",
+              "runnable": true,
+              "flags": [
+                {
+                  "name": "pin",
+                  "description": "Pin build so it will not be garbage collected",
+                  "type": "bool",
+                  "boolean": true
+                },
+                {
+                  "name": "unpin",
+                  "description": "Unpin build so it will be garbage collected",
+                  "type": "bool",
+                  "boolean": true
+                },
+                {
+                  "name": "delete",
+                  "description": "Delete build record",
+                  "type": "bool",
+                  "boolean": true
+                },
+                {
+                  "name": "debug",
+                  "description": "enable debug output in logs",
+                  "type": "bool",
+                  "boolean": true
+                },
+                {
+                  "name": "addr",
+                  "description": "buildkitd address",
+                  "type": "string"
+                },
+                {
+                  "name": "log-format",
+                  "description": "log formatter: json or text",
+                  "type": "string"
+                },
+                {
+                  "name": "tlsservername",
+                  "description": "buildkitd server name for certificate validation",
+                  "type": "string"
+                },
+                {
+                  "name": "tlscacert",
+                  "description": "CA certificate for validation",
+                  "type": "string"
+                },
+                {
+                  "name": "tlscert",
+                  "description": "client certificate",
+                  "type": "string"
+                },
+                {
+                  "name": "tlskey",
+                  "description": "client key",
+                  "type": "string"
+                },
+                {
+                  "name": "tlsdir",
+                  "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+                  "type": "string"
+                },
+                {
+                  "name": "timeout",
+                  "description": "timeout backend connection after value seconds",
+                  "type": "int"
+                },
+                {
+                  "name": "wait",
+                  "description": "block RPCs until the connection becomes available",
+                  "type": "bool",
+                  "boolean": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "min_args": 1,
+          "name": "get",
+          "description": "retrieve a blob from contentstore",
+          "usage": "\u003cDIGEST\u003e",
+          "runnable": true,
+          "flags": [
+            {
+              "name": "help",
+              "short": "h",
+              "description": "show help",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "debug",
+              "description": "enable debug output in logs",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "addr",
+              "description": "buildkitd address",
+              "type": "string"
+            },
+            {
+              "name": "log-format",
+              "description": "log formatter: json or text",
+              "type": "string"
+            },
+            {
+              "name": "tlsservername",
+              "description": "buildkitd server name for certificate validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscacert",
+              "description": "CA certificate for validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscert",
+              "description": "client certificate",
+              "type": "string"
+            },
+            {
+              "name": "tlskey",
+              "description": "client key",
+              "type": "string"
+            },
+            {
+              "name": "tlsdir",
+              "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+              "type": "string"
+            },
+            {
+              "name": "timeout",
+              "description": "timeout backend connection after value seconds",
+              "type": "int"
+            },
+            {
+              "name": "wait",
+              "description": "block RPCs until the connection becomes available",
+              "type": "bool",
+              "boolean": true
+            }
+          ],
+          "children": [
+            {
+              "name": "help",
+              "aliases": [
+                "h"
+              ],
+              "description": "Shows a list of commands or help for one command",
+              "usage": "[command]",
+              "runnable": true,
+              "flags": [
+                {
+                  "name": "debug",
+                  "description": "enable debug output in logs",
+                  "type": "bool",
+                  "boolean": true
+                },
+                {
+                  "name": "addr",
+                  "description": "buildkitd address",
+                  "type": "string"
+                },
+                {
+                  "name": "log-format",
+                  "description": "log formatter: json or text",
+                  "type": "string"
+                },
+                {
+                  "name": "tlsservername",
+                  "description": "buildkitd server name for certificate validation",
+                  "type": "string"
+                },
+                {
+                  "name": "tlscacert",
+                  "description": "CA certificate for validation",
+                  "type": "string"
+                },
+                {
+                  "name": "tlscert",
+                  "description": "client certificate",
+                  "type": "string"
+                },
+                {
+                  "name": "tlskey",
+                  "description": "client key",
+                  "type": "string"
+                },
+                {
+                  "name": "tlsdir",
+                  "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+                  "type": "string"
+                },
+                {
+                  "name": "timeout",
+                  "description": "timeout backend connection after value seconds",
+                  "type": "int"
+                },
+                {
+                  "name": "wait",
+                  "description": "block RPCs until the connection becomes available",
+                  "type": "bool",
+                  "boolean": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "histories",
+          "description": "list build records",
+          "usage": "",
+          "runnable": true,
+          "flags": [
+            {
+              "name": "format",
+              "description": "Format the output using the given Go template, e.g, '{{json .}}'",
+              "type": "string"
+            },
+            {
+              "name": "help",
+              "short": "h",
+              "description": "show help",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "debug",
+              "description": "enable debug output in logs",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "addr",
+              "description": "buildkitd address",
+              "type": "string"
+            },
+            {
+              "name": "log-format",
+              "description": "log formatter: json or text",
+              "type": "string"
+            },
+            {
+              "name": "tlsservername",
+              "description": "buildkitd server name for certificate validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscacert",
+              "description": "CA certificate for validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscert",
+              "description": "client certificate",
+              "type": "string"
+            },
+            {
+              "name": "tlskey",
+              "description": "client key",
+              "type": "string"
+            },
+            {
+              "name": "tlsdir",
+              "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+              "type": "string"
+            },
+            {
+              "name": "timeout",
+              "description": "timeout backend connection after value seconds",
+              "type": "int"
+            },
+            {
+              "name": "wait",
+              "description": "block RPCs until the connection becomes available",
+              "type": "bool",
+              "boolean": true
+            }
+          ],
+          "children": [
+            {
+              "name": "help",
+              "aliases": [
+                "h"
+              ],
+              "description": "Shows a list of commands or help for one command",
+              "usage": "[command]",
+              "runnable": true,
+              "flags": [
+                {
+                  "name": "format",
+                  "description": "Format the output using the given Go template, e.g, '{{json .}}'",
+                  "type": "string"
+                },
+                {
+                  "name": "debug",
+                  "description": "enable debug output in logs",
+                  "type": "bool",
+                  "boolean": true
+                },
+                {
+                  "name": "addr",
+                  "description": "buildkitd address",
+                  "type": "string"
+                },
+                {
+                  "name": "log-format",
+                  "description": "log formatter: json or text",
+                  "type": "string"
+                },
+                {
+                  "name": "tlsservername",
+                  "description": "buildkitd server name for certificate validation",
+                  "type": "string"
+                },
+                {
+                  "name": "tlscacert",
+                  "description": "CA certificate for validation",
+                  "type": "string"
+                },
+                {
+                  "name": "tlscert",
+                  "description": "client certificate",
+                  "type": "string"
+                },
+                {
+                  "name": "tlskey",
+                  "description": "client key",
+                  "type": "string"
+                },
+                {
+                  "name": "tlsdir",
+                  "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+                  "type": "string"
+                },
+                {
+                  "name": "timeout",
+                  "description": "timeout backend connection after value seconds",
+                  "type": "int"
+                },
+                {
+                  "name": "wait",
+                  "description": "block RPCs until the connection becomes available",
+                  "type": "bool",
+                  "boolean": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "help",
+          "aliases": [
+            "h"
+          ],
+          "description": "Shows a list of commands or help for one command",
+          "usage": "[command]",
+          "runnable": true,
+          "flags": [
+            {
+              "name": "debug",
+              "description": "enable debug output in logs",
+              "type": "bool",
+              "boolean": true
+            },
+            {
+              "name": "addr",
+              "description": "buildkitd address",
+              "type": "string"
+            },
+            {
+              "name": "log-format",
+              "description": "log formatter: json or text",
+              "type": "string"
+            },
+            {
+              "name": "tlsservername",
+              "description": "buildkitd server name for certificate validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscacert",
+              "description": "CA certificate for validation",
+              "type": "string"
+            },
+            {
+              "name": "tlscert",
+              "description": "client certificate",
+              "type": "string"
+            },
+            {
+              "name": "tlskey",
+              "description": "client key",
+              "type": "string"
+            },
+            {
+              "name": "tlsdir",
+              "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+              "type": "string"
+            },
+            {
+              "name": "timeout",
+              "description": "timeout backend connection after value seconds",
+              "type": "int"
+            },
+            {
+              "name": "wait",
+              "description": "block RPCs until the connection becomes available",
+              "type": "bool",
+              "boolean": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "help",
+      "aliases": [
+        "h"
+      ],
+      "description": "Shows a list of commands or help for one command",
+      "usage": "[command]",
+      "runnable": true,
+      "flags": [
+        {
+          "name": "debug",
+          "description": "enable debug output in logs",
+          "type": "bool",
+          "boolean": true
+        },
+        {
+          "name": "addr",
+          "description": "buildkitd address",
+          "type": "string"
+        },
+        {
+          "name": "log-format",
+          "description": "log formatter: json or text",
+          "type": "string"
+        },
+        {
+          "name": "tlsservername",
+          "description": "buildkitd server name for certificate validation",
+          "type": "string"
+        },
+        {
+          "name": "tlscacert",
+          "description": "CA certificate for validation",
+          "type": "string"
+        },
+        {
+          "name": "tlscert",
+          "description": "client certificate",
+          "type": "string"
+        },
+        {
+          "name": "tlskey",
+          "description": "client key",
+          "type": "string"
+        },
+        {
+          "name": "tlsdir",
+          "description": "directory containing CA certificate, client certificate, and client key. Supported file names are (ca.pem, cert.pem, key.pem) or (ca.crt, tls.crt, tls.key)",
+          "type": "string"
+        },
+        {
+          "name": "timeout",
+          "description": "timeout backend connection after value seconds",
+          "type": "int"
+        },
+        {
+          "name": "wait",
+          "description": "block RPCs until the connection becomes available",
+          "type": "bool",
+          "boolean": true
+        }
+      ]
+    }
+  ]
+}

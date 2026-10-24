@@ -4,6 +4,9 @@ cd /work
 deploy=build/tmp/deploy/images/fractal-x86-64
 kernel="$deploy/bzImage-initramfs-fractal-x86-64.bin"
 test -f "$kernel" || { echo "Bundled kernel missing: $kernel"; ls -l "$deploy"; exit 1; }
+python3 /src/os/tools/verify-bundled-image.py --kernel "$kernel" \
+    --initramfs "$deploy/fractal-system-fractal-x86-64.cpio.gz" \
+    --expected-build "$(python3 /src/tools/build-identity.py)"
 mkdir -p artifacts
 cp /src/boot/kernel/security/kernel-security.json artifacts/kernel-security.json
 spdx="$deploy/fractal-system-fractal-x86-64.spdx.json"
@@ -30,6 +33,10 @@ python3 /src/boot/tools/sign-image.py --key /boot-work/build/keys/release.key \
     --kernel artifacts/system.efi --output artifacts/system.bin
 cp /boot-work/artifacts/rommon.efi /boot-work/artifacts/firmware.crt \
     /boot-work/artifacts/OVMF_CODE_4M.secboot.fd /boot-work/artifacts/OVMF_VARS-trusted.fd artifacts/
+cp /boot-work/build/keys/release.pub artifacts/release.pub
+cp /boot-work/artifacts/buildroot-packages.json /boot-work/artifacts/boot-sources.json artifacts/
+tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
+    -C build/tmp/deploy -cf - licenses | gzip -n > artifacts/system-licenses.tar.gz
 cp /src/os/sources.json artifacts/oe-sources.json
 cp /usr/share/OVMF/OVMF_VARS_4M.fd artifacts/OVMF_VARS-unenrolled.fd
 cp "$deploy"/fractal-system-fractal-x86-64.manifest artifacts/packages.manifest

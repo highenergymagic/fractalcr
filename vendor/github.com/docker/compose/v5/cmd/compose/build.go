@@ -1,0 +1,187 @@
+/*
+   Copyright 2020 Docker Compose CLI authors
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+
+package compose
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/compose-spec/compose-go/v2/cli"
+	"github.com/compose-spec/compose-go/v2/types"
+	"github.com/docker/cli/cli/command"
+	cliopts "github.com/docker/cli/opts"
+	"github.com/spf13/cobra"
+
+	"github.com/docker/compose/v5/cmd/display"
+	"github.com/docker/compose/v5/pkg/api"
+	"github.com/docker/compose/v5/pkg/compose"
+)
+
+type buildOptions struct {
+	*ProjectOptions
+	quiet      bool
+	pull       bool
+	push       bool
+	args       []string
+	noCache    bool
+	memory     cliopts.MemBytes
+	ssh        string
+	builder    string
+	deps       bool
+	print      bool
+	check      bool
+	sbom       string
+	provenance string
+}
+
+func (opts buildOptions) toAPIBuildOptions(services []string) (api.BuildOptions, error) {
+	var SSHKeys []types.SSHKey
+	if opts.ssh != "" {
+		id, path, found := strings.Cut(opts.ssh, "=")
+		if !found && id != "default" {
+			return api.BuildOptions{}, fmt.Errorf("invalid ssh key %q", opts.ssh)
+		}
+		SSHKeys = append(SSHKeys, types.SSHKey{
+			ID:   id,
+			Path: path,
+		})
+	}
+	builderName := opts.builder
+	if builderName == "" {
+		builderName = os.Getenv("BUILDX_BUILDER")
+	}
+
+	uiMode := display.Mode
+	switch {
+	case uiMode == display.ModeJSON:
+		uiMode = "rawjson"
+	case uiMode == display.ModeTTY && opts.Progress != display.ModeTTY:
+		// display.Mode resolves "auto" against stderr, the stream Compose's
+		// own progress renders to. Bake renders on stdout: hand the
+		// unresolved "auto" back so buildkit's progressui probes the actual
+		// output stream and degrades to plain when stdout is redirected
+		// (#14182). An explicit --progress=tty is passed through and fails
+		// loudly on a non-terminal, as `buildx bake` does.
+		uiMode = display.ModeAuto
+	}
+
+	return api.BuildOptions{
+		Pull:       opts.pull,
+		Push:       opts.push,
+		Progress:   uiMode,
+		Args:       types.NewMappingWithEquals(opts.args),
+		NoCache:    opts.noCache,
+		Quiet:      opts.quiet,
+		Services:   services,
+		Deps:       opts.deps,
+		Memory:     int64(opts.memory),
+		Print:      opts.print,
+		Check:      opts.check,
+		SSHs:       SSHKeys,
+		Builder:    builderName,
+		SBOM:       opts.sbom,
+		Provenance: opts.provenance,
+	}, nil
+}
+
+func buildCommand(p *ProjectOptions, dockerCli command.Cli, backendOptions *BackendOptions) *cobra.Command {
+	opts := buildOptions{
+		ProjectOptions: p,
+	}
+	cmd := &cobra.Command{
+		Use:   "build [OPTIONS] [SERVICE...]",
+		Short: "Build or rebuild services",
+		PreRunE: Adapt(func(ctx context.Context, args []string) error {
+			if opts.quiet {
+				display.Mode = display.ModeQuiet
+				devnull, err := os.Open(os.DevNull)
+				if err != nil {
+					return err
+				}
+				os.Stdout = devnull
+			}
+			return nil
+		}),
+		RunE: AdaptCmd(func(ctx context.Context, cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("ssh") && opts.ssh == "" {
+				opts.ssh = "default"
+			}
+			if cmd.Flags().Changed("progress") && opts.ssh == "" {
+				fmt.Fprint(os.Stderr, "--progress is a global compose flag, better use `docker compose --progress xx build ...\n")
+			}
+			return runBuild(ctx, dockerCli, backendOptions, opts, args)
+		}),
+		ValidArgsFunction: completeServiceNames(dockerCli, p),
+	}
+	flags := cmd.Flags()
+	flags.BoolVar(&opts.push, "push", false, "Push service images")
+	flags.BoolVarP(&opts.quiet, "quiet", "q", false, "Suppress the build output")
+	flags.BoolVar(&opts.pull, "pull", false, "Always attempt to pull a newer version of the image")
+	flags.StringArrayVar(&opts.args, "build-arg", []string{}, "Set build-time variables for services")
+	flags.StringVar(&opts.ssh, "ssh", "", "Set SSH authentications used when building service images. (use 'default' for using your default SSH Agent)")
+	flags.StringVar(&opts.builder, "builder", "", "Set builder to use")
+	flags.BoolVar(&opts.deps, "with-dependencies", false, "Also build dependencies (transitively)")
+	flags.StringVar(&opts.provenance, "provenance", "", `Add a provenance attestation`)
+	flags.StringVar(&opts.sbom, "sbom", "", `Add a SBOM attestation`)
+
+	flags.Bool("parallel", true, "Build images in parallel. DEPRECATED")
+	flags.MarkHidden("parallel") //nolint:errcheck
+	flags.Bool("compress", true, "Compress the build context using gzip. DEPRECATED")
+	flags.MarkHidden("compress") //nolint:errcheck
+	flags.Bool("force-rm", true, "Always remove intermediate containers. DEPRECATED")
+	flags.MarkHidden("force-rm") //nolint:errcheck
+	flags.BoolVar(&opts.noCache, "no-cache", false, "Do not use cache when building the image")
+	flags.Bool("no-rm", false, "Do not remove intermediate containers after a successful build. DEPRECATED")
+	flags.MarkHidden("no-rm") //nolint:errcheck
+	flags.VarP(&opts.memory, "memory", "m", "Set memory limit for the build container. Not supported by BuildKit.")
+	flags.StringVar(&p.Progress, "progress", "", fmt.Sprintf(`Set type of ui output (%s)`, strings.Join(printerModes, ", ")))
+	flags.MarkHidden("progress") //nolint:errcheck
+	flags.BoolVar(&opts.print, "print", false, "Print equivalent bake file")
+	flags.BoolVar(&opts.check, "check", false, "Check build configuration")
+
+	return cmd
+}
+
+func runBuild(ctx context.Context, dockerCli command.Cli, backendOptions *BackendOptions, opts buildOptions, services []string) error {
+	if opts.print {
+		backendOptions.Add(compose.WithEventProcessor(display.Quiet()))
+	}
+	backend, err := compose.NewComposeService(dockerCli, backendOptions.Options...)
+	if err != nil {
+		return err
+	}
+
+	opts.All = true // do not drop resources as build may involve some dependencies by additional_contexts
+	project, _, err := opts.ToProject(ctx, dockerCli, backend, nil, warnUnsupportedAttributes, cli.WithoutEnvironmentResolution)
+	if err != nil {
+		return err
+	}
+
+	if err := applyPlatforms(project, false); err != nil {
+		return err
+	}
+
+	apiBuildOptions, err := opts.toAPIBuildOptions(services)
+	if err != nil {
+		return err
+	}
+	apiBuildOptions.Attestations = true
+
+	return backend.Build(ctx, project, apiBuildOptions)
+}

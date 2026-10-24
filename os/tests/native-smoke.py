@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import re
 import shutil
 import subprocess
 import threading
@@ -18,6 +19,7 @@ parser.add_argument("--artifacts", type=Path,
 parser.add_argument("--no-report", action="store_true",
                     help="record this result without aggregating other scenarios")
 parser.add_argument("--accelerator", choices=("tcg", "whpx"), default="tcg")
+parser.add_argument("--expected-source-build", help="Require this source identity from the running image")
 options = parser.parse_args()
 art = options.artifacts.resolve()
 qemu = shutil.which("qemu-system-x86_64")
@@ -71,6 +73,10 @@ def send(data):
 
 text = ""
 stage = "boot"
+fresh = (art / 'launcher-manifest.json').exists()
+password = 'Native-cli-password-410!'
+configuration = iter(['conf t', 'hostname ctr-test', 'interface eth0', 'ip address dhcp', 'exit',
+                      'user freya priv 15 password 0 ' + password, 'aaa new-model', 'end', 'logout'])
 transcript = (art / f"qemu-os-{case}.log").open("w", encoding="utf-8")
 try:
     end = time.monotonic() + 360
@@ -97,10 +103,40 @@ try:
                 assert "Secure Boot: enabled" in text
             send(b"\n")
             stage = "login"; text = ""
+        elif stage == "login" and 'Enter initial configuration dialog? [yes/no]: ' in text:
+            assert fresh, 'unexpected setup dialog in a legacy fixture'
+            send(b'no\n')
+            stage = 'bootstrap'; text = ''
+        elif stage == 'bootstrap' and 'ctr# ' in text:
+            send(b'terminal length 0\n')
+            stage = 'configure'; text = ''
+        elif stage == 'configure' and re.search(r'ctr(?:-test)?(?:\(config[^)]*\))?# ', text):
+            assert not re.search(r'% (?:Invalid|Incomplete|Ambiguous|Error)', text), text
+            command = next(configuration, None)
+            assert command is not None, 'configuration workflow exhausted'
+            send((command + '\n').encode())
+            if command == 'logout':
+                stage = 'username'
+            text = ''
+        elif stage == 'username' and 'Username: ' in text:
+            send(b'freya\n')
+            stage = 'password'; text = ''
+        elif stage == 'password' and 'Password: ' in text:
+            send((password + '\n').encode())
+            stage = 'login'; text = ''
         elif stage == "login" and "ctr-test# " in text:
+            assert password not in text, 'password echoed during login'
             send(b"terminal length 0\n")
             stage = "terminal"; text = ""
         elif stage == "terminal" and "ctr-test# " in text:
+            send(b"show version\n")
+            stage = "version"; text = ""
+        elif stage == "version" and "ctr-test# " in text:
+            identity = re.search(r'Source build: ([a-f0-9]{64})', text)
+            if options.expected_source_build:
+                assert identity and identity[1] == options.expected_source_build, 'running image has a different source identity'
+            if identity:
+                result['source_build'] = identity[1]
             send(b"request platform diagnostics containers\n")
             stage = "test"; text = ""
         elif stage == "test" and "%FCR-3-DIAGNOSTIC_FAILED" in text:
@@ -114,7 +150,7 @@ try:
             stage = "evidence"; text = ""
         elif stage == "evidence" and "CONTAINER_PORT_PUBLISH_OK" in text:
             for marker in ("HOST_ROOT_READONLY_OK", "CONTAINER_SWAP_LIMIT_OK", "CONTAINER_ISOLATION_OK",
-                           "PERSISTENT_COUNTER=3", "CONTAINER_BRIDGE_OK",
+                           "PERSISTENT_COUNTER=" + ('1' if fresh else '3'), "CONTAINER_BRIDGE_OK",
                            "CONTAINER_PORT_PUBLISH_OK"):
                 assert marker in text, "Missing validation: " + marker
             result["passed"] = True

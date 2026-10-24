@@ -22,11 +22,20 @@ The required checks are:
    before and after rollback.
 7. Losing two managers refuses scheduling changes while an existing task still
    serves traffic. Restarting the managers restores quorum and scheduling.
-8. All nodes leave within bounded command deadlines.
+8. Managers are demoted while quorum exists, workers leave, and the final
+   single-manager swarm is dissolved. Each operation has a bounded deadline;
+   every engine must report inactive membership afterward.
 
 The harness uses [Docker's manager-quorum rules](https://docs.docker.com/engine/swarm/admin_guide/),
 [encrypted overlay support](https://docs.docker.com/engine/network/drivers/overlay/),
 and [service/job, secret and config semantics](https://docs.docker.com/reference/cli/docker/service/create/).
+Decommissioning follows [Docker's demote-before-leave procedure](https://docs.docker.com/reference/cli/docker/swarm/leave/).
+Service removal is asynchronous. Before removing overlay networks or leaving
+the swarm, the harness waits until every node reports that the removed
+services' task containers are gone, with a bounded deadline.
+An earlier stress run that force-removed a manager from a multi-manager cluster
+returned `context deadline exceeded`. Passing the normal decommissioning test
+does not qualify that forced-removal path; its failed evidence is retained.
 After abrupt host loss, the service summary can include last-reported Running
 states for orphaned tasks. Failover assertions therefore require current desired
 task placements on live nodes and successful traffic, rather than trusting only

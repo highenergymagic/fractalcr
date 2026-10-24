@@ -17,11 +17,14 @@ class BuildSyncTests(unittest.TestCase):
             root = Path(directory)
             for name in ('src/os/meta-fractal/recipes-kernel/linux/files',
                          'src/os/meta-fractal/recipes-core/fractal-init/files',
-                         'src/service', 'src/internal', 'src/cmd', 'src/vendor',
+                         'src/service', 'src/internal', 'src/cmd', 'src/vendor', 'src/pkg', 'src/tools',
                          'work/sources/openembedded-core', 'boot-work/build/keys'):
                 (root/name).mkdir(parents=True, exist_ok=True)
             for name in ('src/go.mod', 'src/go.sum', 'boot-work/build/keys/firmware.crt'):
                 (root/name).write_text('fixture\n')
+            (root/'src/VERSION').write_text('1.0.0-dev\n')
+            shutil.copy(Path(__file__).resolve().parents[1]/'version-metadata.py', root/'src/tools/version-metadata.py')
+            (root/'src/tools/build-identity.py').write_text('print("fixture-build-identity")\n')
             source = root/'src/os/meta-fractal/security.patch'
             source.write_bytes(b'old-content\n')
             os.utime(source, (0, 0))

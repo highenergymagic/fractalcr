@@ -1,0 +1,42 @@
+[
+  {
+    "target": "vendor/github.com/docker/compose/v5/pkg/remote/git.go",
+    "source": "compose-git.go.in",
+    "upstream_sha256": "6d858dae5165fc86b8c61c24cbad4996adb278bb811955c1ca9db13e064575dc"
+  },
+  {
+    "target": "vendor/github.com/docker/buildx/util/gitutil/gitutil.go",
+    "source": "buildx-git.go.in",
+    "upstream_sha256": "6589d2ac70480550af7d5e3c65ecb1239187843ae473c5c369da793521e8074d"
+  },
+  {
+    "target": "vendor/github.com/docker/compose/v5/pkg/compose/build_bake.go",
+    "source": "compose-bake.go.in",
+    "upstream_sha256": "cfb12ad3f217af2e35b1613f48216443c1bf8e3a74d502f3a4008dc5db9b7225"
+  },
+  {
+    "target": "vendor/github.com/docker/buildx/commands/bake.go",
+    "source": "buildx-bake.go.in",
+    "upstream_sha256": "278b8281a6473f12a5ca2f069d9e8754c9025d24d55aa8330fa016ff0fe3dd2e"
+  },
+  {
+    "target": "vendor/github.com/moby/buildkit/client/connhelper/dockercontainer/dockercontainer.go",
+    "source": "buildkit-container.go.in",
+    "upstream_sha256": "f1e35050acecce40e256ff2877e8a3656292fcaf7d351f94b99894afa25a614a"
+  },
+  {
+    "target": "vendor/github.com/docker/cli/cli/connhelper/connhelper.go",
+    "source": "docker-ssh.go.in",
+    "upstream_sha256": "8eda6d0554d57379c8645d4dffbc4a996a8fe2e3fd9bc440aa474ba14b56aa49"
+  },
+  {
+    "target": "vendor/github.com/pkg/browser/browser_linux.go",
+    "source": "browser-linux.go.in",
+    "upstream_sha256": "0df707d84105ede8a99632102a541f3c721f7b6a7c97af65699fe7e78f4d94b5"
+  },
+  {
+    "target": "vendor/github.com/moby/buildkit/client/connhelper/ssh/ssh.go",
+    "source": "buildkit-ssh.go.in",
+    "upstream_sha256": "b2122288cef6da9c9c1bf803825ead9f98e8d2f25372b86069f750f8b62188e1"
+  }
+]

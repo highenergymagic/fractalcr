@@ -1,0 +1,124 @@
+/*
+   Copyright 2020 Docker Compose CLI authors
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+
+package bridge
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/docker/cli/cli/command"
+	"github.com/moby/go-archive"
+	"github.com/moby/moby/api/types/image"
+	"github.com/moby/moby/client"
+)
+
+const (
+	TransformerLabel        = "com.docker.compose.bridge"
+	DefaultTransformerImage = "docker/compose-bridge-kubernetes"
+
+	templatesPath = "/templates"
+)
+
+type CreateTransformerOptions struct {
+	Dest string
+	From string
+}
+
+func CreateTransformer(ctx context.Context, dockerCli command.Cli, options CreateTransformerOptions) error {
+	if options.From == "" {
+		options.From = DefaultTransformerImage
+	}
+	out, err := filepath.Abs(options.Dest)
+	if err != nil {
+		return err
+	}
+
+	if _, err := os.Stat(out); err == nil {
+		return fmt.Errorf("output folder %s already exists", out)
+	}
+
+	tmpl := filepath.Join(out, "templates")
+	err = os.MkdirAll(tmpl, 0o744)
+	if err != nil && !os.IsExist(err) {
+		return fmt.Errorf("cannot create output folder: %w", err)
+	}
+
+	if err := command.ValidateOutputPath(out); err != nil {
+		return err
+	}
+
+	created, err := dockerCli.Client().ContainerCreate(ctx, client.ContainerCreateOptions{
+		Image: options.From,
+	})
+
+	defer func() {
+		_, _ = dockerCli.Client().ContainerRemove(context.Background(), created.ID, client.ContainerRemoveOptions{
+			Force: true,
+		})
+	}()
+
+	if err != nil {
+		return err
+	}
+	resp, err := dockerCli.Client().CopyFromContainer(ctx, created.ID, client.CopyFromContainerOptions{
+		SourcePath: templatesPath,
+	})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = resp.Content.Close()
+	}()
+
+	srcInfo := archive.CopyInfo{
+		Path:   templatesPath,
+		Exists: true,
+		IsDir:  resp.Stat.Mode.IsDir(),
+	}
+
+	preArchive := resp.Content
+	if srcInfo.RebaseName != "" {
+		_, srcBase := archive.SplitPathDirEntry(srcInfo.Path)
+		preArchive = archive.RebaseArchiveEntries(resp.Content, srcBase, srcInfo.RebaseName)
+	}
+
+	if err := archive.CopyTo(preArchive, srcInfo, out); err != nil {
+		return err
+	}
+
+	dockerfile := `FROM docker/compose-bridge-transformer
+LABEL com.docker.compose.bridge=transformation
+COPY templates /templates
+`
+	if err := os.WriteFile(filepath.Join(out, "Dockerfile"), []byte(dockerfile), 0o700); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(dockerCli.Out(), "Transformer created in %q\n", out)
+	return err
+}
+
+func ListTransformers(ctx context.Context, dockerCli command.Cli) ([]image.Summary, error) {
+	res, err := dockerCli.Client().ImageList(ctx, client.ImageListOptions{
+		Filters: make(client.Filters).Add("label", fmt.Sprintf("%s=%s", TransformerLabel, "transformation")),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return res.Items, nil
+}

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,6 +43,9 @@ func loadRunning() (config.Config, error) {
 	if os.IsNotExist(err) {
 		return config.Default(), nil
 	}
+	if err == nil {
+		migrateInterfaces(&c)
+	}
 	return c, err
 }
 
@@ -51,9 +53,12 @@ func supported(c config.Config) error {
 	if err := c.Validate(); err != nil {
 		return err
 	}
-	if c.Network != nil {
-		if _, err := net.InterfaceByName(c.Network.Interface); err != nil {
-			return fmt.Errorf("interface %s does not exist", c.Network.Interface)
+	for name := range c.AllInterfaces() {
+		if _, kind, _, _ := config.VirtualInterface(name); kind != "" {
+			continue
+		}
+		if _, err := interfaceByName(name); err != nil {
+			return fmt.Errorf("interface %s does not exist", name)
 		}
 	}
 	for n := range c.Datastores {
@@ -81,6 +86,7 @@ func supported(c config.Config) error {
 // ready and before networking or Docker start. The runtime snapshot stays put
 // until the old networking worker has removed its owned addresses.
 func Prepare() error {
+	if err := provisionCloud(); err != nil { return fmt.Errorf("initial provisioning: %w", err) }
 	c, err := loadRunning()
 	if err != nil {
 		return err
@@ -94,6 +100,11 @@ func Prepare() error {
 	files, err := c.Render()
 	if err != nil {
 		return err
+	}
+	for _, name := range []string{"kata-containers/factory.json", "containerd.toml"} {
+		if err := config.AtomicWrite(filepath.Join("/run", name), files[name], 0600); err != nil {
+			return err
+		}
 	}
 	if c.Isolation.Installed {
 		if err = config.AtomicWrite("/run/kata-containers/configuration.toml", files["kata-containers/configuration.toml"], 0600); err != nil {
@@ -175,17 +186,17 @@ func applyConfiguration(c config.Config) error {
 	if err != nil {
 		return err
 	}
-	deadline := time.Now().Add(75 * time.Second)
+	deadline := time.Now().Add(180 * time.Second)
 	for time.Now().Before(deadline) {
 		s, err := control(0, "")
 		if err != nil {
 			return err
 		}
-		if s["configuration"].Ready() && (s["networking"].Enabled == 0 || s["networking"].Ready()) && (s["container-engine"].Enabled == 0 || s["networking"].Enabled == 0 || s["container-engine"].Ready()) {
+		if s["configuration"].Ready() && (s["networking"].Enabled == 0 || s["networking"].Ready()) && (s["time-sync"].Enabled == 0 || s["networking"].Enabled == 0 || s["time-sync"].Ready()) && (s["container-engine"].Enabled == 0 || s["networking"].Enabled == 0 || s["container-engine"].Ready()) {
 			return nil
 		}
 		if s["configuration"].Starts > before["configuration"].Starts {
-			for _, name := range []string{"configuration", "networking", "container-engine"} {
+			for _, name := range []string{"configuration", "networking", "container-storage", "vm-factory", "container-engine", "time-sync"} {
 				if s[name].Enabled != 0 && s[name].Blocked == 0 && s[name].State == 5 {
 					return fmt.Errorf("%s failed; see show logging %s", name, name)
 				}
@@ -200,22 +211,50 @@ func Apply(old, next config.Config) error {
 	if err := supported(next); err != nil {
 		return err
 	}
+	if (old.Engine.StorageBackend == "blockfile") != (next.Engine.StorageBackend == "blockfile") {
+		if err := emptyEngineForStorageChange(); err != nil {
+			return err
+		}
+	}
+	// Bootstrap inventory can be edited before storage is initialized, but
+	// enabling authentication there would make mandatory accounting unavailable
+	// and lock the operator out of the commands needed to initialize it.
+	if next.AAA.Enabled && !old.AAA.Enabled {
+		if err := checkDatastore(); err != nil {
+			return fmt.Errorf("initialize datastore data0 before enabling local login: %w", err)
+		}
+	}
 	// Container definitions are declarative inventory. Explicit create/remove
 	// operations control their lifecycle; editing a definition never destroys one.
 	oldPlatform, nextPlatform := old.Clone(), next.Clone()
 	oldPlatform.Containers = nil
 	nextPlatform.Containers = nil
+	oldPlatform.Volumes = nil
+	nextPlatform.Volumes = nil
+	oldPlatform.Networks = nil
+	nextPlatform.Networks = nil
 	oldPlatform.Datastores = nil
 	nextPlatform.Datastores = nil
 	// AAA is consumed live by management and SSH; it must not restart workloads.
 	oldPlatform.AAA = config.AAA{}
 	nextPlatform.AAA = config.AAA{}
-	states, err := control(0, "")
-	if err != nil {
-		return err
-	}
-	if string(oldPlatform.JSON()) == string(nextPlatform.JSON()) && states["configuration"].Ready() {
-		return config.AtomicWrite(runningPath, next.JSON(), 0600)
+	oldPlatform.Hostname = ""
+	nextPlatform.Hostname = ""
+	if string(oldPlatform.JSON()) == string(nextPlatform.JSON()) {
+		if old.Hostname != next.Hostname {
+			if err := syscall.Sethostname([]byte(next.Hostname)); err != nil {
+				return err
+			}
+		}
+		if err := config.AtomicWrite(runningPath, next.JSON(), 0600); err != nil {
+			if old.Hostname != next.Hostname {
+				if rollback := syscall.Sethostname([]byte(old.Hostname)); rollback != nil {
+					return fmt.Errorf("saving running configuration failed: %v; hostname rollback failed: %v", err, rollback)
+				}
+			}
+			return err
+		}
+		return nil
 	}
 	if err := checkDatastore(); err != nil {
 		return err

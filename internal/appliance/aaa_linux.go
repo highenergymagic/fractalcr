@@ -17,11 +17,16 @@ type managementRequest struct {
 	User      string `json:"user,omitempty"`
 	Transport string `json:"transport,omitempty"`
 	Verifier  string `json:"verifier,omitempty"`
+	VTY       int    `json:"vty,omitempty"`
 }
 type loginSession struct {
+	pendingFile                      []string
+	setup                            *setupDialog
 	cli                              *cli.Session
 	user, stage, transport, verifier string
 	authenticated                    bool
+	bootstrap                        bool
+	vty                              int
 	userPrivilege                    int
 	last                             time.Time
 }
@@ -75,6 +80,9 @@ func audit(user, transport, event, command string) error {
 	if len(words) > 2 {
 		words = words[:2]
 	}
+	if len(words) > 1 && (words[0] == "command" || words[0] == "entrypoint" || words[0] == "description") {
+		words = words[:1]
+	}
 	err = json.NewEncoder(f).Encode(map[string]any{"time": time.Now().UTC().Format(time.RFC3339Nano), "user": user, "transport": transport, "event": event, "command": strings.Join(words, " ")})
 	if err != nil {
 		return err
@@ -101,32 +109,49 @@ func (s *loginSession) challenge() reply {
 	return reply{Prompt: prompt, Challenge: true, Secret: secret}
 }
 func (s *loginSession) logout() {
+	s.pendingFile = nil
+	s.setup = nil
 	s.authenticated = false
+	s.bootstrap = false
 	s.stage = "username"
 	s.user = ""
 	s.verifier = ""
 	s.cli.Mode = ""
 	s.cli.Object = ""
 	s.cli.Privilege = 0
+	s.cli.Username = ""
+	s.cli.Transactional = false
 	s.cli.Candidate = s.cli.Running.Clone()
 }
 
 // The request arrives on a root-only Unix socket. Only the SSH service can
 // supply a verified VTY principal; SSH env/exec/subsystem requests are refused.
+// Command execution is activity, not time spent idle at the prompt. Heartbeats
+// must never renew the idle deadline, including while a native client streams.
+func (s *loginSession) commandCompleted(command string, now time.Time) {
+	if s.authenticated && command != "__tick" {
+		s.last = now
+	}
+}
+
 func (s *loginSession) authenticate(r managementRequest, c config.Config, now time.Time) (reply, bool) {
 	s.cli.Running = c
+	if !s.cli.Transactional {
+		s.cli.Candidate = c.Clone()
+	}
 	if r.Command == "__connect" {
 		s.logout()
 		s.transport = "console"
 		s.last = now
 		if r.Transport == "ssh" {
 			s.transport = "ssh"
+			s.vty = r.VTY
 			u, ok := c.AAA.Users[r.User]
-			if !c.AAA.Enabled || !c.AAA.SSH || !ok || r.Verifier != u.Secret {
+			if !c.AAA.Enabled || r.VTY < 0 || r.VTY >= config.VTYCount || !c.AAA.Line(r.VTY).SSH || !ok || r.Verifier != u.AuthVerifier() {
 				return reply{Close: true, Error: "SSH authorization failed."}, true
 			}
 			s.user = r.User
-			s.verifier = u.Secret
+			s.verifier = u.AuthVerifier()
 			s.userPrivilege = u.Privilege
 			s.cli.Privilege = u.Privilege
 			s.authenticated = true
@@ -134,6 +159,7 @@ func (s *loginSession) authenticate(r managementRequest, c config.Config, now ti
 			s.user = "console"
 			s.cli.Privilege = 15
 			s.authenticated = true
+			s.bootstrap = true
 		}
 		if s.authenticated {
 			if c.AAA.Enabled {
@@ -149,7 +175,11 @@ func (s *loginSession) authenticate(r managementRequest, c config.Config, now ti
 	}
 	timeout := c.AAA.ConsoleTimeout
 	if s.transport == "ssh" {
-		timeout = c.AAA.VTYTimeout
+		timeout = c.AAA.Line(s.vty).Timeout
+		if !c.AAA.Line(s.vty).SSH {
+			s.logout()
+			return reply{Close: true}, true
+		}
 	}
 	if c.AAA.Enabled && s.authenticated && timeout > 0 && now.Sub(s.last) >= time.Duration(timeout)*time.Second {
 		_ = audit(s.user, s.transport, "idle-timeout", "")
@@ -159,9 +189,11 @@ func (s *loginSession) authenticate(r managementRequest, c config.Config, now ti
 		}
 		return s.challenge(), true
 	}
-	if s.authenticated && c.AAA.Enabled {
+	// Enabling local login does not eject the physical console that configured
+	// it. That bootstrap grant ends on logout/timeout; subsequent logins use AAA.
+	if s.authenticated && c.AAA.Enabled && !s.bootstrap {
 		u, ok := c.AAA.Users[s.user]
-		if !ok || u.Secret != s.verifier || u.Privilege != s.userPrivilege {
+		if !ok || u.AuthVerifier() != s.verifier || u.Privilege != s.userPrivilege {
 			_ = audit(s.user, s.transport, "authorization-revoked", "")
 			s.logout()
 			if s.transport == "ssh" {
@@ -232,7 +264,7 @@ func (s *loginSession) authenticate(r managementRequest, c config.Config, now ti
 			event = "enable"
 		} else {
 			s.cli.Privilege = u.Privilege
-			s.verifier = u.Secret
+			s.verifier = u.AuthVerifier()
 			s.userPrivilege = u.Privilege
 		}
 		if err := audit(s.user, s.transport, event, ""); err != nil {

@@ -69,6 +69,30 @@ func TestAAAAuthenticationAuthorizationTimeoutAndAccounting(t *testing.T) {
 	}
 }
 
+func TestCommandExecutionDoesNotConsumeIdleTimeout(t *testing.T) {
+	c := config.Default()
+	c.AAA.Enabled = true
+	c.AAA.ConsoleTimeout = 5
+	start := time.Now()
+	s := &loginSession{cli: &cli.Session{Running: c, Candidate: c.Clone()}, authenticated: true, bootstrap: true, transport: "console", last: start}
+	// A slow durable configuration write takes longer than the idle limit.
+	finished := start.Add(20 * time.Second)
+	s.commandCompleted("exec-timeout 0 5", finished)
+	r, _ := s.authenticate(managementRequest{Command: "__tick"}, c, finished.Add(time.Second))
+	if r.Challenge || !s.authenticated {
+		t.Fatal("command execution consumed the prompt's idle timeout", r)
+	}
+	s.commandCompleted("__tick", finished.Add(4*time.Second))
+	if !s.last.Equal(finished) {
+		t.Fatal("heartbeat renewed the idle deadline")
+	}
+	s.authenticated = false
+	s.commandCompleted("logout", finished.Add(30*time.Second))
+	if !s.last.Equal(finished) {
+		t.Fatal("closed session renewed the idle deadline")
+	}
+}
+
 func TestVTYPrincipalRequiresAAAAndRevocation(t *testing.T) {
 	oldCheck, oldAudit := checkDatastore, auditPath
 	checkDatastore = func() error { return nil }
@@ -100,5 +124,41 @@ func TestBootstrapConsoleDoesNotExpireIntoAnUnconfiguredLogin(t *testing.T) {
 	r, _ := s.authenticate(managementRequest{Command: "__tick"}, c, now.Add(24*time.Hour))
 	if r.Challenge || !s.authenticated || s.cli.Privilege != 15 {
 		t.Fatal("bootstrap console locked without configured AAA", r)
+	}
+}
+
+func TestBootstrapGrantEndsAtLogoutAfterEnablingAAA(t *testing.T) {
+	oldCheck, oldAudit := checkDatastore, auditPath
+	checkDatastore = func() error { return nil }
+	auditPath = filepath.Join(t.TempDir(), "audit.jsonl")
+	defer func() { checkDatastore = oldCheck; auditPath = oldAudit }()
+	c := config.Default()
+	s := &loginSession{cli: &cli.Session{Running: c, Candidate: c.Clone(), EnforcePrivilege: true}}
+	now := time.Now()
+	s.authenticate(managementRequest{Command: "__connect"}, c, now)
+	hash, _ := config.HashSecret("synthetic-console-password")
+	c.AAA.Users = map[string]config.User{"admin": {Privilege: 15, Secret: hash}}
+	c.AAA.Enabled = true
+	r, _ := s.authenticate(managementRequest{Command: "__tick"}, c, now)
+	if r.Challenge || !s.authenticated || !s.bootstrap {
+		t.Fatal("enabling login interrupted configuration")
+	}
+	s.logout()
+	if s.bootstrap || s.authenticated || s.cli.Privilege != 0 {
+		t.Fatal("logout retained bootstrap privilege")
+	}
+	r, _ = s.authenticate(managementRequest{Command: "__connect"}, c, now)
+	if !r.Challenge || s.authenticated {
+		t.Fatal("new session bypassed local login")
+	}
+	s.authenticate(managementRequest{Command: "admin"}, c, now)
+	r, _ = s.authenticate(managementRequest{Command: "synthetic-console-password"}, c, now)
+	if r.Challenge || !s.authenticated || s.bootstrap {
+		t.Fatal("local login failed")
+	}
+	delete(c.AAA.Users, "admin")
+	r, _ = s.authenticate(managementRequest{Command: "__tick"}, c, now)
+	if !r.Challenge || s.authenticated {
+		t.Fatal("authenticated account revocation bypassed")
 	}
 }

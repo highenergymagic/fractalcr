@@ -40,9 +40,9 @@ func TestIOSAbbreviationsAndErrors(t *testing.T) {
 
 func TestNativeArgumentsAreNotKeywordsOrShellText(t *testing.T) {
 	s := session(t)
-	input := `req container-engine run --env 'Mixed=Keep Case' --label 'literal=$(id);*' Image:TAG /bin/echo ''`
+	input := `req container-engine run env 'Mixed=Keep Case' label 'literal=$(id);*' arguments Image:TAG /bin/echo ''`
 	got, local, err := s.Resolve(input)
-	want := []string{"request", "container-engine", "run", "--env", "Mixed=Keep Case", "--label", "literal=$(id);*", "Image:TAG", "/bin/echo", ""}
+	want := []string{"request", "container-engine", "run", "env", "Mixed=Keep Case", "label", "literal=$(id);*", "arguments", "Image:TAG", "/bin/echo", ""}
 	if err != nil || local || !reflect.DeepEqual(got, want) {
 		t.Fatalf("%q %v %v", got, local, err)
 	}
@@ -122,7 +122,7 @@ func TestIOSModeAndValueSemantics(t *testing.T) {
 }
 
 func FuzzResolveAndHelp(f *testing.F) {
-	for _, s := range []string{"sh ver", "show ?", "do sh", "command \"\"", "\x1b", strings.Repeat("a", 2048)} {
+	for _, s := range []string{"sh ver", "show ?", "do sh", "command \"\"", "request compose --file x up", "request container-engine service create --replicas 3 image", "request buildkit debug workers", "\x1b", strings.Repeat("a", 2048)} {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, line string) {

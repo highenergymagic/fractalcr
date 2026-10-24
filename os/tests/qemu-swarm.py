@@ -20,10 +20,12 @@ from qemu_process import stop_qemu
 p = argparse.ArgumentParser()
 p.add_argument('--artifacts', type=Path, required=True)
 p.add_argument('--output', type=Path, required=True)
+p.add_argument('--memory-mib', type=int, default=4096)
 a = p.parse_args()
+if not 2048 <= a.memory_mib <= 16384: p.error('memory-mib must be between 2048 and 16384')
 art, out = a.artifacts.resolve(), a.output.resolve()
 out.mkdir(parents=True, exist_ok=False)
-result = dict(case='swarm-multinode', passed=False, checks=[], nodes=3, accel='kvm',
+result = dict(case='swarm-multinode', passed=False, checks=[], nodes=3, accel='kvm', memory_mib=a.memory_mib,
               system_sha256=hashlib.sha256((art/'system.bin').read_bytes()).hexdigest(),
               rommon_sha256=hashlib.sha256((art/'rommon.efi').read_bytes()).hexdigest())
 with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as port_socket:
@@ -46,7 +48,7 @@ class Node:
         shutil.copyfile(art/'OVMF_VARS-trusted.fd',self.variables)
     def start(self):
         self.child=pexpect.spawn('qemu-system-x86_64',[
-            '-machine','q35,smm=on','-accel','kvm','-cpu','host,vmx=off,svm=off','-m','4096','-smp','1',
+            '-machine','q35,smm=on','-accel','kvm','-cpu','host,vmx=off,svm=off','-m',str(a.memory_mib),'-smp','1',
             '-global','driver=cfi.pflash01,property=secure,value=on',
             '-drive',f'if=pflash,format=raw,unit=0,readonly=on,file={art/"OVMF_CODE_4M.secboot.fd"}',
             '-drive',f'if=pflash,format=raw,unit=1,file={self.variables}',
@@ -90,29 +92,29 @@ try:
         n.docker('import /usr/share/fractal/probe.tar fcr/probe:latest')
     check('three signed appliance VMs boot on an isolated loopback multicast LAN')
     manager=nodes[0]
-    manager.docker(f'swarm init --advertise-addr {manager.ip}')
-    token=re.search(r'SWMTKN-[A-Za-z0-9-]+',manager.docker('swarm join-token -q manager')).group(0)
-    for n in nodes[1:]:n.docker(f'swarm join --token {token} --advertise-addr {n.ip} {manager.ip}:2377')
+    manager.docker(f'swarm init advertise-addr {manager.ip}')
+    token=re.search(r'SWMTKN-[A-Za-z0-9-]+',manager.docker('swarm join-token quiet enable manager')).group(0)
+    for n in nodes[1:]:n.docker(f'swarm join token {token} advertise-addr {n.ip} {manager.ip}:2377')
     def healthy():
-        output=manager.docker("node ls --format '{{.Hostname}} {{.Status}} {{.ManagerStatus}}'",allow_error=True)
+        output=manager.docker("node ls format '{{.Hostname}} {{.Status}} {{.ManagerStatus}}'",allow_error=True)
         return all(re.search(n.name+r'\s+Ready\s+(Leader|Reachable)',output) for n in nodes)
     wait_for(healthy,'manager quorum did not form')
     check('three-manager Raft quorum formed with mutually authenticated node membership')
     manager.docker('secret create qualification-secret /etc/fractal/release')
     manager.docker('config create qualification-config /etc/fractal/release')
-    manager.docker('service create --detach --no-resolve-image --name material-witness --mode global-job --secret source=qualification-secret,target=qualification-secret,mode=0400 --config source=qualification-config,target=/qualification-config,mode=0444 fcr/probe:latest /probe swarm-material')
+    manager.docker('service create detach enable no-resolve-image enable name material-witness mode global-job secret source=qualification-secret,target=qualification-secret,mode=0400 config source=qualification-config,target=/qualification-config,mode=0444 arguments fcr/probe:latest /probe swarm-material')
     def material_delivered():
-        tasks=manager.docker("service ps --format '{{.Node}} {{.CurrentState}}' material-witness")
+        tasks=manager.docker("service ps format '{{.Node}} {{.CurrentState}}' material-witness")
         return all(re.search(n.name+r'\s+Complete',tasks) for n in nodes)
     wait_for(material_delivered,'secret/config global jobs did not complete on every node')
-    assert manager.docker('service logs --raw material-witness').count('SWARM_SECRET_CONFIG_OK')==3
+    assert manager.docker('service logs raw enable material-witness').count('SWARM_SECRET_CONFIG_OK')==3
     manager.docker('service rm material-witness')
     manager.docker('secret rm qualification-secret');manager.docker('config rm qualification-config')
     check('global jobs receive Swarm secrets and configs on every node with the requested read-only permissions')
-    manager.docker('network create --driver overlay --attachable --opt encrypted qualified')
-    manager.docker('service create --detach --no-resolve-image --name witness --network qualified --constraint node.hostname==swarm2 --publish published=18080,target=8080 fcr/probe:latest /probe serve')
-    wait_for(lambda:'Running' in manager.docker("service ps --filter desired-state=running --format '{{.CurrentState}}' witness"),'service did not start')
-    assert 'CONTAINER_PORT_PUBLISH_OK' in nodes[0].docker('run --rm --network qualified fcr/probe:latest /probe request witness 8080')
+    manager.docker('network create driver overlay attachable enable opt encrypted qualified')
+    manager.docker('service create detach enable no-resolve-image enable name witness network qualified constraint node.hostname==swarm2 publish published=18080,target=8080 arguments fcr/probe:latest /probe serve')
+    wait_for(lambda:'Running' in manager.docker("service ps filter desired-state=running format '{{.CurrentState}}' witness"),'service did not start')
+    assert 'CONTAINER_PORT_PUBLISH_OK' in nodes[0].docker('run rm enable network qualified arguments fcr/probe:latest /probe request witness 8080')
     check('cross-node service discovery and HTTP succeeded over the encrypted overlay')
     # Record encrypted traffic before exercising the intentionally plaintext ingress port.
     time.sleep(1)
@@ -133,71 +135,86 @@ try:
     result['esp_packets']=esp
     check('packet captures contain IPsec ESP and no plaintext application response during the overlay test')
     for n in nodes:
-        assert 'CONTAINER_PORT_PUBLISH_OK' in n.docker(f'run --rm --network host fcr/probe:latest /probe request {n.ip} 18080')
+        assert 'CONTAINER_PORT_PUBLISH_OK' in n.docker(f'run rm enable network host arguments fcr/probe:latest /probe request {n.ip} 18080')
     check('routing mesh serves the published port through every node, including nodes without a task')
-    manager.docker('service update --detach --constraint-rm node.hostname==swarm2 --replicas 3 witness')
-    wait_for(lambda:'3/3' in manager.docker("service ls --format '{{.Name}} {{.Replicas}}'"),'replicas failed to scale')
-    manager.docker('node update --availability drain swarm2')
+    manager.docker('service update detach enable constraint-rm node.hostname==swarm2 replicas 3 witness')
+    wait_for(lambda:'3/3' in manager.docker("service ls format '{{.Name}} {{.Replicas}}'"),'replicas failed to scale')
+    manager.docker('node update availability drain swarm2')
     def drained():
-        tasks=manager.docker("service ps --filter desired-state=running --format '{{.Node}} {{.CurrentState}}' witness")
+        tasks=manager.docker("service ps filter desired-state=running format '{{.Node}} {{.CurrentState}}' witness")
         return len(re.findall(r'swarm[13]\s+Running',tasks))==3 and not re.search(r'swarm2\s+Running',tasks)
     wait_for(drained,'drain failed to move all three running tasks off swarm2')
-    manager.docker('node update --availability active swarm2')
+    manager.docker('node update availability active swarm2')
     check('scaling and drain reschedule running tasks onto available nodes')
-    listing=manager.docker("node ls --format '{{.Hostname}} {{.ManagerStatus}}'")
+    listing=manager.docker("node ls format '{{.Hostname}} {{.ManagerStatus}}'")
     leader=next(n for n in nodes if re.search(n.name+r'\s+Leader',listing))
     leader.stop();manager=next(n for n in nodes if n is not leader)
-    wait_for(lambda:'Leader' in manager.docker("node ls --format '{{.ManagerStatus}}'",allow_error=True),'no leader elected')
-    manager.docker('service scale --detach witness=2')
+    wait_for(lambda:'Leader' in manager.docker("node ls format '{{.ManagerStatus}}'",allow_error=True),'no leader elected')
+    manager.docker('service scale detach enable witness=2')
     def failover_tasks():
-        tasks=manager.docker("service ps --filter desired-state=running --format '{{.Node}} {{.CurrentState}}' witness")
+        tasks=manager.docker("service ps filter desired-state=running format '{{.Node}} {{.CurrentState}}' witness")
         return sum(len(re.findall(n.name+r'\s+Running',tasks)) for n in nodes if n is not leader)==2 and not re.search(leader.name+r'\s+Running',tasks)
     # service ls includes last-reported Running states of orphaned tasks on a
     # powered-off host. Assert current desired placements and live traffic.
     wait_for(failover_tasks,'leader loss blocked replacement scheduling')
     for n in nodes:
         if n is not leader:
-            assert 'CONTAINER_PORT_PUBLISH_OK' in n.docker(f'run --rm --network host fcr/probe:latest /probe request {n.ip} 18080')
+            assert 'CONTAINER_PORT_PUBLISH_OK' in n.docker(f'run rm enable network host arguments fcr/probe:latest /probe request {n.ip} 18080')
     check('abrupt leader VM loss preserves quorum and allows a new scheduling change')
     leader.start();leader.ready()
     wait_for(healthy,'restarted manager did not rejoin')
     check('manager restarts from its persistent datastore and rejoins the quorum')
     # The service version is changed and then rolled back through Raft.
-    manager.docker('service update --detach --env-add QUALIFIED=1 witness')
+    manager.docker('service update detach enable env-add QUALIFIED=1 witness')
     wait_for(lambda:re.search(r'"State":\s*"completed"',manager.docker('service inspect witness')),'update did not converge')
-    assert 'QUALIFIED=1' in manager.docker("service inspect --format '{{json .Spec.TaskTemplate.ContainerSpec.Env}}' witness")
-    manager.docker('service rollback --detach witness')
+    assert 'QUALIFIED=1' in manager.docker("service inspect format '{{json .Spec.TaskTemplate.ContainerSpec.Env}}' witness")
+    manager.docker('service rollback detach enable witness')
     wait_for(lambda:re.search(r'"State":\s*"rollback_completed"',manager.docker('service inspect witness')),'rollback did not converge')
-    assert 'QUALIFIED=1' not in manager.docker("service inspect --format '{{json .Spec.TaskTemplate.ContainerSpec.Env}}' witness")
+    assert 'QUALIFIED=1' not in manager.docker("service inspect format '{{json .Spec.TaskTemplate.ContainerSpec.Env}}' witness")
     check('service update and rollback converge across the cluster')
-    manager.docker(f'service create --detach --no-resolve-image --name quorum-witness --constraint node.hostname=={manager.name} --publish published=18081,target=8080 fcr/probe:latest /probe serve')
-    wait_for(lambda:'Running' in manager.docker("service ps --filter desired-state=running --format '{{.CurrentState}}' quorum-witness"),'quorum witness did not start')
+    manager.docker(f'service create detach enable no-resolve-image enable name quorum-witness constraint node.hostname=={manager.name} publish published=18081,target=8080 arguments fcr/probe:latest /probe serve')
+    wait_for(lambda:'Running' in manager.docker("service ps filter desired-state=running format '{{.CurrentState}}' quorum-witness"),'quorum witness did not start')
     peers=[n for n in nodes if n is not manager]
     for n in peers:n.stop()
     time.sleep(8)
-    denied=manager.docker('service scale --detach quorum-witness=2',timeout=120,allow_error=True)
+    denied=manager.docker('service scale detach enable quorum-witness=2',timeout=120,allow_error=True)
     assert re.search(r'leader|quorum|deadline|context|unavailable',denied,re.I),denied
-    assert 'CONTAINER_PORT_PUBLISH_OK' in manager.docker(f'run --rm --network host fcr/probe:latest /probe request {manager.ip} 18081')
+    assert 'CONTAINER_PORT_PUBLISH_OK' in manager.docker(f'run rm enable network host arguments fcr/probe:latest /probe request {manager.ip} 18081')
     check('loss of manager quorum refuses scheduling changes while an existing task continues serving traffic')
     for n in peers:n.start()
     for n in peers:n.ready()
     wait_for(healthy,'quorum did not recover after two managers restarted')
-    manager.docker('service scale --detach quorum-witness=2')
-    wait_for(lambda:'2/2' in manager.docker("service ls --filter name=quorum-witness --format '{{.Replicas}}'"),'restored quorum cannot schedule')
+    manager.docker('service scale detach enable quorum-witness=2')
+    wait_for(lambda:'2/2' in manager.docker("service ls filter name=quorum-witness format '{{.Replicas}}'"),'restored quorum cannot schedule')
     manager.docker('service rm quorum-witness')
     check('returning managers restore quorum and scheduling without forced cluster reconstruction')
-    manager.docker('service rm witness');time.sleep(5)
+    manager.docker('service rm witness')
+    def tasks_removed():
+        return all(not re.search(r'^[0-9a-f]{12,64}$',n.docker("ps all enable filter label=com.docker.swarm.service.name format '{{.ID}}'").replace('\r',''),re.M) for n in nodes)
+    wait_for(tasks_removed,'removed services still have task containers')
     manager.docker('network rm qualified')
-    # Keep each forced leave bounded, with peers still running during its request.
-    for n in nodes:n.docker('swarm leave --force',timeout=120)
-    check('all three engines leave the cluster without exceeding their shutdown deadline')
+    # Reconfigure Raft membership before removing managers. Force-leaving each
+    # member in turn leaves a stale manager set and can destroy quorum.
+    # Docker documents demote/leave for normal removal; force is used only to
+    # dissolve the final single-manager swarm.
+    for n in nodes:
+        if n is manager: continue
+        manager.docker('node demote '+n.name)
+        wait_for(lambda:re.search(r'^false$',n.docker("info format '{{.Swarm.ControlAvailable}}'").replace('\r',''),re.M),'manager demotion did not converge')
+        n.docker('swarm leave',timeout=120)
+        wait_for(lambda:re.search(r'^down$',manager.docker("node inspect format '{{.Status.State}}' "+n.name).replace('\r',''),re.M),'departed worker did not become down')
+        manager.docker('node rm '+n.name)
+    manager.docker('swarm leave force enable',timeout=120)
+    for n in nodes:
+        assert re.search(r'^inactive$',n.docker("info format '{{.Swarm.LocalNodeState}}'").replace('\r',''),re.M)
+    check('manager demotion, worker leave, and final single-manager removal complete within bounded deadlines; all engines become inactive')
     result['passed']=True
 except Exception as error:
     result['error']=str(error)
     for n in nodes:
         if n.child is not None and n.child.isalive():
             try:
-                for text in ['service ps --no-trunc witness','node ls']:
+                for text in ['service ps no-trunc enable witness','node ls']:
                     n.docker(text,timeout=20,allow_error=True)
             except Exception:pass
     raise

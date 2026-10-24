@@ -13,19 +13,19 @@ import json
 from pathlib import Path
 import re
 import tarfile
+from archive_policy import check_private_keys
 
 ROOT = Path(__file__).resolve().parents[1]
-INPUTS = ('boot', 'os', 'service', 'tools', 'internal', 'cmd', 'vendor',
-          'go.mod', 'go.sum', '.dockerignore', 'README.md', 'LICENSE')
+INPUTS = ('boot', 'os', 'service', 'tools', 'internal', 'cmd', 'pkg', 'vendor',
+          'go.mod', 'go.sum', 'VERSION', '.dockerignore', 'README.md', 'LICENSE')
 BINARY = {'.png', '.jpg', '.efi', '.bin'}
 
 
-def normalized(path):
+def normalized(path, archive_name=None):
     data = path.read_bytes()
     if path.suffix not in BINARY and b'\0' not in data[:8000]:
         data = data.replace(b'\r\n', b'\n')
-    if re.search(rb'-----BEGIN (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----', data):
-        raise ValueError('private key in build snapshot: ' + str(path))
+    check_private_keys(archive_name or path.name, data)
     return data
 
 
@@ -41,7 +41,7 @@ def files(root):
             if path.is_file():
                 if path.suffix == '.key' or path.name.endswith('.encrypted.pem'):
                     raise ValueError('private key filename in build snapshot: ' + str(relative))
-                yield relative.as_posix(), normalized(path)
+                yield relative.as_posix(), normalized(path, relative.as_posix())
 
 
 def create(root, output, public=None):
@@ -54,7 +54,7 @@ def create(root, output, public=None):
             path = public / name
             if path.is_symlink() or not path.is_file():
                 raise ValueError('public trust must contain regular files')
-            entries.append(('release-trust/' + name, normalized(path)))
+            entries.append(('release-trust/' + name, normalized(path, 'release-trust/' + name)))
     manifest = dict(schema=1, kind='development-workspace',
                     files={name: hashlib.sha256(data).hexdigest() for name, data in entries})
     entries.append(('workspace-manifest.json', (json.dumps(manifest, indent=2)+'\n').encode()))

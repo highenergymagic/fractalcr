@@ -13,6 +13,8 @@
 #include <unistd.h>
 
 static int healthy = 1;
+static volatile sig_atomic_t stop_requested;
+static void request_stop(int signal_number) { (void)signal_number; stop_requested=1; }
 static int probe(void) { return healthy; }
 static void tick(struct service *s) { service_tick(s); service_reap_orphans(s); usleep(1000); }
 static void until(struct service *s, enum service_state state, unsigned ms)
@@ -28,6 +30,28 @@ int main(int argc, char **argv)
     if (argc == 3 && !strcmp(argv[1], "--worker")) {
         puts("worker diagnostic"); fflush(stdout);
         if (!strcmp(argv[2], "exit")) return 7;
+        if (!strcmp(argv[2], "ordered")) {
+            int channel[2]; assert(!pipe(channel));
+            pid_t child=fork(); assert(child>=0);
+            if (!child) {
+                close(channel[1]); char byte;
+                if (read(channel[0],&byte,1)!=1) _exit(9);
+                _exit(byte=='S'?0:8);
+            }
+            close(channel[0]); signal(SIGPIPE,SIG_IGN);
+            sigset_t blocked, previous_mask;
+            sigemptyset(&blocked); sigaddset(&blocked,SIGTERM);
+            assert(!sigprocmask(SIG_BLOCK,&blocked,&previous_mask));
+            signal(SIGTERM,request_stop);
+            service_notify();
+            while (!stop_requested) sigsuspend(&previous_mask);
+            assert(!sigprocmask(SIG_SETMASK,&previous_mask,NULL));
+            assert(write(channel[1],"S",1)==1); close(channel[1]);
+            int status; assert(waitpid(child,&status,0)==child);
+            assert(WIFEXITED(status) && WEXITSTATUS(status)==0);
+            puts("ORDERED_CHILD_CLEANUP_OK"); fflush(stdout);
+            return 0;
+        }
         if (!strcmp(argv[2], "group")) {
             if (!fork()) { signal(SIGTERM, SIG_IGN); for (;;) pause(); }
         }
@@ -94,6 +118,14 @@ int main(int argc, char **argv)
     assert(helper_done && WIFEXITED(helper_status) && WEXITSTATUS(helper_status) == 23);
     assert(s.state == SV_STOPPED);
     puts("PASS bounded log rotation and requested restart");
+    args[2]="ordered"; s.notify=1; s.probe=NULL; s.terminate_leader=1; s.stop_ms=1000;
+    service_start(&s); until(&s,SV_RUNNING,2000);
+    service_stop(&s); until(&s,SV_STOPPED,2000);
+    FILE *log=fopen(path,"r"); assert(log);
+    char line[4096]; int ordered=0;
+    while (fgets(line,sizeof(line),log)) if (strstr(line,"ORDERED_CHILD_CLEANUP_OK")) ordered=1;
+    fclose(log); assert(ordered);
+    puts("PASS leader-first termination lets daemons coordinate child shutdown before group cleanup");
     unlink(path); unlink(previous); rmdir(temp);
     return 0;
 }

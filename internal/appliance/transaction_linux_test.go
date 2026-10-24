@@ -3,6 +3,7 @@ package appliance
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fractalcr/internal/config"
 	"net"
 	"os"
@@ -77,10 +78,10 @@ func TestTransactionRollbackAndRecovery(t *testing.T) {
 				}
 			}
 			var response bytes.Buffer
-			binary.Write(&response, binary.LittleEndian, uint32(1))
+			binary.Write(&response, binary.LittleEndian, uint32(supervisorProtocol))
 			binary.Write(&response, binary.LittleEndian, uint32(3))
 			binary.Write(&response, binary.LittleEndian, int32(0))
-			for i := 0; i < 16; i++ {
+			for i := 0; i < supervisorSlots; i++ {
 				var s Status
 				if i == 0 {
 					copy(s.Name[:], "configuration")
@@ -109,6 +110,7 @@ func TestTransactionRollbackAndRecovery(t *testing.T) {
 	old.Hostname = "before"
 	next := old.Clone()
 	next.Hostname = "after"
+	next.Isolation.MemoryMiB = 384
 	if err = Apply(old, next); err != nil {
 		t.Fatal("could not recover latched configuration failure:", err)
 	}
@@ -118,6 +120,7 @@ func TestTransactionRollbackAndRecovery(t *testing.T) {
 	}
 	bad := next.Clone()
 	bad.Hostname = "bad"
+	bad.Isolation.MemoryMiB = 512
 	if err = Apply(next, bad); err == nil || !strings.Contains(err.Error(), "previous configuration restored") {
 		t.Fatal("missing rollback", err)
 	}
@@ -135,5 +138,48 @@ func TestTransactionRollbackAndRecovery(t *testing.T) {
 	got, err = config.Load(runningPath)
 	if err != nil || got.Hostname != "before" {
 		t.Fatal("interrupted transaction recovery", got, err)
+	}
+}
+
+func TestInventoryEditsDoNotRequireRunningServicesOrDatastore(t *testing.T) {
+	oldRunning, oldCheck, oldSocket := runningPath, checkDatastore, controlSocket
+	defer func() { runningPath, checkDatastore, controlSocket = oldRunning, oldCheck, oldSocket }()
+	runningPath = filepath.Join(t.TempDir(), "running.json")
+	controlSocket = filepath.Join(t.TempDir(), "absent.sock")
+	checkDatastore = func() error { t.Fatal("inventory edit accessed datastore"); return nil }
+	old := config.Default()
+	next := old.Clone()
+	next.Datastores["data0"] = config.Datastore{Filesystem: "btrfs", Preset: "raid1", Disks: []string{"vdb"}}
+	if err := Apply(old, next); err != nil {
+		t.Fatal(err)
+	}
+	got, err := config.Load(runningPath)
+	if err != nil || len(got.Datastores["data0"].Disks) != 1 {
+		t.Fatal("definition not retained", err)
+	}
+	if _, err := formatDatastore("data0", got); err == nil || !strings.Contains(err.Error(), "insufficient disks") {
+		t.Fatal("incomplete RAID1 reached format operation", err)
+	}
+	next.Networks = map[string]config.DockerNetwork{"incomplete": {Driver: "macvlan"}}
+	if _, err := networkOperation([]string{"request", "network", "incomplete", "create"}, next); err == nil || !strings.Contains(err.Error(), "parent interface") {
+		t.Fatal("incomplete macvlan reached Docker", err)
+	}
+}
+
+func TestEnablingAAAWithoutDatastoreCannotLockOutBootstrap(t *testing.T) {
+	oldRunning, oldCheck := runningPath, checkDatastore
+	defer func() { runningPath, checkDatastore = oldRunning, oldCheck }()
+	runningPath = filepath.Join(t.TempDir(), "running.json")
+	checkDatastore = func() error { return errors.New("offline") }
+	old := config.Default()
+	next := old.Clone()
+	hash, _ := config.HashSecret("synthetic-bootstrap-password")
+	next.AAA.Users = map[string]config.User{"admin": {Privilege: 15, Secret: hash}}
+	next.AAA.Enabled = true
+	if err := Apply(old, next); err == nil || !strings.Contains(err.Error(), "before enabling local login") {
+		t.Fatal("AAA activation did not require an accounting datastore", err)
+	}
+	if _, err := os.Stat(runningPath); !os.IsNotExist(err) {
+		t.Fatal("rejected AAA activation changed running configuration")
 	}
 }

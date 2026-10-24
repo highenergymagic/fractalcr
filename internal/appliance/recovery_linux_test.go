@@ -9,6 +9,7 @@ import (
 
 func TestRecoveryUsesLocalGrammarWithoutServices(t *testing.T) {
 	for _, test := range []struct{ input, local, contains string }{
+		{"__tick", "", ""},
 		{"sh ver", "show version", ""},
 		{"req plat soft serv management rest", "request platform software service management restart", ""},
 		{"__help sh", "", "show"},

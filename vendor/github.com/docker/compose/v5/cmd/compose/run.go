@@ -1,0 +1,541 @@
+/*
+   Copyright 2020 Docker Compose CLI authors
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+
+package compose
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+
+	composecli "github.com/compose-spec/compose-go/v2/cli"
+	"github.com/compose-spec/compose-go/v2/dotenv"
+	"github.com/compose-spec/compose-go/v2/format"
+	"github.com/compose-spec/compose-go/v2/types"
+	"github.com/docker/cli/cli"
+	"github.com/docker/cli/cli/command"
+	"github.com/docker/cli/opts"
+	"github.com/mattn/go-shellwords"
+	xprogress "github.com/moby/buildkit/util/progress/progressui"
+	"github.com/sirupsen/logrus"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+
+	"github.com/docker/compose/v5/cmd/display"
+	"github.com/docker/compose/v5/pkg/api"
+	"github.com/docker/compose/v5/pkg/compose"
+	"github.com/docker/compose/v5/pkg/utils"
+)
+
+type runOptions struct {
+	*composeOptions
+	Service       string
+	Command       []string
+	environment   []string
+	envFiles      []string
+	Detach        bool
+	Remove        bool
+	noTty         bool
+	interactive   bool
+	user          string
+	workdir       string
+	entrypoint    string
+	entrypointCmd []string
+	capAdd        opts.ListOpts
+	capDrop       opts.ListOpts
+	labels        []string
+	volumes       []string
+	publish       []string
+	useAliases    bool
+	servicePorts  bool
+	name          string
+	noDeps        bool
+	ignoreOrphans bool
+	removeOrphans bool
+	quiet         bool
+	quietPull     bool
+}
+
+func (options runOptions) apply(project *types.Project) (*types.Project, error) {
+	project, err := materializeManualJob(project, options.Service)
+	if err != nil {
+		return nil, err
+	}
+
+	if options.noDeps {
+		var err error
+		project, err = project.WithSelectedServices([]string{options.Service}, types.IgnoreDependencies)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	target, err := project.GetService(options.Service)
+	if err != nil {
+		return nil, err
+	}
+	target.Tty = !options.noTty
+	target.StdinOpen = options.interactive
+
+	// --service-ports and --publish are incompatible
+	if !options.servicePorts {
+		if len(target.Ports) > 0 {
+			logrus.Debug("Running service without ports exposed as --service-ports=false")
+		}
+		target.Ports = []types.ServicePortConfig{}
+		for _, p := range options.publish {
+			config, err := types.ParsePortConfig(p)
+			if err != nil {
+				return nil, err
+			}
+			target.Ports = append(target.Ports, config...)
+		}
+	}
+
+	for _, v := range options.volumes {
+		volume, err := format.ParseVolume(v)
+		if err != nil {
+			return nil, err
+		}
+		target.Volumes = append(target.Volumes, volume)
+	}
+
+	for name := range project.Services {
+		if name == options.Service {
+			project.Services[name] = target
+			break
+		}
+	}
+	return project, nil
+}
+
+func (options runOptions) getEnvironment(resolve func(string) (string, bool)) (types.Mapping, error) {
+	environment := types.NewMappingWithEquals(options.environment).Resolve(resolve).ToMapping()
+	for _, file := range options.envFiles {
+		f, err := os.Open(file)
+		if err != nil {
+			return nil, err
+		}
+		vars, err := dotenv.ParseWithLookup(f, func(k string) (string, bool) {
+			value, ok := environment[k]
+			return value, ok
+		})
+		if err != nil {
+			return nil, nil
+		}
+		for k, v := range vars {
+			if _, ok := environment[k]; !ok {
+				environment[k] = v
+			}
+		}
+	}
+	return environment, nil
+}
+
+func runCommand(p *ProjectOptions, dockerCli command.Cli, backendOptions *BackendOptions) *cobra.Command {
+	options := runOptions{
+		composeOptions: &composeOptions{
+			ProjectOptions: p,
+		},
+		capAdd:  opts.NewListOpts(nil),
+		capDrop: opts.NewListOpts(nil),
+	}
+	createOpts := createOptions{}
+	buildOpts := buildOptions{
+		ProjectOptions: p,
+	}
+	// We remove the attribute from the option struct and use a dedicated var, to limit confusion and avoid anyone to use options.tty.
+	// The tty flag is here for convenience and let user do "docker compose run -it" the same way as they use the "docker run" command.
+	var ttyFlag bool
+
+	cmd := &cobra.Command{
+		Use:   "run [OPTIONS] SERVICE [COMMAND] [ARGS...]",
+		Short: "Run a one-off command on a service",
+		Args:  cobra.MinimumNArgs(1),
+		PreRunE: AdaptCmd(func(ctx context.Context, cmd *cobra.Command, args []string) error {
+			options.Service = args[0]
+			if len(args) > 1 {
+				options.Command = args[1:]
+			}
+			if len(options.publish) > 0 && options.servicePorts {
+				return errors.New("--service-ports and --publish are incompatible")
+			}
+			if cmd.Flags().Changed("entrypoint") {
+				command, err := shellwords.Parse(options.entrypoint)
+				if err != nil {
+					return err
+				}
+				options.entrypointCmd = command
+			}
+			if cmd.Flags().Changed("tty") {
+				if cmd.Flags().Changed("no-tty") {
+					return errors.New("--tty and --no-tty can't be used together")
+				} else {
+					options.noTty = !ttyFlag
+				}
+			} else if !cmd.Flags().Changed("no-tty") && !cmd.Flags().Changed("interactive") && !dockerCli.In().IsTerminal() {
+				// while `docker run` requires explicit `-it` flags, Compose enables interactive mode and TTY by default
+				// but when compose is used from a script that has stdin piped from another command, we just can't
+				// Here, we detect we run "by default" (user didn't passed explicit flags) and disable TTY allocation if
+				// we don't have an actual terminal to attach to for interactive mode
+				options.noTty = true
+			}
+
+			if options.quiet {
+				display.Mode = display.ModeQuiet
+				backendOptions.Add(compose.WithEventProcessor(display.Quiet()))
+			}
+			createOpts.pullChanged = cmd.Flags().Changed("pull")
+			return nil
+		}),
+		RunE: Adapt(func(ctx context.Context, args []string) error {
+			backend, err := compose.NewComposeService(dockerCli, backendOptions.Options...)
+			if err != nil {
+				return err
+			}
+
+			project, err := runProject(ctx, dockerCli, backend, p, options.Service)
+			if err != nil {
+				return err
+			}
+
+			if createOpts.quietPull {
+				buildOpts.Progress = string(xprogress.QuietMode)
+			}
+
+			options.ignoreOrphans = utils.StringToBool(project.Environment[ComposeIgnoreOrphans])
+			return runRun(ctx, backend, project, options, createOpts, buildOpts, dockerCli)
+		}),
+		ValidArgsFunction: completeServiceNames(dockerCli, p),
+	}
+	flags := cmd.Flags()
+	flags.BoolVarP(&options.Detach, "detach", "d", false, "Run container in background and print container ID")
+	flags.StringArrayVarP(&options.environment, "env", "e", []string{}, "Set environment variables")
+	flags.StringArrayVar(&options.envFiles, "env-from-file", []string{}, "Set environment variables from file")
+	flags.StringArrayVarP(&options.labels, "label", "l", []string{}, "Add or override a label")
+	flags.BoolVar(&options.Remove, "rm", false, "Automatically remove the container when it exits")
+	flags.BoolVarP(&options.noTty, "no-tty", "T", !dockerCli.Out().IsTerminal(), "Disable pseudo-TTY allocation (default: auto-detected)")
+	flags.StringVar(&options.name, "name", "", "Assign a name to the container")
+	flags.StringVarP(&options.user, "user", "u", "", "Run as specified username or uid")
+	flags.StringVarP(&options.workdir, "workdir", "w", "", "Working directory inside the container")
+	flags.StringVar(&options.entrypoint, "entrypoint", "", "Override the entrypoint of the image")
+	flags.Var(&options.capAdd, "cap-add", "Add Linux capabilities")
+	flags.Var(&options.capDrop, "cap-drop", "Drop Linux capabilities")
+	flags.BoolVar(&options.noDeps, "no-deps", false, "Don't start linked services")
+	flags.StringArrayVarP(&options.volumes, "volume", "v", []string{}, "Bind mount a volume")
+	flags.StringArrayVarP(&options.publish, "publish", "p", []string{}, "Publish a container's port(s) to the host")
+	flags.BoolVar(&options.useAliases, "use-aliases", false, "Use the service's network useAliases in the network(s) the container connects to")
+	flags.BoolVarP(&options.servicePorts, "service-ports", "P", false, "Run command with all service's ports enabled and mapped to the host")
+	flags.StringVar(&createOpts.Pull, "pull", "policy", `Pull image before running ("always"|"missing"|"never")`)
+	flags.BoolVarP(&options.quiet, "quiet", "q", false, "Don't print anything to STDOUT")
+	flags.BoolVar(&buildOpts.quiet, "quiet-build", false, "Suppress progress output from the build process")
+	flags.BoolVar(&options.quietPull, "quiet-pull", false, "Pull without printing progress information")
+	flags.BoolVar(&createOpts.Build, "build", false, "Build image before starting container")
+	flags.BoolVar(&options.removeOrphans, "remove-orphans", false, "Remove containers for services not defined in the Compose file")
+
+	cmd.Flags().BoolVarP(&options.interactive, "interactive", "i", true, "Keep STDIN open even if not attached")
+	cmd.Flags().BoolVarP(&ttyFlag, "tty", "t", true, "Allocate a pseudo-TTY")
+	cmd.Flags().MarkHidden("tty") //nolint:errcheck
+
+	flags.SetNormalizeFunc(normalizeRunFlags)
+	flags.SetInterspersed(false)
+	return cmd
+}
+
+func normalizeRunFlags(f *pflag.FlagSet, name string) pflag.NormalizedName {
+	switch name {
+	case "volumes":
+		name = "volume"
+	case "labels":
+		name = "label"
+	case "no-TTY":
+		name = "no-tty"
+	}
+	return pflag.NormalizedName(name)
+}
+
+// runProject loads and prepares the project for a one-off run: environment
+// resolved after service selection (so env_file of unrelated services doesn't
+// need to exist) and DOCKER_DEFAULT_PLATFORM resolved into service.Platform
+// exactly like `up`/`create` do — Platform feeds the config-hash of the
+// dependencies started by run, so hashing a different value would recreate
+// their containers.
+func runProject(ctx context.Context, dockerCli command.Cli, backend api.Compose, p *ProjectOptions, service string) (*types.Project, error) {
+	project, _, err := p.ToProject(ctx, dockerCli, backend, []string{service}, warnUnsupportedAttributes, composecli.WithoutEnvironmentResolution)
+	if err != nil {
+		// The run target may be a job — invisible to the service selector.
+		// Only retry unselected for that specific selection failure: any
+		// other load error (a bad include:, an interpolation error, ...)
+		// would only be duplicated by a second full load — remote include:
+		// fetches and unsupported-attribute warnings included — before
+		// falling through to the same, still correct, error anyway.
+		if !isNoSuchServiceErr(err) {
+			return nil, err
+		}
+		// Reload unselected, materialize the job as a service, and narrow to
+		// it, so the env resolution below sees the job like any selected
+		// service (its env_file resolves; unrelated services' env_file still
+		// doesn't need to exist). A target that is not a declared job keeps
+		// the original, precise selection error. The first load above already
+		// warned about unsupported attributes; skip it here so a target that
+		// turns out to be a plain typo doesn't get the same warnings twice.
+		unselected, _, uerr := p.ToProject(ctx, dockerCli, backend, nil, skipUnsupportedAttributesWarning, composecli.WithoutEnvironmentResolution)
+		if uerr != nil {
+			return nil, err
+		}
+		if _, isJob := unselected.AllJobs()[service]; !isJob {
+			return nil, err
+		}
+		project, err = materializeManualJob(unselected, service)
+		if err != nil {
+			return nil, err
+		}
+	}
+	project, err = project.WithServicesEnvironmentResolved(true)
+	if err != nil {
+		return nil, err
+	}
+	// platform resolution and validation happen later through
+	// createOptions.Apply, which runRun always invokes
+	return project, nil
+}
+
+// isNoSuchServiceErr reports whether err is compose-go's selection failure
+// for a service/job name that isn't part of the (possibly narrowed)
+// project — as opposed to any other project-load error.
+func isNoSuchServiceErr(err error) bool {
+	return strings.Contains(err.Error(), "no such service")
+}
+
+// unselectedJobs reloads the project without service selection and returns
+// its full (profile-enabled and -disabled) job set, or ok=false if that
+// reload itself fails — the caller then has only the original error to
+// fall back on.
+func unselectedJobs(ctx context.Context, dockerCli command.Cli, p *ProjectOptions) (jobs types.Jobs, ok bool) {
+	backend, err := compose.NewComposeService(dockerCli)
+	if err != nil {
+		return nil, false
+	}
+	unselected, _, err := p.ToProject(ctx, dockerCli, backend, nil, skipUnsupportedAttributesWarning, composecli.WithoutEnvironmentResolution)
+	if err != nil {
+		return nil, false
+	}
+	return unselected.AllJobs(), true
+}
+
+// jobTargetErr recognizes an otherwise-raw compose-go selection error as
+// targeting a declared job: unlike run, create and start don't materialize
+// jobs — targeting one with either is run-only by design — so on a match it
+// only returns a clearer error message (replaced=true), never falls
+// through to acting on the job. names is the caller's original
+// (unselected-by-profile) argument list.
+func jobTargetErr(ctx context.Context, dockerCli command.Cli, p *ProjectOptions, names []string, err error) (jobErr error, replaced bool) {
+	if err == nil || len(names) == 0 || !isNoSuchServiceErr(err) {
+		return err, false
+	}
+	jobs, ok := unselectedJobs(ctx, dockerCli, p)
+	if !ok {
+		return err, false
+	}
+	// names is the full [SERVICE...] argument list, but err only ever names
+	// the one target compose-go's selection actually failed on: match that
+	// specific name, not any job name that happens to also be in names,
+	// or a real typo among several targets gets misreported as the job.
+	for _, name := range names {
+		if _, isJob := jobs[name]; isJob && strings.Contains(err.Error(), "no such service: "+name) {
+			return fmt.Errorf("job %q can only be triggered with \"docker compose run\"", name), true
+		}
+	}
+	return err, false
+}
+
+func runRun(ctx context.Context, backend api.Compose, project *types.Project, options runOptions, createOpts createOptions, buildOpts buildOptions, dockerCli command.Cli) error {
+	project, err := options.apply(project)
+	if err != nil {
+		return err
+	}
+
+	err = createOpts.Apply(project)
+	if err != nil {
+		return err
+	}
+
+	if err := checksForRemoteStack(ctx, dockerCli, project, buildOpts, createOpts.AssumeYes, []string{}); err != nil {
+		return err
+	}
+
+	labels := types.Labels{}
+	for _, s := range options.labels {
+		key, val, ok := strings.Cut(s, "=")
+		if !ok {
+			return errors.New("label must be set as KEY=VALUE")
+		}
+		labels[key] = val
+	}
+
+	var buildForRun *api.BuildOptions
+	if !createOpts.noBuild {
+		bo, err := buildOpts.toAPIBuildOptions(nil)
+		if err != nil {
+			return err
+		}
+		buildForRun = &bo
+	}
+
+	environment, err := options.getEnvironment(project.Environment.Resolve)
+	if err != nil {
+		return err
+	}
+
+	// start container and attach to container streams
+	runOpts := api.RunOptions{
+		CreateOptions: api.CreateOptions{
+			Build:         buildForRun,
+			RemoveOrphans: options.removeOrphans,
+			IgnoreOrphans: options.ignoreOrphans,
+			QuietPull:     options.quietPull,
+		},
+		Name:              options.name,
+		Service:           options.Service,
+		Command:           options.Command,
+		Detach:            options.Detach,
+		AutoRemove:        options.Remove,
+		Tty:               !options.noTty,
+		Interactive:       options.interactive,
+		WorkingDir:        options.workdir,
+		User:              options.user,
+		CapAdd:            options.capAdd.GetSlice(),
+		CapDrop:           options.capDrop.GetSlice(),
+		Environment:       environment.Values(),
+		Entrypoint:        options.entrypointCmd,
+		Labels:            labels,
+		UseNetworkAliases: options.useAliases,
+		NoDeps:            options.noDeps,
+		Index:             0,
+	}
+
+	for name, service := range project.Services {
+		if name == options.Service {
+			service.StdinOpen = options.interactive
+			project.Services[name] = service
+		}
+	}
+
+	exitCode, err := backend.RunOneOffContainer(ctx, project, runOpts)
+	if exitCode != 0 {
+		errMsg := ""
+		if err != nil {
+			errMsg = err.Error()
+		}
+		return cli.StatusError{StatusCode: exitCode, Status: errMsg}
+	}
+	return err
+}
+
+// materializeManualJob lets run target a job exactly like a service: per the
+// spec, any job can be triggered manually regardless of its automated
+// triggers, unless it explicitly opts out with `triggers.manual: false`.
+// A job is a ContainerSpec+WorkloadSpec — the same layers a service is made
+// of — so it materializes as a service for the one-off machinery: its
+// profile is activated and the project narrowed to its dependencies by
+// WithSelectedJob, then the job joins Services under its own name.
+func materializeManualJob(project *types.Project, name string) (*types.Project, error) {
+	// jobs and services share the depends_on namespace but not their own: a
+	// service with the target's name wins — it is what the service selector
+	// resolved — and a job already materialized must not be re-materialized
+	// (it would shed whatever resolution ran on it since).
+	if _, exists := project.Services[name]; exists {
+		return project, nil
+	}
+	job, ok := project.AllJobs()[name]
+	if !ok {
+		return project, nil
+	}
+	if job.Triggers != nil && job.Triggers.Manual != nil && !*job.Triggers.Manual {
+		return nil, fmt.Errorf("job %q is declared with manual: false, it cannot be run manually", name)
+	}
+	project, err := project.WithSelectedJob(name)
+	if err != nil {
+		return nil, err
+	}
+	// A job may depend on other jobs: materialize the whole job closure so
+	// every depends_on reference resolves to a service — the dependency job
+	// runs through the exact machinery a service dependency does (a
+	// run-to-completion container satisfying its declared condition),
+	// instead of dangling as an unresolvable name.
+	jobs := project.AllJobs()
+	if err := materializeJobClosure(project, jobs, job, map[string]bool{name: true}); err != nil {
+		return nil, err
+	}
+	project.Services[name] = jobAsService(project, name, job)
+	return project, nil
+}
+
+// materializeJobClosure adds every job reachable through job-typed
+// depends_on edges to project.Services. seen carries the starting job and
+// guards against dependency cycles. manual: false is checked here too, not
+// just on the top-level run target: it declares a job harmful to trigger
+// outside its schedule, and pulling it in as a dependency is still the
+// user's run command causing that out-of-schedule execution, just one hop
+// removed.
+func materializeJobClosure(project *types.Project, jobs types.Jobs, job types.JobConfig, seen map[string]bool) error {
+	for dep := range job.DependsOn {
+		if seen[dep] {
+			continue
+		}
+		seen[dep] = true
+		depJob, isJob := jobs[dep]
+		if !isJob {
+			continue
+		}
+		if depJob.Triggers != nil && depJob.Triggers.Manual != nil && !*depJob.Triggers.Manual {
+			return fmt.Errorf("job %q is declared with manual: false, it cannot be triggered even as a dependency of another job", dep)
+		}
+		if err := materializeJobClosure(project, jobs, depJob, seen); err != nil {
+			return err
+		}
+		project.Services[dep] = jobAsService(project, dep, depJob)
+	}
+	return nil
+}
+
+// jobAsService materializes a job as a service for the one-off machinery: a
+// job is a ContainerSpec+WorkloadSpec, the same layers a service is made of.
+// It carries the standard custom labels the loader stamps on every service —
+// materialization happens after loading, so without them the containers
+// created for a dependency job would be invisible to every label-driven
+// path: start would silently skip them, ps/down would not see them, and the
+// dependency wait would report the job as a missing dependency.
+func jobAsService(project *types.Project, name string, job types.JobConfig) types.ServiceConfig {
+	svc := types.ServiceConfig{
+		Name:          name,
+		Profiles:      job.Profiles,
+		Extensions:    job.Extensions,
+		ContainerSpec: job.ContainerSpec,
+		WorkloadSpec:  job.WorkloadSpec,
+	}
+	svc.CustomLabels = types.Labels{
+		api.ProjectLabel:     project.Name,
+		api.ServiceLabel:     name,
+		api.VersionLabel:     api.ComposeVersion,
+		api.WorkingDirLabel:  project.WorkingDir,
+		api.ConfigFilesLabel: strings.Join(project.ComposeFiles, ","),
+		api.OneoffLabel:      "False",
+	}
+	return svc
+}

@@ -1,0 +1,7 @@
+#cloud-config
+ssh_pwauth: false
+users:
+  - name: admin
+    lock_passwd: true
+    ssh_authorized_keys:
+      - REPLACE_WITH_YOUR_SSH_PUBLIC_KEY

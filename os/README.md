@@ -5,10 +5,22 @@ glibc userspace and CIP SLTS kernel, then bundles the complete root into the
 kernel. The existing firmware and release keys sign the resulting `system.bin`.
 The boot chain and image format are unchanged.
 
-The acceptance suite has eleven Linux QEMU scenarios and a native Windows
-QEMU smoke test. See `out/carbon/os/validation.md` for the current sizes,
+The acceptance suite includes Linux QEMU scenarios, physical-media emulation,
+and a native Windows QEMU smoke test. See `out/carbon/os/validation.md` for the recorded sizes,
 image hashes, completed results and scope. `system.bin` includes the embedded
 root and Docker.
+
+Use `show version` to read the running image's source-build identifier. An
+updated `system.bin` alone does not replace an existing VM's flash image:
+the launcher needs a matching flash template and `-UpdateImage`. On a Linux
+build host, `python3 tools/prepare-launcher.py --artifacts SIGNED_ARTIFACTS
+--output NEW_DIRECTORY` produces both firmware-policy templates, an empty
+datastore template, and a manifest of their hashes. It never opens an existing
+output directory. Copy the prepared files into the launcher's artifact directory;
+`-UpdateImage` preserves the separate interactive data disk and saved configuration.
+The launcher rejects unknown switches and warns when an existing bootflash does
+not match the current prepared template. That can mean an older OS or intentional
+ROMMON edits; it never silently overwrites bootflash to resolve the difference.
 
 The metadata is pinned to exact commits from the Wrynose LTS series in
 `sources.json`. Yocto identifies Wrynose as its 6.0 LTS series, supported until
@@ -20,6 +32,45 @@ are excluded; locale generation is limited to `en_US.UTF-8`. The offline
 container acceptance probe is built separately as part of the appliance.
 
 ## Build
+
+### Physical boot media
+
+After a successful boot and OS build, create a new compressed GPT disk image:
+
+```powershell
+.\tools\make-media.ps1 -FirmwarePolicy optional
+# Firmware Secure Boot with this build's enrolled certificate:
+.\tools\make-media.ps1 -FirmwarePolicy required
+# ROMMON plus empty datastore, ready for recovery image transfer:
+.\tools\make-media.ps1 -LoaderOnly -FirmwarePolicy optional
+```
+
+These commands write image **files** on carbon and export them under `out/media`.
+The default raw size is 7 GiB, suitable for an 8 GB or larger USB drive, SATA disk
+or NVMe device. Write the decompressed `.img` to the entire selected device with
+an image writer; this replaces that device's partition table. The image contains
+an EFI System Partition with `EFI/BOOT/BOOTX64.EFI`, ROMMON environment and
+`system.bin`, followed by an empty single-device Btrfs datastore. Loader-only
+media omits `system.bin`. No test users, startup configuration, containers or SSH
+host keys are included. Filesystem and partition UUIDs are generated per image.
+
+Boot x86-64 UEFI and connect the first UART at **115200 baud, 8N1**. The appliance
+has no VGA console or keyboard setup. Required-policy images need the exported
+`firmware.crt` enrolled in firmware db; optional-policy media supports firmware
+Secure Boot disabled while retaining mandatory OS signatures. The setup dialog
+starts on the blank datastore. Larger destination disks retain the image's
+7 GiB layout; automatic partition expansion is not currently performed.
+
+Included device families cover virtio, Intel e1000/e1000e/igb/igc and Realtek
+r8169 Ethernet, USB CDC Ethernet/NCM, RTL8152 and ASIX USB Ethernet, USB mass
+storage/UAS, AHCI and NVMe. Hardware needing additional firmware or drivers must
+be added to the pinned kernel configuration and qualified on that machine.
+
+`os/tests/qemu-physical.py` exercises USB, AHCI and NVMe device paths with a
+single GPT disk, serial setup, two NICs, DHCP, Docker networks, NTP and cold
+reboot. These are emulated hardware tests, not a motherboard certification.
+
+### Development builds
 
 First build the boot milestone so that the signed ROMMON, keys and firmware
 fixtures exist in `fractalcr-boot-work`. Then:
@@ -111,16 +162,34 @@ Path: `/datastore/data0/config/startup-config.json`.
 ```
 
 `version` and `hostname` are required when a configuration file exists.
-`network` is optional; if present, interface and IPv4 address/prefix are required.
-Gateway and DNS are optional IPv4 addresses. No configuration file means the
+`network` is optional; if present, an interface is required. It may use DHCP,
+a static IPv4 address/prefix, or no address. Gateway and DNS are optional static
+IPv4 settings on the management interface. No configuration file means the
 default hostname and no external interface address. Host networking here is
 separate from ROMMON's recovery network configuration.
 
 The management service extends this schema with container definitions,
 datastores and isolation policy. See [CLI.md](CLI.md) for configuration modes,
-live commit, persistence and recovery.
+immediate running configuration, explicit candidate transactions, persistence
+and recovery.
 
 ## Appliance console and tests
+
+`os/tests/qemu-ios-workflow.py` exercises the account, `login local`, hostname,
+Ctrl-Z and `write memory` workflow without `commit`, then logs out and reboots.
+It also checks Ctrl-D, rejected edits, unchanged Docker PID/start count, and
+saved versus unsaved configuration. It supports KVM and Windows WHPX, requires
+prepared launcher templates and their expected source-build identity, and writes
+only to a new disposable output directory:
+
+```powershell
+$build = python tools/build-identity.py
+python os/tests/qemu-ios-workflow.py --artifacts out/carbon/os --output out/ios-session-test --accelerator whpx --expected-source-build $build
+```
+
+The independent `qemu-aaa.py` suite covers console and SSH authentication,
+privileges, session termination, concurrent edits, expiry, account revocation,
+accounting, reboot persistence and physical password recovery.
 
 The custom PID 1 supervises the [modular service graph](../service/README.md),
 including the serial console as its own restartable process.
@@ -222,6 +291,8 @@ validation report identifies which scenarios passed.
 The [release custody workflow](../boot/docs/release-key-management.md) separates
 public build trust from encrypted offline signing keys and stages key revocation.
 Still pending: per-release image upgrade/rollback policy,
-multi-datastore/multi-interface configuration, storage erase/reprovision,
-Kata VM factory and qualification on physical hardware. Global Kata selection
+multiple datastores, storage erase/reprovision,
+and qualification on physical hardware. The CLH VM factory uses the optional
+blockfile storage backend; see [CLI setup and storage behavior](CLI.md).
+Global Kata selection
 is inherited, with explicit per-container opt-out or opt-in.

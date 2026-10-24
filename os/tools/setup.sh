@@ -4,9 +4,12 @@ cd /work
 mkdir -p build/conf downloads sstate-cache artifacts
 rsync -ac --delete --exclude=.git --exclude=__pycache__ /src/os/meta-fractal/ meta-fractal/
 rsync -ac --exclude=.git --exclude=__pycache__ /src/service/ meta-fractal/recipes-core/fractal-init/files/
+python3 /src/tools/version-metadata.py --output meta-fractal/recipes-core/fractal-init/files/release.h
+python3 /src/tools/build-identity.py > meta-fractal/recipes-core/fractal-init/files/build-id
 management_source=/work/meta-fractal/recipes-core/fractal-management/files/source
 mkdir -p "$management_source"
 rsync -ac --delete /src/internal/ "$management_source/internal/"
+rsync -ac --delete /src/pkg/ "$management_source/pkg/"
 rsync -ac --delete /src/cmd/ "$management_source/cmd/"
 cp /src/go.mod "$management_source/"
 cp /src/go.sum "$management_source/"
@@ -65,5 +68,6 @@ BB_NUMBER_THREADS = "2"
 PARALLEL_MAKE:pn-gcc-cross-x86_64 = "-j4"
 EOF
 fi
+printf 'DISTRO_VERSION = "%s"\n' "$(cat /src/VERSION)" >> build/conf/local.conf
 chown -R builder:builder /work/meta-fractal /work/build/conf
 chown builder:builder /work /work/build /work/downloads /work/sstate-cache /work/artifacts

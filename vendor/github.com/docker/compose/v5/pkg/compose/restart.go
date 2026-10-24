@@ -1,0 +1,141 @@
+/*
+   Copyright 2020 Docker Compose CLI authors
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+
+package compose
+
+import (
+	"context"
+	"strings"
+
+	"github.com/compose-spec/compose-go/v2/types"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
+
+	"github.com/docker/compose/v5/pkg/api"
+	"github.com/docker/compose/v5/pkg/utils"
+)
+
+func (s *composeService) Restart(ctx context.Context, projectName string, options api.RestartOptions) error {
+	return Run(ctx, func(ctx context.Context) error {
+		return s.restart(ctx, strings.ToLower(projectName), options)
+	}, "restart", s.events)
+}
+
+func (s *composeService) restart(ctx context.Context, projectName string, options api.RestartOptions) error {
+	containers, err := s.getContainers(ctx, projectName, oneOffExclude, true)
+	if err != nil {
+		return err
+	}
+
+	project, err := s.prepareRestartProject(ctx, containers, projectName, options)
+	if err != nil {
+		return err
+	}
+
+	// shared by every service so the dependency-order fan-out and the
+	// per-service container fan-out combined never exceed maxConcurrency
+	// concurrent per-container restarts (pre_stop hook, ContainerRestart,
+	// post_start hook) — a per-service bound alone allows as many
+	// independent services to run at once as the graph permits, each with
+	// its own maxConcurrency budget
+	limiter := newOptionalLimiter(s.maxConcurrency)
+
+	return InDependencyOrder(ctx, project, func(c context.Context, service string) error {
+		config := project.Services[service]
+		err := s.waitDependencies(ctx, project, service, config.DependsOn, containers, 0)
+		if err != nil {
+			return err
+		}
+
+		return forEachWithLimiter(ctx, limiter, containers.filter(isService(service)), func(ctx context.Context, ctr container.Summary) error {
+			return s.restartContainer(ctx, project.Services[service], ctr, options)
+		})
+	})
+}
+
+// prepareRestartProject resolves the project restart applies to, restricted
+// to the requested services and the depends_on relations with restart: true
+func (s *composeService) prepareRestartProject(ctx context.Context, containers Containers, projectName string, options api.RestartOptions) (*types.Project, error) {
+	project := options.Project
+	var err error
+	if project == nil {
+		project, err = s.getProjectWithResources(ctx, containers, projectName)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if options.NoDeps {
+		project, err = project.WithSelectedServices(options.Services, types.IgnoreDependencies)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// ignore depends_on relations which are not impacted by restarting service or not required
+	project, err = project.WithServicesTransform(func(_ string, s types.ServiceConfig) (types.ServiceConfig, error) {
+		for name, r := range s.DependsOn {
+			if !r.Restart {
+				delete(s.DependsOn, name)
+			}
+		}
+		return s, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if len(options.Services) != 0 {
+		project, err = project.WithSelectedServices(options.Services, types.IncludeDependents)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return project, nil
+}
+
+// restartContainer restarts a container, running its pre_stop and post_start
+// hooks around the restart — except for a relay, a shell-less scratch binary
+// standing in for the service: it has no process for a hook to act on.
+func (s *composeService) restartContainer(ctx context.Context, def types.ServiceConfig, ctr container.Summary, options api.RestartOptions) error {
+	relay := isRelayContainer(ctr)
+	if !relay {
+		for _, hook := range def.PreStop {
+			err := s.runHook(ctx, ctr, def, hook, nil)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	eventName := getContainerProgressName(ctr)
+	s.events.On(newEvent(eventName, api.Working, api.StatusRestarting))
+	_, err := s.apiClient().ContainerRestart(ctx, ctr.ID, client.ContainerRestartOptions{
+		Timeout: utils.DurationSecondToInt(options.Timeout),
+	})
+	if err != nil {
+		return err
+	}
+	s.events.On(newEvent(eventName, api.Done, api.StatusStarted))
+	if !relay {
+		for _, hook := range def.PostStart {
+			err := s.runHook(ctx, ctr, def, hook, nil)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}

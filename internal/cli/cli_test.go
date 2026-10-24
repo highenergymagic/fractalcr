@@ -26,7 +26,7 @@ func execute(t *testing.T, s *Session, commands ...string) {
 }
 func TestStagingAndPersistence(t *testing.T) {
 	s := session(t)
-	execute(t, s, "config", "hostname edge", "interface eth0", "ip address 192.0.2.2/24", "ip gateway 192.0.2.1", "exit")
+	execute(t, s, "configure candidate", "hostname edge", "interface eth0", "ip address 192.0.2.2/24", "ip gateway 192.0.2.1", "exit")
 	if s.Running.Hostname != "ctr" {
 		t.Fatal("candidate changed running state")
 	}
@@ -45,7 +45,7 @@ func TestStagingAndPersistence(t *testing.T) {
 	if e != nil || reloaded.Running.Hostname != "edge" {
 		t.Fatal(e)
 	}
-	execute(t, s, "config", "hostname discarded", "abort")
+	execute(t, s, "configure candidate", "hostname discarded", "abort")
 	if s.Running.Hostname != "edge" || s.Candidate.Hostname != "edge" {
 		t.Fatal("abort changed running")
 	}
@@ -82,8 +82,8 @@ func TestContainerArguments(t *testing.T) {
 func TestStorageNoImplicitAction(t *testing.T) {
 	s := session(t)
 	execute(t, s, "config", "storage datastore name data0", "preset raid1", "disk vdb")
-	if _, e := s.Execute("commit"); e == nil {
-		t.Fatal("one disk raid1 accepted")
+	if len(s.Running.Datastores["data0"].Disks) != 1 {
+		t.Fatal("incomplete definition was not retained")
 	}
 	execute(t, s, "disk add vdc", "commit")
 	if !reflect.DeepEqual(s.Running.Datastores["data0"].Disks, []string{"vdb", "vdc"}) {

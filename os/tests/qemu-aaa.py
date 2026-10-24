@@ -34,22 +34,41 @@ def login(c,user,password):
     c.sendline(user);c.expect_exact('Password: ');c.sendline(password);prompt(c,user=user=='reader')
     assert password not in c.before,'password echoed'
 def ssh_login(user,password):
-    c=pexpect.spawn('ssh',['-tt','-p',str(port),'-o','StrictHostKeyChecking=accept-new','-o',f'UserKnownHostsFile={out/"known_hosts"}',
-                          '-o','PubkeyAuthentication=no','-o','PreferredAuthentications=password',f'{user}@127.0.0.1'],encoding='utf-8',timeout=30)
-    c.logfile_read=(out/f'ssh-{user}-{len(clients)}.log').open('w');clients.append(c)
-    c.expect('password:');c.sendline(password);c.expect_exact('Press RETURN to get started!');c.sendline('');prompt(c,user=user=='reader')
+    # Line policy is reconciled by the SSH service once per second. Wait for
+    # its listener after re-enabling VTY transport; never retry authentication.
+    deadline=time.monotonic()+15
+    while True:
+        c=pexpect.spawn('ssh',['-tt','-p',str(port),'-o','StrictHostKeyChecking=accept-new','-o',f'UserKnownHostsFile={out/"known_hosts"}',
+                              '-o','PubkeyAuthentication=no','-o','PreferredAuthentications=password',f'{user}@127.0.0.1'],encoding='utf-8',timeout=30)
+        c.logfile_read=(out/f'ssh-{user}-{len(clients)}.log').open('w');clients.append(c)
+        try:
+            c.expect('password:')
+            break
+        except pexpect.EOF:
+            diagnostic=c.before
+            c.close()
+            if time.monotonic() >= deadline or not any(s in diagnostic for s in ['Connection reset','Connection refused','Connection closed']): raise
+            time.sleep(.25)
+    c.sendline(password);c.expect_exact('Press RETURN to get started!');c.sendline('');prompt(c,user=user=='reader')
     command(c,'terminal width 512',user=user=='reader');command(c,'terminal length 0',user=user=='reader')
     return c
 ADMIN='Qualification-admin-410!';READER='Qualification-reader-410!';ENABLE='Qualification-enable-410!'
 try:
     child=spawn();prompt(child);command(child,'terminal length 0');command(child,'terminal width 512')
-    for line in ['conf t',f'username admin privilege 15 secret {ADMIN}',f'username reader privilege 1 secret {READER}',f'enable secret {ENABLE}',
+    for line in ['conf t',f'user freya priv 15 password 0 {ADMIN}',f'user admin priv 15 password 0 {ADMIN}',f'username reader privilege 1 secret 0 {READER}',f'enable secret 0 {ENABLE}',
                  'aaa new-model','aaa authentication login default local','aaa authorization exec default local','aaa accounting exec default start-stop local',
                  'ip ssh version 2','line console 0','login local','exec-timeout 10 0','exit','line vty 0 15','login local','transport input ssh','exec-timeout 10 0','exit']:
-        command(child,line)
-    child.sendline('commit');child.expect_exact('Username: ');login(child,'admin',ADMIN)
+        response=command(child,line)
+        assert not re.search(r'% (?:Invalid|Incomplete|Ambiguous|Error)',response),response
+    child.send('?');prompt(child)
+    assert all(word in child.before for word in ['username','interface','network','ntp','container','storage','system','aaa']),child.before
+    command(child,'end');child.sendline('logout');child.expect_exact('Username: ');login(child,'freya',ADMIN)
+    assert 'privilege level is 15' in command(child,'sh priv')
+    child.sendline('logout');child.expect_exact('Username: ');login(child,'admin',ADMIN)
     command(child,'terminal length 0');command(child,'write memory')
-    check('local AAA configured; bootstrap privilege revoked; serial password hidden; startup configuration saved')
+    assert ADMIN not in command(child,'show history')
+    assert ADMIN not in command(child,'show running-config')
+    check('abbreviated username/password 0 and secret 0 configure local AAA; bootstrap privilege ends at logout; serial password hidden; startup configuration saved')
     child.sendline('logout');child.expect_exact('Username: ');login(child,'reader',READER)
     assert 'privilege level is 1' in command(child,'sh priv',user=True)
     for text in ['conf t','request container-engine run anything','request platform debug service-container enter','show running-config']:
@@ -63,16 +82,49 @@ try:
     check('user EXEC authorization, inline help, output filter, enable password and disable work over serial')
     admin=ssh_login('admin',ADMIN);reader=ssh_login('reader',READER)
     assert 'privilege level is 1' in command(reader,'show privilege',user=True)
-    command(admin,'conf t');command(admin,'hostname staged-elsewhere')
+    command(admin,'configure candidate');command(admin,'hostname staged-elsewhere')
     assert 'Platform kernel:' in command(reader,'show version',user=True)
     command(admin,'abort')
     check('SSH and serial share the CLI semantics; simultaneous sessions retain independent candidates and privileges')
     admin_peer=ssh_login('admin',ADMIN)
-    command(admin_peer,'conf t')
+    command(admin_peer,'configure candidate')
     for line in ['conf t','line console 0','exec-timeout 11 0','exit','commit','end']:command(admin,line)
     assert 'changed' in command(admin_peer,'commit').lower()
     command(admin_peer,'abort')
     check('a stale candidate cannot overwrite another session\'s committed configuration')
+    command(admin,'conf t'); command(admin_peer,'conf t')
+    for line in ['line console 0','exec-timeout 12 0','exit','end']: command(admin,line)
+    for line in ['line vty 0 15','exec-timeout 13 0','exit','end']: command(admin_peer,line)
+    running=command(admin,'show running-config json')
+    assert '"console_timeout_seconds": 720' in running and '"timeout_seconds": 780' in running,running
+    check('simultaneous ordinary configuration sessions preserve each other\'s immediate edits without commit')
+    for key in ['logout\n','exit\n','\x04']:
+        peer=ssh_login('admin',ADMIN); peer.send(key); peer.expect(pexpect.EOF,timeout=15)
+    check('SSH logout, EXEC exit and empty-line Ctrl-D close the transport')
+    # Different VTY policies must affect the selected sessions, not all SSH.
+    # All existing clients have finite timeouts here; close them to make slots deterministic.
+    for old in [admin, reader, admin_peer]: old.close(force=True)
+    time.sleep(2)
+    child.sendline('enable');child.expect_exact('Password: ');child.sendline(ENABLE);prompt(child)
+    for line in ['conf t','line vty 0 15','transport input none','line vty 0 1','transport input ssh','exec-timeout 10','end']:
+        assert '% ' not in command(child,line)
+    first=ssh_login('admin',ADMIN);second=ssh_login('reader',READER)
+    users=command(first,'show users')
+    assert 'vty 0' in users and 'vty 1' in users,users
+    for line in ['conf t','line vty 1','exec-timeout 0 3','end']: assert '% ' not in command(child,line)
+    second.expect(pexpect.EOF,timeout=10)
+    assert 'Platform kernel:' in command(first,'show version')
+    for line in ['conf t','line vty 1','exec-timeout 10','end']: assert '% ' not in command(child,line)
+    second=ssh_login('reader',READER)
+    for line in ['conf t','line vty 1','transport input none','end']: assert '% ' not in command(child,line)
+    second.expect(pexpect.EOF,timeout=10)
+    assert 'Platform kernel:' in command(first,'show version')
+    for line in ['conf t','line vty 0 15','transport input ssh','exec-timeout 10','end']: assert '% ' not in command(child,line)
+    admin=first;reader=ssh_login('reader',READER)
+    # Return serial to the reader identity expected by the later revocation check.
+    child.sendline('logout');child.expect_exact('Username: ');login(child,'reader',READER)
+    check('Single VTY timeout and transport changes close only the selected SSH line; other sessions remain usable')
+
     # SSH exec and subsystems are denied even for a privilege 15 account.
     denied=pexpect.spawn('ssh',['-p',str(port),'-o',f'UserKnownHostsFile={out/"known_hosts"}','-o','PubkeyAuthentication=no',f'admin@127.0.0.1','id'],encoding='utf-8',timeout=30)
     denied.expect('password:');denied.sendline(ADMIN);denied.expect(pexpect.EOF);denied.close();assert denied.exitstatus!=0
@@ -121,9 +173,9 @@ try:
     admin2=ssh_login('admin',ADMIN);assert 'privilege level is 15' in command(admin2,'show privilege')
     admin2.sendline('reload');child.expect(pexpect.EOF,timeout=180);stop_qemu(child)
     child=spawn(recovery=True);prompt(child)
-    for line in ['terminal length 0','terminal width 512','conf t','do copy startup-config candidate-config',f'username admin privilege 15 secret {ADMIN}-recovered']:
+    for line in ['terminal length 0','terminal width 512','configure candidate','do copy startup-config candidate-config',f'username admin privilege 15 secret {ADMIN}-recovered']:
         command(child,line)
-    child.sendline('commit');child.expect_exact('Username: ');login(child,'admin',ADMIN+'-recovered')
+    command(child,'commit');command(child,'end');child.sendline('logout');child.expect_exact('Username: ');login(child,'admin',ADMIN+'-recovered')
     command(child,'write memory');child.sendline('reload');child.expect(pexpect.EOF,timeout=180);stop_qemu(child)
     child=spawn();child.expect_exact('Username: ');login(child,'admin',ADMIN+'-recovered')
     admin3=ssh_login('admin',ADMIN+'-recovered');assert 'privilege level is 15' in command(admin3,'show privilege')

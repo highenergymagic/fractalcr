@@ -1,3 +1,4 @@
+[CmdletBinding(PositionalBinding = $false)]
 param([string]$Qemu = "qemu-system-x86_64", [switch]$Fresh, [switch]$UpdateImage, [switch]$NoSecureBoot, [string]$ArtifactDirectory,
     [ValidateSet("auto", "whpx", "tcg")][string]$Accelerator = "auto",
     [ValidateRange(0,65535)][int]$SshPort = 0)
@@ -41,6 +42,21 @@ if ($Accelerator -eq "whpx") {
     $variables = Join-Path $artifacts "OVMF_VARS-os-interactive-whpx.fd"
     $varsTemplate = Join-Path (Split-Path -Parent $qemuExecutable) "share\edk2-i386-vars.fd"
 }
+$manifestPath = Join-Path $artifacts 'launcher-manifest.json'
+$manifest = if (Test-Path -LiteralPath $manifestPath) { Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json } else { $null }
+if (-not $Fresh -and -not $UpdateImage -and (Test-Path -LiteralPath $flash)) {
+    # Bootflash is writable: a difference can also be an intentional ROMMON
+    # environment/image change. Never overwrite it automatically or describe
+    # its embedded OS as current just because system.bin was updated separately.
+    $expectedFlash = if ($manifest) { $manifest.files.PSObject.Properties[$flashTemplate].Value } else { $null }
+    if (-not $expectedFlash -or (Get-FileHash -Algorithm SHA256 -LiteralPath $flash).Hash -ne $expectedFlash) {
+        Write-Warning 'Reusing existing bootflash: it differs from the current prepared image, or has no matching manifest. It may contain an older OS or saved ROMMON changes. Add -UpdateImage to install the prepared image while preserving the datastore.'
+    }
+}
+if ($manifest -and ($Fresh -or $UpdateImage -or -not (Test-Path -LiteralPath $flash))) {
+    $imageHash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $artifacts 'system.bin')).Hash
+    if ($imageHash -ne $manifest.files.'system.bin') { throw 'system.bin differs from the prepared launcher templates. Prepare matching templates before updating.' }
+}
 foreach ($pair in @(
     @($flashTemplate, $flash),
     @("data-os-containers.img", $data),
@@ -49,6 +65,12 @@ foreach ($pair in @(
     $source = if ([IO.Path]::IsPathRooted($pair[0])) { $pair[0] } else { Join-Path $artifacts $pair[0] }
     if (-not (Test-Path -LiteralPath $source)) { throw "Missing $source. Run .\os\build.ps1 first." }
     if ($Fresh -or ($UpdateImage -and $pair[1] -eq $flash) -or -not (Test-Path -LiteralPath $pair[1])) {
+        if ($manifest -and -not [IO.Path]::IsPathRooted($pair[0])) {
+            $expected = $manifest.files.PSObject.Properties[$pair[0]].Value
+            if (-not $expected -or (Get-FileHash -Algorithm SHA256 -LiteralPath $source).Hash -ne $expected) {
+                throw "Launcher template failed its manifest check: $source"
+            }
+        }
         Copy-Item -LiteralPath $source -Destination $pair[1] -Force
     }
 }

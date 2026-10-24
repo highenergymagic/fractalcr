@@ -1,0 +1,110 @@
+package podchooser
+
+import (
+	"context"
+	"math/rand"
+	"sort"
+
+	"github.com/docker/buildx/driver/kubernetes/kubeclient"
+	"github.com/pkg/errors"
+	"github.com/serialx/hashring"
+	"github.com/sirupsen/logrus"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+type PodChooser interface {
+	ChoosePod(ctx context.Context) (*corev1.Pod, error)
+}
+
+type RandomPodChooser struct {
+	PodClient   kubeclient.PodClient
+	Deployment  *appsv1.Deployment
+	StatefulSet *appsv1.StatefulSet
+}
+
+func (pc *RandomPodChooser) ChoosePod(ctx context.Context) (*corev1.Pod, error) {
+	pods, err := ListRunningPods(ctx, pc.PodClient, pc.Deployment, pc.StatefulSet)
+	if err != nil {
+		return nil, err
+	}
+	if len(pods) == 0 {
+		return nil, errors.New("no running buildkit pods found")
+	}
+	n := rand.Intn(len(pods)) // #nosec G404 -- no strong seeding required
+	logrus.Debugf("RandomPodChooser.ChoosePod(): len(pods)=%d, n=%d", len(pods), n)
+	return pods[n], nil
+}
+
+type StickyPodChooser struct {
+	Key         string
+	PodClient   kubeclient.PodClient
+	Deployment  *appsv1.Deployment
+	StatefulSet *appsv1.StatefulSet
+}
+
+func (pc *StickyPodChooser) ChoosePod(ctx context.Context) (*corev1.Pod, error) {
+	pods, err := ListRunningPods(ctx, pc.PodClient, pc.Deployment, pc.StatefulSet)
+	if err != nil {
+		return nil, err
+	}
+	var podNames []string
+	podMap := make(map[string]*corev1.Pod, len(pods))
+	for _, pod := range pods {
+		podNames = append(podNames, pod.Name)
+		podMap[pod.Name] = pod
+	}
+	ring := hashring.New(podNames)
+	chosen, ok := ring.GetNode(pc.Key)
+	if !ok {
+		// NOTREACHED
+		logrus.Errorf("no pod found for key %q", pc.Key)
+		rpc := &RandomPodChooser{
+			PodClient:   pc.PodClient,
+			Deployment:  pc.Deployment,
+			StatefulSet: pc.StatefulSet,
+		}
+		return rpc.ChoosePod(ctx)
+	}
+	return podMap[chosen], nil
+}
+
+func ListRunningPods(ctx context.Context, client kubeclient.PodClient, depl *appsv1.Deployment, stat *appsv1.StatefulSet) ([]*corev1.Pod, error) {
+	var labelSelector *metav1.LabelSelector
+	if depl != nil {
+		labelSelector = depl.Spec.Selector
+	} else if stat != nil {
+		labelSelector = stat.Spec.Selector
+	}
+
+	selector, err := metav1.LabelSelectorAsSelector(labelSelector)
+	if err != nil {
+		return nil, err
+	}
+	listOpts := metav1.ListOptions{
+		LabelSelector: selector.String(),
+	}
+	podList, err := client.List(ctx, listOpts)
+	if err != nil {
+		return nil, err
+	}
+	var runningPods []*corev1.Pod
+	for i := range podList.Items {
+		pod := &podList.Items[i]
+		// Skip terminating Pods: they may still be Running while buildkitd shuts down,
+		// causing newly scheduled builds to be killed mid-flight.
+		if pod.DeletionTimestamp != nil {
+			logrus.Debugf("pod terminating, skipping: %q", pod.Name)
+			continue
+		}
+		if pod.Status.Phase == corev1.PodRunning {
+			logrus.Debugf("pod running: %q", pod.Name)
+			runningPods = append(runningPods, pod)
+		}
+	}
+	sort.Slice(runningPods, func(i, j int) bool {
+		return runningPods[i].Name < runningPods[j].Name
+	})
+	return runningPods, nil
+}

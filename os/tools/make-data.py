@@ -29,6 +29,9 @@ with tempfile.TemporaryDirectory() as tmp:
         (root / "projects").mkdir()
         (root / "projects/Dockerfile").write_text('FROM scratch\nCOPY probe /probe\nRUN ["/probe", "network"]\nENTRYPOINT ["/probe"]\nCMD ["serve"]\n')
         (root / "projects/compose.yaml").write_text('services:\n  probe:\n    image: fcr/probe:latest\n    command: ["/probe", "serve"]\n    ports: ["18080:8080"]\n')
+        (root / "files").mkdir()
+        for name in ("Dockerfile", "compose.yaml"):
+            (root / "files" / name).write_bytes((root / "projects" / name).read_bytes())
     config = {"version": 1, "hostname": "ctr-test",
               "network": {"interface": "eth0", "address": "10.0.2.15/24",
                           "gateway": "10.0.2.2", "dns": "10.0.2.3"}}

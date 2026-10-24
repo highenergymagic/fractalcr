@@ -15,6 +15,7 @@ p.add_argument("--extended", action="store_true", help="require CLI, full client
 p.add_argument("--tcg", action="store_true", help="require additional core TCG results under artifacts/tcg")
 p.add_argument("--management", action="store_true", help="require serial/SSH AAA and physical password recovery")
 p.add_argument("--swarm", action="store_true", help="require isolated three-node Swarm failure qualification")
+p.add_argument("--physical", action="store_true", help="require single-disk USB, NVMe and AHCI setup/network/time qualification")
 a = p.parse_args()
 art = a.artifacts
 hashes = {name: hashlib.sha256((art / name).read_bytes()).hexdigest()
@@ -59,6 +60,14 @@ for case in cases:
     lines.append(f"| {case} ({result.get('accel',result.get('accelerator','tcg'))}) | PASS |")
     for check in result.get("checks", []):
         lines.append(f"| {check} | PASS |")
+if a.physical:
+    for case in ("physical-usb-optional", "physical-nvme-required", "physical-ahci-optional"):
+        result = json.loads((art / f"result-{case}.json").read_text())
+        assert result["case"] == case and result["passed"], f"Failed physical-media scenario: {case}"
+        assert result["rommon_sha256"] == hashes["rommon.efi"] and result["system_sha256"] == hashes["system.bin"], f"Stale physical-media evidence: {case}"
+        lines.append(f"| {case} (KVM) | PASS |")
+        for check in result["checks"]:
+            lines.append(f"| {check} | PASS |")
 if a.tcg:
     for case in ("containers", "no-datastore", "invalid-config", "optional-firmware", "blank-datastore"):
         result = json.loads((art / "tcg" / f"result-os-{case}.json").read_text())
@@ -66,7 +75,7 @@ if a.tcg:
         assert result["rommon_sha256"] == hashes["rommon.efi"], f"Stale TCG ROMMON result: {case}"
         assert result["system_sha256"] == hashes["system.bin"], f"Stale TCG OS result: {case}"
         lines.append(f"| Additional core regression: {case} (tcg) | PASS |")
-assert (art / "supervisor-tests.log").read_text().count("PASS ") == 5
+assert (art / "supervisor-tests.log").read_text().count("PASS ") == 6
 assert (art / "service-graph-tests.log").read_text().count("PASS ") == 6
 assert (art / "control-tests.log").read_text().count("PASS ") == 3
 assert (art / "health-tests.log").read_text().count("PASS ") == 3
