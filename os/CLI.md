@@ -122,6 +122,15 @@ the previous state. Interrupted commits leave a RAM-backed rollback journal for
 management restart. Reboot always reloads startup-config. Container definition
 changes alone do not restart Docker or recreate containers.
 
+Configuration exports (`copy running-config data0:backup` and
+`copy startup-config data0:backup`) contain CLI configuration text. Copying a
+local configuration file to `running-config` merges it into the current
+configuration; copying to `startup-config` saves it for the next boot. Imports
+are validated in memory before applying or saving, and reject operational
+commands. Failed validation leaves configuration unchanged. Existing JSON
+backups are also accepted. Import files are limited to 256 KiB and every command
+is checked against the caller's original privilege policy.
+
 `write memory` and `copy running-config startup-config` atomically replace
 `/datastore/data0/config/startup-config.json` with file and directory fsync.
 Running state in `/run/running-config.json` survives management/console restarts.

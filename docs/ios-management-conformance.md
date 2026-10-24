@@ -84,11 +84,12 @@ Consulted 2026-10-24:
 | Legacy secret import | Type 5 user and per-level enable secret import, native MD5-crypt verification, bounded canonical encoding and constant-time comparison; plaintext configuration continues to generate type 9 | `TestType5IndependentVectors` using independent OpenSSL vectors; `TestIOSSecretImportAndAlgorithms`; iteration 17 console/SSH authentication qualification |
 | Line usage | Authenticated uses counted per physical/virtual line; retained across management restart; reset on a full machine boot | `TestLineCountersSurviveManagementRestart`; console/SSH restart qualification |
 | Interface selection | Selected interface detail, description, and IP brief display; configured descriptions and observed link state; administrative shutdown forces protocol down | Interface display/dispatch tests; serial qualification |
-| File display | Native `more`, configuration aliases, contextual filesystem help, format selection, output filters, privilege checks, rooted regular-file reads, bounded decompression and terminal control handling | `TestMoreConfigurationAliasesAndPolicy`; `TestMoreNativeConfinementAndWorkingDirectory`; `TestFormatsAndTerminalSafety`; `TestCompressedIntegrityAndLimits`; new-image qualification pending |
-| Interface configuration display | `show running-config interface` with joined or separated type/index and optional `linenum`; selected-port output, delegated visibility and file-access gates; `(config-if)#` prompt | `TestInterfaceRunningConfiguration`; configuration replay tests; new-image qualification pending |
-| Interactive pager | `/` searches remaining output, `+` includes matching lines, `-` excludes them; first filter remains active while later searches are allowed; complete lines span API/log chunks; EOF and Ctrl-C/Z/^ stop output; exact-width lines do not acquire a spurious row | `os/tests/test-pager.c` with ASan/UBSan; native service compiler checks; new-image serial qualification pending |
+| File display | Native `more`, configuration aliases, contextual filesystem help, format selection, output filters, privilege checks, rooted regular-file reads, bounded decompression and terminal control handling | `TestMoreConfigurationAliasesAndPolicy`; `TestMoreNativeConfinementAndWorkingDirectory`; `TestFormatsAndTerminalSafety`; `TestCompressedIntegrityAndLimits`; iteration 19 serial qualification |
+| Interface configuration display | `show running-config interface` with joined or separated type/index and optional `linenum`; selected-port output, delegated visibility and file-access gates; `(config-if)#` prompt | `TestInterfaceRunningConfiguration`; configuration replay tests; iteration 19 serial qualification |
+| Interactive pager | `/` searches remaining output, `+` includes matching lines, `-` excludes them; first filter remains active while later searches are allowed; complete lines span API/log chunks; EOF and Ctrl-C/Z/^ stop output; exact-width lines do not acquire a spurious row | `os/tests/test-pager.c` with ASan/UBSan; native service compiler checks; iteration 19 serial qualification |
 | Persistent line terminals | Console/VTY `history`, `history size`, `editing`, `length`, and `no`/`default` forms; independent VTY ranges; line history-size changes do not reenable disabled history; new sessions inherit saved defaults while unrelated edits preserve session overrides; canonical `line con`, single-VTY display and omitted default timeout | `TestLineTerminalPersistenceAndDefaults`; `TestLineTerminalValidationAndClone`; `TestLineTerminalPolicyAndSessionOverrides`; `TestLineTerminalDelegatedDisplay`; new-image serial qualification pending |
 | Word editing | Escape-D cuts the next word into the delete buffer; Escape-C/U/L capitalize, uppercase and lowercase the remaining word; upper/lowercase key variants and leading spaces are handled | `os/tests/test-line-editor.c` with ASan/UBSan; new-image serial qualification pending |
+| Configuration files | CLI-text running/startup exports, local-file merge into running configuration, validated startup replacement, legacy JSON import, original-policy authorization throughout parsing, rooted bounded regular-file reads | `TestConfigurationImportIsStagedAndRoundTrips`; `TestConfigurationImportUsesOriginalAuthorization`; `TestConfigurationCopiesExportCLIAndImportObjects`; `TestConfigurationImportFileConfinement`; new-image serial qualification pending |
 
 Test names identify executable evidence, not a declaration of complete IOS
 compatibility. The VM report identifies the exact tested system image hash.
@@ -102,7 +103,13 @@ The iteration 17 serial, AAA and USB reports bind to system image SHA-256
 `48bec8954e673b2bd97db325588cda0675864ebca352555b39322148fb17e669`
 and source build
 `a272f0e1cb1fe82abc070979a42581bb311955958313d9b5dfec2e0aaef5773c`.
-Later implementations marked pending are not covered by those reports.
+The iteration 19 serial, AAA and USB reports bind to system image SHA-256
+`de8ec345832836828e95dfda5cfb4757fae9045843ee1ef8d2375bebd5a0450c`
+and source build
+`6ea4b41208329db702e3393c79486f4278946da391a434488a47840345017191`.
+Its management gate also passed the no-RTC clock-restoration component test
+against that build's kernel. These reports contain 75 checks in total. Later
+implementations marked pending are not covered by those reports.
 
 ## Platform boundaries and outstanding differences
 
@@ -117,8 +124,11 @@ they must not be hidden behind accepted no-op keywords:
   linear flash. `/all` has no additional deleted entries on these filesystems.
 - Network copy protocols remain unimplemented. Output redirection currently
   supports local writable volumes, with a 1 MiB response limit and a 64 MiB
-  existing-file limit for append. Copy's durable configuration representation
-  is the appliance JSON model.
+  existing-file limit for append. Configuration exports now contain CLI text;
+  durable startup storage remains the appliance JSON model. Imports validate
+  the whole input before applying it once. This atomic error behavior is an
+  appliance policy, not a claim to match IOS partial application of invalid
+  configuration files.
   Native `more` now exposes local-file reads, configuration aliases, ASCII,
   hex/text, gzip/zlib decompression and EBCDIC code page 037 display. Remote
   URLs, additional compressed formats and exact ISR

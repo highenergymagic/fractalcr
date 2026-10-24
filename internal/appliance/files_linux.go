@@ -52,8 +52,11 @@ func copyFileOverwrite(w []string, c config.Config, overwrite bool) (string, err
 		return "", fmt.Errorf("Source and destination required")
 	}
 	var input io.Reader
-	if w[1] == "running-config" {
-		input = bytes.NewReader(c.JSON())
+	if data, ok, err := configurationExport(w[1], c); ok {
+		if err != nil {
+			return "", err
+		}
+		input = bytes.NewReader(data)
 	} else {
 		source := w[1]
 		if source == "startup-config" {

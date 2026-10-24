@@ -123,6 +123,10 @@ func (s *loginSession) answerCopy(answer string) reply {
 			}
 			return r
 		}
+		if configurationURL(d.destination) != "" {
+			s.pendingCopy = nil
+			return s.copyConfiguration(d.source, d.destination)
+		}
 		v, name, err := resolveFile(d.destination)
 		if err != nil {
 			s.pendingCopy = nil
