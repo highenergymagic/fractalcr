@@ -110,6 +110,12 @@ func TestPrivilegeAllIncludesSubmodesAndRevokesLive(t *testing.T) {
 func TestPrivilegeHelpCompletionAndInvalidTargets(t *testing.T) {
 	s := session(t)
 	execute(t, s, "conf t")
+	if help := s.ContextHelp("privilege "); !strings.Contains(help, "Global configuration mode") || strings.Contains(help, "Configure exec") {
+		t.Fatal(help)
+	}
+	if help := s.ContextHelp("privilege exec level 5 "); strings.Contains(help, "<cr>") {
+		t.Fatal("missing target offered as executable", help)
+	}
 	if help := s.ContextHelp("priv exec level 5 sh "); !strings.Contains(help, "version") || strings.Contains(help, "<COMMAND...>") {
 		t.Fatal(help)
 	}

@@ -268,6 +268,36 @@ func commandTokenHelp(path []string) string {
 		path = path[1:]
 	}
 	prefix := strings.Join(path, " ")
+	privilegePrefix := strings.TrimPrefix(prefix, "no ")
+	if privilegePrefix == "privilege" {
+		return "Command privilege parameters"
+	}
+	if strings.HasPrefix(privilegePrefix, "privilege ") {
+		switch word {
+		case "exec":
+			return "Exec mode"
+		case "configure":
+			return "Global configuration mode"
+		case "interface":
+			return "Interface configuration mode"
+		case "line":
+			return "Line configuration mode"
+		case "container":
+			return "Container configuration mode"
+		case "network":
+			return "Container network configuration mode"
+		case "storage-datastore":
+			return "Datastore configuration mode"
+		case "all":
+			return "All suboptions will be set to the same level"
+		case "level":
+			return "Set privilege level of command"
+		case "reset":
+			return "Reset privilege level of command"
+		case "<0-15>":
+			return "Privilege level"
+		}
+	}
 	if strings.HasPrefix(prefix, "clock summer-time ") {
 		switch word {
 		case "<ZONE>":
