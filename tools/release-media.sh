@@ -21,8 +21,8 @@ for policy in required optional; do
     fi
     gzip -n -1 "$raw"
 done
-cp "$art/firmware.crt" "$out/firmware.crt"
-cp "$art/release.pub" "$out/release.pub"
+install -m 0644 "$art/firmware.crt" "$out/firmware.crt"
+install -m 0644 "$art/release.pub" "$out/release.pub"
 cp "$art/system.bin" "$out/system.bin"
 cp "$art/rommon.efi" "$out/rommon.efi"
 cp "$art/system.spdx.json" "$art/system.oe-vex.json" "$art/packages.manifest" "$out/"

@@ -75,7 +75,10 @@ jobs:
       - name: Package USB and VPS images
         run: |
           mkdir -p release-stage
-          docker run --rm --user "$(id -u):$(id -g)" --network none --cap-drop ALL --security-opt no-new-privileges \
+          # Public trust files may retain the key generator's restrictive modes.
+          # Read them as container root; source/artifacts stay read-only, with no
+          # network or capabilities. release-media exports public files as 0644.
+          docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
             -e "FCR_BUILDER_ID=$(docker image inspect --format '{{.Id}}' fractalcr-os-builder)" \
             --mount "type=bind,source=$PWD,target=/src,readonly" \
             --mount "type=bind,source=$PWD/release-stage,target=/output" \
