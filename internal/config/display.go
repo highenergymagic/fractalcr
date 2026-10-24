@@ -100,7 +100,6 @@ func (c Config) CLI() string {
 		} else {
 			line(" no shutdown")
 		}
-		line(" exit")
 	}
 	for _, server := range c.NTP.Servers {
 		line("ntp server %s", server)
@@ -218,7 +217,6 @@ func (c Config) CLI() string {
 	if c.AAA.Enabled {
 		line(" login local")
 	}
-	line(" exit")
 	for first := 0; first < VTYCount; {
 		policy := c.AAA.Line(first)
 		last := first
@@ -233,7 +231,7 @@ func (c Config) CLI() string {
 		if policy.SSH {
 			transport = "ssh"
 		}
-		line(" transport input %s\n exit", transport)
+		line(" transport input %s", transport)
 		first = last + 1
 	}
 	line("!\nend")

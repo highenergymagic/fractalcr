@@ -34,7 +34,7 @@ func (s *loginSession) fileWords(words []string) []string {
 		return words
 	}
 	switch words[0] {
-	case "dir", "delete", "move", "rename", "mkdir", "rmdir", "copy":
+	case "dir", "delete", "move", "rename", "mkdir", "rmdir", "copy", "more":
 	default:
 		return words
 	}
@@ -42,7 +42,7 @@ func (s *loginSession) fileWords(words []string) []string {
 	target := false
 	for i := 1; i < len(w); i++ {
 		switch w[i] {
-		case "/force", "/recursive", "/all":
+		case "/force", "/recursive", "/all", "/ascii", "/binary", "/compressed", "/ebcdic":
 			continue
 		case "all-filesystems":
 			target = true

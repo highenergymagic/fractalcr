@@ -20,6 +20,11 @@ var execCommands = []Command{
 	{"pwd", "Display the current directory", false},
 	{"dir", "List files on bootflash", false},
 	{"dir <filesystem:>", "Directory or file name", false},
+	{"more <filesystem:>", "Display a file", false},
+	{"more /ascii <filesystem:>", "Display a file as ASCII text", false},
+	{"more /binary <filesystem:>", "Display a file in hex/text format", false},
+	{"more /compressed <filesystem:>", "Display a compressed file", false},
+	{"more /ebcdic <filesystem:>", "Display an EBCDIC file", false},
 	{"show file systems", "Available appliance filesystems", false},
 	{"delete <URL>", "Delete a file after confirmation", false},
 	{"delete /force <URL>", "Delete a file without confirmation", false},
@@ -83,6 +88,10 @@ var execCommands = []Command{
 	{"configure candidate", "Stage an explicit configuration transaction", false},
 	{"show running-config", "Running configuration", false},
 	{"show running-config linenum", "Running configuration with line numbers", false},
+	{"show running-config interface <INTERFACE>", "Interface running configuration", false},
+	{"show running-config interface <INTERFACE> linenum", "Number the interface configuration lines", false},
+	{"show running-config interface <INTERFACE> <INTERFACE-INDEX>", "Interface running configuration", false},
+	{"show running-config interface <INTERFACE> <INTERFACE-INDEX> linenum", "Number the interface configuration lines", false},
 	{"show running-config view full", "Full running configuration", false},
 	{"show running-config json", "Running configuration in interchange format", false},
 	{"show candidate-config", "Staged configuration", false},
@@ -263,7 +272,7 @@ var tokenHelp = map[string]string{
 	"preset": "Storage redundancy profile", "volume": "Persistent named volume", "environment": "Container environment variable",
 	"image": "Container image", "command": "Container command and arguments", "security": "Container security settings", "capability": "Linux capabilities",
 	"<NAME>": "Object name (case sensitive)", "<SERVICE>": "Service name or kernel", "<IMAGE>": "Image name, tag or digest",
-	"<INTERFACE>": "Network interface name", "<DISK>": "Whole-disk device name", "<MEMORY>": "Memory size, for example 256M",
+	"<INTERFACE>": "Network interface name", "<INTERFACE-INDEX>": "Interface number", "<DISK>": "Whole-disk device name", "<MEMORY>": "Memory size, for example 256M",
 	"<IPv4>": "IPv4 address", "<IPv4/PREFIX>": "IPv4 address and prefix length", "<VARIABLE>": "Environment variable name",
 	"<VALUE>": "Value; quote spaces", "<ARG...>": "Arguments; quotes preserve spaces", "<PATH>": "Absolute path",
 	"<PORT-MAPPING>": "HOST:CONTAINER[/tcp|udp]", "<1-1048576>": "Integer from 1 to 1048576", "<GUEST>": "Bundled guest OS name",
@@ -337,6 +346,14 @@ func commandTokenHelp(path []string) string {
 		}
 	}
 	switch {
+	case word == "/ascii":
+		return "Display binary files in ASCII format"
+	case word == "/binary":
+		return "Display binary files in hex/text format"
+	case word == "/compressed":
+		return "Display compressed files"
+	case word == "/ebcdic":
+		return "Display binary files in EBCDIC format"
 	case word == "/all":
 		return "Include all file entries"
 	case word == "/recursive":
@@ -377,7 +394,7 @@ type node struct {
 }
 
 func (n *node) add(c Command) {
-	if (strings.HasPrefix(c.Syntax, "show ") || strings.HasPrefix(c.Syntax, "do show ") || c.Syntax == "dir" || strings.HasPrefix(c.Syntax, "dir ") || c.Syntax == "do dir" || strings.HasPrefix(c.Syntax, "do dir ") || c.Syntax == "write terminal" || c.Syntax == "do write terminal") && !strings.Contains(c.Syntax, " | ") {
+	if (strings.HasPrefix(c.Syntax, "show ") || strings.HasPrefix(c.Syntax, "do show ") || strings.HasPrefix(c.Syntax, "more ") || strings.HasPrefix(c.Syntax, "do more ") || c.Syntax == "dir" || strings.HasPrefix(c.Syntax, "dir ") || c.Syntax == "do dir" || strings.HasPrefix(c.Syntax, "do dir ") || c.Syntax == "write terminal" || c.Syntax == "do write terminal") && !strings.Contains(c.Syntax, " | ") {
 		for _, kind := range []string{"include", "exclude", "begin", "count", "section", "section include", "section exclude"} {
 			n.add(Command{c.Syntax + " | " + kind + " <REGEX...>", "Filter output using a regular expression", c.Local})
 		}
@@ -504,6 +521,17 @@ func (e *SyntaxError) Error() string {
 func parameter(n *node) bool { return strings.HasPrefix(n.word, "<") }
 
 func acceptsArgument(n *node, word string) bool {
+	if n.word == "<INTERFACE-INDEX>" {
+		if word == "" || word[0] < '0' || word[0] > '9' {
+			return false
+		}
+		for _, c := range word {
+			if (c < '0' || c > '9') && c != '/' && c != '.' {
+				return false
+			}
+		}
+		return true
+	}
 	if n.word == "<MONTH>" {
 		for _, month := range []string{"january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"} {
 			if len(word) >= 3 && strings.HasPrefix(month, strings.ToLower(word)) {
@@ -590,7 +618,7 @@ func (s *Session) resolveMode(line string) ([]string, bool, string, error) {
 }
 
 func (s *Session) resolveHere(line string) ([]string, bool, error) {
-	words, spans, err := lex(line)
+	words, spans, err := s.lexLine(line)
 	if err != nil {
 		return nil, false, err
 	}
@@ -632,7 +660,7 @@ func (s *Session) resolveHere(line string) ([]string, bool, error) {
 }
 
 func (s *Session) helpNode(line string) (*node, string, int, bool) {
-	words, spans, err := lex(line)
+	words, spans, err := s.lexLine(line)
 	if err != nil {
 		return nil, "", 0, false
 	}
@@ -677,7 +705,7 @@ func (s *Session) ContextHelp(line string) string {
 			if full {
 				out = append(out, fmt.Sprintf("  %-22s %s", "<filesystem:>", "File system or file name"))
 			}
-			for _, name := range s.FileSystems() {
+			for _, name := range s.displayFileSystems(line) {
 				if full {
 					out = append(out, fmt.Sprintf("  %-22s Directory or file name", name))
 				} else if strings.HasPrefix(name, partial) {
@@ -780,7 +808,7 @@ func (s *Session) completeHere(line string) (string, string) {
 	var found string
 	for _, child := range n.children {
 		if (child.word == "<filesystem:>" || child.word == "<URL>") && s.FileSystems != nil {
-			for _, name := range s.FileSystems() {
+			for _, name := range s.displayFileSystems(line) {
 				if strings.HasPrefix(name, partial) {
 					if found != "" {
 						return line, "\a"

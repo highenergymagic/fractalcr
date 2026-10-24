@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"fractalcr/internal/config"
+	"fractalcr/internal/filedisplay"
 )
 
 type Session struct {
@@ -55,6 +56,9 @@ func (s *Session) Prompt() string {
 			mode := s.Mode
 			if mode == "line-console" || mode == "line-vty" {
 				mode = "line"
+			}
+			if mode == "interface" {
+				mode = "if"
 			}
 			suffix += "-" + mode
 		}
@@ -270,7 +274,7 @@ func (s *Session) execute(line string) (string, error) {
 		}
 		return "Running configuration committed. Use copy running-config startup-config to persist.", nil
 	}
-	if w[0] == "show" || w[0] == "copy" || w[0] == "request" || w[0] == "write" || w[0] == "ping" || w[0] == "dir" || w[0] == "cd" || w[0] == "pwd" || w[0] == "delete" || w[0] == "move" || w[0] == "rename" || w[0] == "mkdir" || w[0] == "rmdir" || w[0] == "clock" || w[0] == "calendar" {
+	if w[0] == "show" || w[0] == "copy" || w[0] == "request" || w[0] == "write" || w[0] == "ping" || w[0] == "more" || w[0] == "dir" || w[0] == "cd" || w[0] == "pwd" || w[0] == "delete" || w[0] == "move" || w[0] == "rename" || w[0] == "mkdir" || w[0] == "rmdir" || w[0] == "clock" || w[0] == "calendar" {
 		return s.operational(w)
 	}
 	if s.Mode == "" {
@@ -683,6 +687,32 @@ func memorySize(v string, minimum int) (int, error) {
 }
 
 func (s *Session) operational(w []string) (string, error) {
+	if len(w) >= 4 && strings.Join(w[:3], " ") == "show running-config interface" {
+		return s.interfaceConfigurationDisplay(w[3:])
+	}
+	if len(w) >= 2 && w[0] == "more" {
+		format, url := "", w[len(w)-1]
+		if len(w) == 3 {
+			format = w[1]
+		}
+		alias := ""
+		switch url {
+		case "system:running-config", "system:/running-config":
+			alias = "show running-config"
+		case "nvram:startup-config", "nvram:/startup-config":
+			alias = "show startup-config"
+		}
+		if alias != "" {
+			text, err := s.operational(strings.Fields(alias))
+			if err != nil {
+				return "", err
+			}
+			if format == "" {
+				return text, nil
+			}
+			return filedisplay.Format([]byte(text), format)
+		}
+	}
 	line := strings.Join(w, " ")
 	switch line {
 	case "show running-config", "show running-config linenum", "show running-config view full", "write terminal":

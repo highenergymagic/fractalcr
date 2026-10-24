@@ -82,6 +82,20 @@ def command(text, mode='', allow_error=False):
         assert not re.search(r'^% ', output, re.M), output
     return output
 
+def reboot_to_disk_record(name):
+    child.sendline('reload')
+    child.expect_exact('Proceed with reload? [confirm]')
+    child.sendline('')
+    child.expect(pexpect.EOF, timeout=60)
+    stop_qemu(child)
+    recovered = out / name
+    recovered.mkdir()
+    # Host-side read of an unmounted disposable filesystem. No guest utility,
+    # mount, or concurrent access to the running VM's disk is involved.
+    subprocess.run(['btrfs', 'restore', '--path-regex', r'^/(|config(|/saved-clock.json))$',
+                    str(out / 'data.img'), str(recovered)], check=True, stdout=subprocess.DEVNULL)
+    return json.loads((recovered / 'config/saved-clock.json').read_text())
+
 try:
     # Fail if another service owns UDP 123; never replace it.
     ntp.bind(('127.0.0.1', 123))
@@ -102,20 +116,15 @@ try:
     command('clock save interval 8', 'config')
     command('end')
     check('No-RTC boot accepts the platform-specific clock save command')
-    for _ in range(60):
-        record_output = command('more nvram:saved-clock.json', allow_error=True)
-        try:
-            record = json.loads(record_output)
-            saved = datetime.fromisoformat(record['time'].replace('Z', '+00:00'))
-            if saved.timestamp() > time.time() + 3000:
-                break
-        except (ValueError, KeyError):
-            pass
+    for _ in range(45):
+        status = command('show ntp status')
+        if 'Clock is synchronized' in status:
+            break
         time.sleep(2)
     else:
-        raise AssertionError('NTP timestamp was not persisted: ' + record_output)
+        raise AssertionError('NTP did not synchronize: ' + status)
     assert 'Time source is NTP' in command('show clock detail')
-    check('Native time service saves an actual synchronized NTP timestamp')
+    time.sleep(65)  # cross the real persistence worker's polling interval
     command('conf t', 'config')
     command('no ntp server 10.0.2.2', 'config')
     command('end')
@@ -123,15 +132,17 @@ try:
     stop.set()
     worker.join(timeout=2)
     assert not worker.is_alive()
+    record = reboot_to_disk_record('first-record')
+    saved = datetime.fromisoformat(record['time'].replace('Z', '+00:00'))
+    assert saved.timestamp() > time.time() + 3000, record
+    check('Native time service saves an actual synchronized NTP timestamp')
+    child = boot()
+    command('terminal length 0')
+    assert 'Time source is NVRAM' in command('show clock detail')
     command('clock set 00:00:00 1 January 2003')
     time.sleep(65)  # cross the real persistence worker's next polling interval
-    assert json.loads(command('more nvram:saved-clock.json')) == record
+    assert reboot_to_disk_record('second-record') == record
     check('A manually set clock does not overwrite the network-derived timestamp')
-    child.sendline('reload')
-    child.expect_exact('Proceed with reload? [confirm]')
-    child.sendline('')
-    child.expect(pexpect.EOF, timeout=60)
-    stop_qemu(child)
     child = boot()
     command('terminal length 0')
     output = command('show clock detail')

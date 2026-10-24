@@ -3,8 +3,8 @@ package config
 import (
 	"fmt"
 	"net"
-	"strconv"
 	"strings"
+	"unicode"
 )
 
 func (n Network) ValidateOptions() error {
@@ -16,6 +16,11 @@ func (n Network) ValidateOptions() error {
 	}
 	if len(n.Description) > 240 || strings.ContainsAny(n.Description, "\x00\r\n") {
 		return fmt.Errorf("invalid interface description")
+	}
+	for _, c := range n.Description {
+		if unicode.IsControl(c) && c != '\t' {
+			return fmt.Errorf("invalid interface description")
+		}
 	}
 	seen := map[string]bool{n.Address: true}
 	for _, list := range []struct {
@@ -44,7 +49,7 @@ func (n Network) ValidateOptions() error {
 
 func (n Network) RenderOptionsCLI(line func(string, ...any)) {
 	if n.Description != "" {
-		line(" description %s", strconv.Quote(n.Description))
+		line(" description %s", n.Description)
 	}
 	if n.MTU != 0 {
 		line(" mtu %d", n.MTU)

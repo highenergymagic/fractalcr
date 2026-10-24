@@ -10,6 +10,7 @@ import sys
 
 HARNESS_FILES = ('tools/qualify-management.py', 'tools/prepare-launcher.py',
                  'os/tests/qemu-ios-workflow.py', 'os/tests/qemu-aaa.py',
+                 'os/tests/qemu-clock-save.py',
                  'os/tests/ios_prompts.py', 'os/tools/make-data.py',
                  'boot/tools/make-flash.py', 'boot/tests/qemu_process.py')
 
@@ -56,6 +57,17 @@ def main():
                     or (name == 'ios' and evidence.get('source_build') != source)):
                 raise RuntimeError(name + ' qualification does not match the signed image')
             result['checks'][name] = evidence
+        subprocess.run([sys.executable, str(root / 'os/tests/qemu-clock-save.py'),
+                        '--kernel', str(artifacts / 'system.efi'),
+                        '--output', str(output / 'clock-save'),
+                        '--expected-source-build', source], check=True)
+        evidence = json.loads((output / 'clock-save/result-clock-save.json').read_text())
+        with (artifacts / 'system.efi').open('rb') as stream:
+            kernel = hashlib.file_digest(stream, 'sha256').hexdigest()
+        if (not evidence.get('passed') or evidence.get('source_build') != source
+                or evidence.get('kernel_sha256') != kernel):
+            raise RuntimeError('Clock restoration qualification does not match the kernel')
+        result['checks']['clock-save'] = evidence
         result['passed'] = True
     except Exception as error:
         result['error'] = str(error)

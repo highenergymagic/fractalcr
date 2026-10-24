@@ -33,10 +33,10 @@ use are refused. Setup never silently erases an existing installation.
 ctr# configure terminal
 ctr(config)# hostname edge
 edge(config)# interface GigabitEthernet0
-edge(config-interface)# ip address 192.0.2.10 255.255.255.0
-edge(config-interface)# ip gateway 192.0.2.1
-edge(config-interface)# ip name-server 192.0.2.53
-edge(config-interface)# exit
+edge(config-if)# ip address 192.0.2.10 255.255.255.0
+edge(config-if)# ip gateway 192.0.2.1
+edge(config-if)# ip name-server 192.0.2.53
+edge(config-if)# exit
 edge(config)# end
 edge# write memory
 ```
@@ -69,6 +69,11 @@ passwords may contain 1..256 characters. Use `security passwords min-length 12` 
 `username NAME privilege 15 ?` to see the available account settings.
 `show version` includes the source-build identifier of the running image.
 
+`show running-config linenum` adds line numbers. Use
+`show running-config interface GigabitEthernet0` to display one port, or append
+`linenum` to number that selection. Interface descriptions take the remaining
+literal text: quotes and backslashes are part of the description.
+
 Without an enable secret, the physical console can return from `disable` to
 `enable` without a password. SSH requires a configured enable secret to raise
 privilege. `enable LEVEL` and `disable LEVEL` select a privilege level; disable
@@ -81,6 +86,14 @@ filenames, `cd ..`, `/recursive`, `/all`, `all-filesystems`, and filename prefix
 wildcards are supported. `copy` prompts for omitted source names, destination
 names and overwrite confirmation. `delete /force` suppresses confirmation;
 `/recursive` includes directory contents. Operations use named appliance volumes.
+
+`more data0:filename` displays a local file. `more system:running-config` and
+`more nvram:startup-config` display configuration in CLI form. Use `/ascii` for
+text, `/binary` for a hex/text dump, `/compressed` for gzip/zlib data, or
+`/ebcdic` for code page 037. For example,
+`more /ascii data0:notes | include uplink` filters the displayed lines.
+File and decompressed input are limited to 256 KiB per display; larger input
+returns an error rather than silently truncating it.
 
 `file prompt alert` is the default confirmation policy. `file prompt noisy`
 confirms file-operation parameters; `file prompt quiet` suppresses confirmation,
@@ -114,13 +127,13 @@ old address before applying its replacement.
 
 ```
 ctr(config)# interface eth0
-ctr(config-interface)# role management
-ctr(config-interface)# ip address dhcp
-ctr(config-interface)# exit
+ctr(config-if)# role management
+ctr(config-if)# ip address dhcp
+ctr(config-if)# exit
 ctr(config)# interface eth1
-ctr(config-interface)# role container
-ctr(config-interface)# no ip address
-ctr(config-interface)# exit
+ctr(config-if)# role container
+ctr(config-if)# no ip address
+ctr(config-if)# exit
 ctr(config)# network external
 ctr(config-network)# driver macvlan
 ctr(config-network)# parent eth1

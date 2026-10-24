@@ -19,7 +19,7 @@ Consulted 2026-10-24:
 - [Configuration Fundamentals: show through show fm summary](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/command/cf_command_ref/show_through_show_fm_summary.html): filesystem types, aliases, flags and default-device marker.
 - [Configuration Fundamentals: show protocols through showmon](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/command/cf_command_ref/show_protocols_through_showmon.html): scheduled reload status, configuration display, version information.
 - [Configuration Fundamentals: terminal commands](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/command/cf_command_ref/slave_auto-sync_config_through_terminal-type.html): history, screen geometry, and terminal monitoring.
-- [Configuration Fundamentals: monitor through Q](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/command/cf_command_ref/monitor_event-trace_through_Q.html): `pwd` and filesystem context.
+- [Configuration Fundamentals: monitor through Q](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/command/cf_command_ref/monitor_event-trace_through_Q.html): `pwd`, `more`, file display formats, configuration aliases and output filters.
 - [Show-command filtering](https://www.cisco.com/c/en/us/td/docs/ios/fundamentals/command/reference/cf_book/cf_s1.html): section include/exclude behavior.
 - [Cisco IOS XE advisory command example](https://sec.cloudapps.cisco.com/security/center/content/CiscoSecurityAdvisory/cisco-sa-webui-cmdij-FzZAeXAy): the displayed label for `show ... | count ...`.
 - [show clock](https://www.cisco.com/E-Learning/bulk/public/tac/cim/cib/using_cisco_ios_software/cmdrefs/show_clock.htm): synchronization markers and detail output.
@@ -76,12 +76,14 @@ Consulted 2026-10-24:
 | Directory time | Configured timezone and the summer-time offset at each file's timestamp, for file, directory and all-filesystem listings | `TestDirectoryUsesConfiguredClockAtFileTimestamp` |
 | Calendar policy | `ntp update-calendar`, `no` and `default` forms; disabled by default; NTP synchronization independent of RTC update policy; time configuration restarts only time-sync and rolls back on failure | Time-service and CLI policy tests; serial policy/save/reboot qualification |
 | Calendar EXEC privilege | `clock read-calendar` and `clock update-calendar` available at user EXEC; arbitrary date/time setting remains privileged | `TestClockEXECReachesNativeOperations` |
-| NVRAM clock fallback | `clock save interval 8..24` and its documented numbered `no` form; unavailable with a hardware calendar; persist only NTP update timestamps, enforce intervals across service restarts, restore before networking once per boot without rewinding a newer clock | `TestClockSaveIntervalGrammarAndPersistence`; `TestTrackingReferenceRequiresNetworkTime`; `TestSavedClockIntervalAndAuthority`; `TestSavedClockRestoresOnceBeforeNetworking`; `TestSavedClockDevicePolicyAndFailures`; no-calendar hardware boot qualification remains pending |
+| NVRAM clock fallback | `clock save interval 8..24` and its documented numbered `no` form; unavailable with a hardware calendar; persist only NTP update timestamps, enforce intervals across service restarts, restore before networking once per boot without rewinding a newer clock | `TestClockSaveIntervalGrammarAndPersistence`; `TestTrackingReferenceRequiresNetworkTime`; `TestSavedClockIntervalAndAuthority`; `TestSavedClockRestoresOnceBeforeNetworking`; `TestSavedClockDevicePolicyAndFailures`; three-cold-boot no-RTC KVM component qualification passed; the release gate now requires it |
 | Startup display | Documented missing-file response and `Using ... out of ... bytes` header; byte count comes from the same validated saved-file read; capacity is the enforced 256 KiB configuration slot; sanitized read failures | `TestStartupConfigurationOutputAndFailures`; serial workflow assertions added, new-image qualification pending |
 | Numbered configuration | `show running-config linenum`, numbered configuration lines below the unnumbered size header, output filtering after numbering, delegated visibility and file-access gates | `TestRunningConfigurationLineNumbers`; documented Configuration Fundamentals sample; new-image qualification pending |
 | Legacy secret import | Type 5 user and per-level enable secret import, native MD5-crypt verification, bounded canonical encoding and constant-time comparison; plaintext configuration continues to generate type 9 | `TestType5IndependentVectors` using independent OpenSSL vectors; `TestIOSSecretImportAndAlgorithms`; new-image authentication qualification pending |
 | Line usage | Authenticated uses counted per physical/virtual line; retained across management restart; reset on a full machine boot | `TestLineCountersSurviveManagementRestart`; console/SSH restart qualification |
 | Interface selection | Selected interface detail, description, and IP brief display; configured descriptions and observed link state; administrative shutdown forces protocol down | Interface display/dispatch tests; serial qualification |
+| File display | Native `more`, configuration aliases, contextual filesystem help, format selection, output filters, privilege checks, rooted regular-file reads, bounded decompression and terminal control handling | `TestMoreConfigurationAliasesAndPolicy`; `TestMoreNativeConfinementAndWorkingDirectory`; `TestFormatsAndTerminalSafety`; `TestCompressedIntegrityAndLimits`; new-image qualification pending |
+| Interface configuration display | `show running-config interface` with joined or separated type/index and optional `linenum`; selected-port output, delegated visibility and file-access gates; `(config-if)#` prompt | `TestInterfaceRunningConfiguration`; configuration replay tests; new-image qualification pending |
 
 Test names identify executable evidence, not a declaration of complete IOS
 compatibility. The VM report identifies the exact tested system image hash.
@@ -106,6 +108,11 @@ they must not be hidden behind accepted no-op keywords:
   supports local writable volumes, with a 1 MiB response limit and a 64 MiB
   existing-file limit for append. Copy's durable configuration representation
   is the appliance JSON model.
+  Native `more` now exposes local-file reads, configuration aliases, ASCII,
+  hex/text, gzip/zlib decompression and EBCDIC code page 037 display. Remote
+  URLs, additional compressed formats, pager search/filter input and exact ISR
+  binary-dump spacing still require qualification or implementation. Reads and
+  decompression are bounded at 256 KiB and reject oversized files explicitly.
 - Local AAA is not all IOS AAA: CLI views,
   additional Cisco password encodings (including type 6/14),
   and additional line/login settings need separate implementation and
@@ -128,8 +135,12 @@ they must not be hidden behind accepted no-op keywords:
   additional line/terminal settings and their corresponding display fields;
   and the complete
   clock command family (`clock calendar-valid`). The NVRAM fallback now has
-  native persistence and restoration tests, but a no-calendar machine boot and
-  the exact ISR display of restored, non-authoritative time remain unverified.
+  native persistence and restoration tests and a three-cold-boot KVM test with
+  the CMOS driver disabled. That component test used source build
+  `ee686b427839a5ec502c82a48b45b4165b6e054528d191ab257377b7ae5db378` and
+  verified NTP persistence, refusal to persist manual time, and restoration
+  before networking. It bypassed firmware boot and is not an authentication
+  test. The exact ISR display of restored, non-authoritative time remains unverified.
   The implementation reports `*` and `Time source is NVRAM`; this must not be
   treated as a documented byte-for-byte ISR output match.
   Periodic hardware calendar synchronization

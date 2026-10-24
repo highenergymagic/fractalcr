@@ -6,6 +6,73 @@ import (
 	"strings"
 )
 
+func (s *Session) interfaceConfigurationDisplay(words []string) (string, error) {
+	numbered := words[len(words)-1] == "linenum"
+	if numbered {
+		words = words[:len(words)-1]
+	}
+	name := strings.Join(words, "")
+	if s.InterfaceName != nil {
+		var err error
+		name, err = s.InterfaceName(name)
+		if err != nil {
+			return "", err
+		}
+	} else {
+		matched := ""
+		for key := range s.Running.AllInterfaces() {
+			cut, full := strings.IndexAny(name, "0123456789"), strings.IndexAny(key, "0123456789")
+			if strings.EqualFold(name, key) || (cut > 0 && full > 0 && strings.HasPrefix(strings.ToLower(key[:full]), strings.ToLower(name[:cut])) && key[full:] == name[cut:]) {
+				if matched != "" {
+					return "", fmt.Errorf("Ambiguous interface name")
+				}
+				matched = key
+			}
+		}
+		if matched == "" {
+			return "", fmt.Errorf("Invalid interface type and number")
+		}
+		name = matched
+	}
+	_, exists := s.Running.AllInterfaces()[name]
+	if !exists && s.InterfaceNames != nil {
+		for _, candidate := range s.InterfaceNames() {
+			if candidate == name {
+				exists = true
+				break
+			}
+		}
+	}
+	if !exists {
+		return "", fmt.Errorf("Invalid interface type and number")
+	}
+	var b strings.Builder
+	b.WriteString("!\n")
+	active, found := false, false
+	for _, line := range strings.Split(s.configurationText(s.Running), "\n") {
+		if line == "interface "+name {
+			active, found = true, true
+			b.WriteString(line + "\n")
+			continue
+		}
+		if active {
+			if line == " exit" || !strings.HasPrefix(line, " ") {
+				break
+			}
+			b.WriteString(line + "\n")
+		}
+	}
+	// An existing unconfigured port has no non-default settings. A restricted
+	// session must not regain a hidden interface through this narrower view.
+	view := *s
+	view.Mode = "config"
+	if !found && view.Allowed([]string{"interface", name}) {
+		b.WriteString("interface " + name + "\n")
+	}
+	b.WriteString("end\n")
+	return runningConfigurationDisplay(b.String(), numbered), nil
+}
+
 func runningConfigurationDisplay(text string, numbered bool) string {
 	header := fmt.Sprintf("Building configuration...\n\nCurrent configuration : %d bytes\n", len(text))
 	if !numbered {
