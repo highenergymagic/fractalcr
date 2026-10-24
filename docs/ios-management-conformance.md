@@ -84,6 +84,7 @@ Consulted 2026-10-24:
 | Interface selection | Selected interface detail, description, and IP brief display; configured descriptions and observed link state; administrative shutdown forces protocol down | Interface display/dispatch tests; serial qualification |
 | File display | Native `more`, configuration aliases, contextual filesystem help, format selection, output filters, privilege checks, rooted regular-file reads, bounded decompression and terminal control handling | `TestMoreConfigurationAliasesAndPolicy`; `TestMoreNativeConfinementAndWorkingDirectory`; `TestFormatsAndTerminalSafety`; `TestCompressedIntegrityAndLimits`; new-image qualification pending |
 | Interface configuration display | `show running-config interface` with joined or separated type/index and optional `linenum`; selected-port output, delegated visibility and file-access gates; `(config-if)#` prompt | `TestInterfaceRunningConfiguration`; configuration replay tests; new-image qualification pending |
+| Interactive pager | `/` searches remaining output, `+` includes matching lines, `-` excludes them; first filter remains active while later searches are allowed; complete lines span API/log chunks; EOF and Ctrl-C/Z/^ stop output; exact-width lines do not acquire a spurious row | `os/tests/test-pager.c` with ASan/UBSan; native service compiler checks; new-image serial qualification pending |
 
 Test names identify executable evidence, not a declaration of complete IOS
 compatibility. The VM report identifies the exact tested system image hash.
@@ -110,9 +111,11 @@ they must not be hidden behind accepted no-op keywords:
   is the appliance JSON model.
   Native `more` now exposes local-file reads, configuration aliases, ASCII,
   hex/text, gzip/zlib decompression and EBCDIC code page 037 display. Remote
-  URLs, additional compressed formats, pager search/filter input and exact ISR
+  URLs, additional compressed formats and exact ISR
   binary-dump spacing still require qualification or implementation. Reads and
   decompression are bounded at 256 KiB and reject oversized files explicitly.
+  Pager search/filter behavior now has executable tests; exact ISR diagnostics
+  for invalid patterns and attempts to replace an active filter remain unverified.
 - Local AAA is not all IOS AAA: CLI views,
   additional Cisco password encodings (including type 6/14),
   and additional line/login settings need separate implementation and

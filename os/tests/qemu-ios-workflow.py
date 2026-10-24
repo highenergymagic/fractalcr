@@ -199,6 +199,22 @@ try:
     assert 'Using ' in command('more nvram:startup-config')
     command('more data0:__missing_file__', error=True)
     check('Native more displays files, configuration aliases, ASCII/hex formats and filtered output')
+    command('terminal length 4')
+    send('more system:running-config\n'); expect(re.escape(' --More-- '))
+    send('/^line console\r\n'); searched=expect(re.escape(' --More-- '))
+    assert 'filtering...' in searched and 'line console 0' in searched and 'hostname '+hostname not in searched, searched
+    send('q'); prompt()
+    send('more system:running-config\n'); expect(re.escape(' --More-- '))
+    send('+^line \n'); filtered=prompt()
+    assert 'line console 0' in filtered and 'line vty' in filtered and ' exec-timeout' not in filtered, filtered
+    for interrupt in ['\x1a', '\x1e']:
+        send('more system:running-config\n'); expect(re.escape(' --More-- ')); send(interrupt); prompt()
+    send('show history\n'); expect(re.escape(' --More-- '))
+    send('/show history$\n'); history=prompt()
+    assert 'filtering...' in history and 'show history' in history, history
+    command('terminal length 0')
+    assert 'FractalCR Software' in command('show version')
+    check('Pager search and include filters work on native and API output; CRLF, quit, Ctrl-Z and Ctrl-^ return to a usable prompt')
     assert 'version.txt' in command('dir data0:version.txt')
     command('show clock | append data0:version.txt')
     assert 'Time source is' in command('show clock detail | tee data0:clock.txt')

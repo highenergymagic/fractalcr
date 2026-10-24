@@ -11,11 +11,13 @@ gcc "${flags[@]}" "$editor/virtiofsd.c" -o /tmp/fractal-virtiofsd
 gcc "${flags[@]}" "$editor/buildkit-runc.c" -o /tmp/fractal-buildkit-runc
 gcc "${flags[@]}" -I"$editor" os/tests/test-line-editor.c "$editor/line-editor.c" -o /tmp/line-editor-test
 /tmp/line-editor-test
+gcc "${flags[@]}" -I"$editor" os/tests/test-pager.c "$editor/pager.c" -o /tmp/pager-test
+/tmp/pager-test
 gcc "${flags[@]}" os/tests/test-syslog.c "$editor/syslog.c" service/supervisor.c -o /tmp/syslog-test
 /tmp/syslog-test
 gcc "${flags[@]}" service/manager.c service/graph.c service/supervisor.c -o /tmp/fractal-init
 gcc "${flags[@]}" -DFCR_ROMMON service/manager.c service/graph.c service/supervisor.c -o /tmp/rommon-init
-gcc "${flags[@]}" os/meta-fractal/recipes-core/fractal-init/files/{platform,console,line-editor,syslog}.c \
+gcc "${flags[@]}" os/meta-fractal/recipes-core/fractal-init/files/{platform,console,line-editor,pager,syslog}.c \
     service/{supervisor,control,logging}.c -ljson-c -lblkid -lutil -o /tmp/platform
 gcc "${flags[@]}" boot/tests/test-monitor.c service/{supervisor,control,logging}.c -lcrypto -o /tmp/monitor-test
 /tmp/monitor-test
