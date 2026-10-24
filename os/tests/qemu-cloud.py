@@ -63,6 +63,8 @@ def login():
     for attempt in range(20):
         child=pexpect.spawn('ssh',['-tt']+ssh_args(),encoding='utf-8',timeout=10)
         try:
+            child.expect_exact('Press RETURN to get started!')
+            child.sendline('')
             child.expect_exact('vps-test# '); return child
         except (pexpect.EOF,pexpect.TIMEOUT):
             child.close(force=True)
