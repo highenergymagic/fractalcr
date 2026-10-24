@@ -144,6 +144,9 @@ func (s *Session) execute(line string) (string, error) {
 		return "", err
 	}
 	if filter != nil {
+		if filter.Redirect() {
+			return "", errors.New("output redirection requires the appliance terminal")
+		}
 		result, e := s.execute(Join(base))
 		if e != nil {
 			return "", e
@@ -159,6 +162,34 @@ func (s *Session) execute(line string) (string, error) {
 	}
 	if handled, output, err := s.aaaCommand(w); handled {
 		return output, err
+	}
+	if line == "no clock timezone" || line == "default clock timezone" {
+		s.Candidate.Clock.Zone = ""
+		s.Candidate.Clock.OffsetMinutes = 0
+		return "", nil
+	}
+	if len(w) >= 4 && w[0] == "clock" && w[1] == "timezone" {
+		minutes := "0"
+		if len(w) == 5 {
+			minutes = w[4]
+		}
+		c, err := config.ParseTimezone(w[2], w[3], minutes)
+		if err == nil {
+			c.Summer = s.Candidate.Clock.Summer
+			s.Candidate.Clock = c
+		}
+		return "", err
+	}
+	if line == "no clock summer-time" {
+		s.Candidate.Clock.Summer = nil
+		return "", nil
+	}
+	if len(w) >= 4 && w[0] == "clock" && w[1] == "summer-time" {
+		summer, err := config.ParseSummerTime(w[2], w[3], w[4:])
+		if err == nil {
+			s.Candidate.Clock.Summer = summer
+		}
+		return "", err
 	}
 	if w[0] == "do" {
 		if s.Mode == "" {

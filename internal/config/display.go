@@ -21,6 +21,12 @@ func (c Config) CLI() string {
 	var b strings.Builder
 	line := func(format string, args ...any) { fmt.Fprintf(&b, format+"\n", args...) }
 	line("!\nhostname %s", c.Hostname)
+	if clock := c.Clock.CLI(); clock != "" {
+		line("%s", clock)
+	}
+	if c.Clock.Summer != nil {
+		line("%s", c.Clock.Summer.CLI())
+	}
 	if c.FilePrompt != "" && c.FilePrompt != "alert" {
 		line("file prompt %s", c.FilePrompt)
 	}
@@ -34,14 +40,19 @@ func (c Config) CLI() string {
 	for _, name := range Keys(c.AAA.Users) {
 		u := c.AAA.Users[name]
 		if u.Secret != "" {
-			line("username %s privilege %d secret pbkdf2 %s", name, u.Privilege, u.Secret)
+			line("username %s privilege %d secret %s", name, u.Privilege, SecretCLI(u.Secret))
 		}
 		for _, key := range u.SSHKeys {
 			line("username %s privilege %d ssh-key %s", name, u.Privilege, key)
 		}
 	}
 	if c.AAA.EnableSecret != "" {
-		line("enable secret pbkdf2 %s", c.AAA.EnableSecret)
+		line("enable secret %s", SecretCLI(c.AAA.EnableSecret))
+	}
+	for level := 1; level < 15; level++ {
+		if secret := c.AAA.EnableSecrets[level]; secret != "" {
+			line("enable secret level %d %s", level, SecretCLI(secret))
+		}
 	}
 	if c.AAA.Enabled {
 		line("aaa new-model\naaa authentication login default local\naaa authorization exec default local")
@@ -217,4 +228,11 @@ func (c Config) CLI() string {
 	return b.String()
 }
 
-func ValidateSecret(encoded string) error { _, _, err := secretParts(encoded); return err }
+func ValidateSecret(encoded string) error {
+	if strings.HasPrefix(encoded, "$8$") || strings.HasPrefix(encoded, "$9$") {
+		_, _, _, err := iosSecretParts(encoded)
+		return err
+	}
+	_, _, err := secretParts(encoded)
+	return err
+}

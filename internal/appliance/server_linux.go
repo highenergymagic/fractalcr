@@ -29,6 +29,8 @@ type reply struct {
 	Secret      bool        `json:"secret,omitempty"`
 	Close       bool        `json:"close,omitempty"`
 	Filter      *cli.Filter `json:"filter,omitempty"`
+	Notify      string      `json:"notify,omitempty"`
+	Privilege   *int        `json:"privilege,omitempty"`
 }
 
 func readManagementRequest(r io.Reader) (managementRequest, error) {
@@ -36,7 +38,7 @@ func readManagementRequest(r io.Reader) (managementRequest, error) {
 	scanner := bufio.NewScanner(r)
 	// The editor accepts 2047 bytes. JSON escaping can expand each byte to
 	// six characters, in addition to the session's authentication fields.
-	scanner.Buffer(make([]byte, 4096), 16*1024)
+	scanner.Buffer(make([]byte, 4096), 7*1024*1024)
 	if !scanner.Scan() {
 		if err := scanner.Err(); err != nil {
 			return request, err
@@ -67,6 +69,7 @@ func Serve() error {
 		return err
 	}
 	sessions := map[int32]*loginSession{}
+	var lineUses [config.VTYCount + 1]uint64
 	load := func() *loginSession {
 		c, e := loadRunning()
 		if e != nil {
@@ -74,6 +77,7 @@ func Serve() error {
 		}
 		s := &loginSession{cli: &cli.Session{Running: c, Candidate: c.Clone(), StateDir: "/datastore/data0/config", Apply: Apply, InterfaceName: canonicalInterface, InterfaceNames: interfaceNames, FileSystems: filesystemNames, Save: Save, EnforcePrivilege: true}, stage: "username", last: time.Now()}
 		s.cli.Platform = s.operations
+		s.terminal = defaultTerminal()
 		return s
 	}
 	// Malformed configuration fails closed; ROMMON 0x2142 selects explicit
@@ -128,10 +132,25 @@ func Serve() error {
 				continue
 			}
 			login = load()
+			login.noticeSequence, _ = reloads.notifications(^uint64(0))
 			sessions[peerPID] = login
 		}
 		session := login.cli
+		if request.Terminal != nil {
+			login.terminal = *request.Terminal
+		}
+		wasAuthenticated := login.authenticated
 		respond := func(response reply) {
+			if login.authenticated {
+				level := session.Privilege
+				response.Privilege = &level
+			}
+			if !wasAuthenticated && login.authenticated {
+				lineUses[terminalLine(login)]++
+			}
+			if login.authenticated && !response.Challenge {
+				login.noticeSequence, response.Notify = reloads.notifications(login.noticeSequence)
+			}
 			login.commandCompleted(request, time.Now())
 			conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 			json.NewEncoder(conn).Encode(response)
@@ -190,6 +209,26 @@ func Serve() error {
 			continue
 		}
 		line := strings.TrimSpace(request.Command)
+		if request.Action == "output" {
+			response := reply{Prompt: session.Prompt()}
+			f := login.pendingOutput
+			login.pendingOutput = nil
+			if f == nil {
+				response.Error = "No output redirection is pending."
+			} else {
+				var err error
+				response.Output, err = login.writeOutput(f, request.Command)
+				if err != nil {
+					response.Error = err.Error()
+				}
+			}
+			respond(response)
+			conn.Close()
+			continue
+		}
+		if request.Action == "" {
+			login.pendingOutput = nil
+		}
 		if login.pendingCopy != nil {
 			respond(login.answerCopy(line))
 			conn.Close()
@@ -269,6 +308,9 @@ func Serve() error {
 			if err == nil && !session.Allowed(words) {
 				err = fmt.Errorf("Authorization failed.")
 			}
+			if err == nil && filter.Redirect() && session.Privilege != 15 {
+				err = fmt.Errorf("Authorization failed.")
+			}
 			if err == nil && current.AAA.Enabled {
 				err = audit(login.user, login.transport, "command", line)
 			}
@@ -293,15 +335,6 @@ func Serve() error {
 				}
 				if len(fwords) == 3 && fwords[0] == "copy" && fwords[2] != "candidate-config" {
 					respond(login.beginCopy(fwords))
-					conn.Close()
-					continue
-				}
-				if strings.Join(fwords, " ") == "show reload" {
-					out := reloads.status(time.Now())
-					if filter != nil {
-						out = filter.Apply(out)
-					}
-					respond(reply{Prompt: session.Prompt(), Output: out})
 					conn.Close()
 					continue
 				}
@@ -333,14 +366,20 @@ func Serve() error {
 				} else {
 					argv = append([]string{"/usr/libexec/fractal-workload", service}, args...)
 				}
+			} else if err == nil && len(native) >= 2 && native[0] == "show" && native[1] == "line" {
+				output = showLine(native, sessions, login, lineUses, time.Now())
+			} else if err == nil && len(native) == 2 && native[0] == "show" && native[1] == "terminal" {
+				output = terminalDisplay(login, terminalLine(login), current, time.Now())
 			} else if local && err == nil {
 				localCommand = line
 			} else if err == nil {
 				switch line {
+				case "show reload":
+					output = reloads.status(time.Now())
 				case "help":
 					output = cli.Help
-				case "show users":
-					output = sessionUsers(sessions, login, time.Now())
+				case "show users", "show users all", "show users wide", "show users all wide":
+					output = sessionUsersOptions(sessions, login, time.Now(), strings.Contains(line, " all"), strings.HasSuffix(line, " wide"))
 				case "show configuration diff":
 					output = configDiff(session.Running, session.Candidate)
 				case "copy startup-config candidate-config":
@@ -367,6 +406,14 @@ func Serve() error {
 						output, err = session.Execute(cli.Join(words))
 					}
 				}
+			}
+		}
+		if err == nil && filter.Redirect() {
+			if localCommand != "" {
+				login.pendingOutput = filter
+			} else {
+				output, err = login.writeOutput(filter, strings.TrimSuffix(output, "\n")+"\n")
+				filter = nil
 			}
 		}
 		response := reply{Output: output, Prompt: session.Prompt(), Completion: completion, Local: localCommand, Argv: argv, Filter: filter}

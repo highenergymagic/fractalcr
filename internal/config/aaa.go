@@ -12,7 +12,8 @@ import (
 	"strings"
 )
 
-// Secrets are salted PBKDF2-SHA256 verifiers, never reversible IOS type 7.
+// Retain the original PBKDF2 format for existing configurations. New passwords
+// use IOS type 9; imported type 7 passwords are rehashed before storage.
 const secretRounds = 600000
 
 type User struct {
@@ -50,6 +51,7 @@ type AAA struct {
 	Enabled           bool            `json:"enabled"`
 	Users             map[string]User `json:"users,omitempty"`
 	EnableSecret      string          `json:"enable_secret,omitempty"`
+	EnableSecrets     map[int]string  `json:"enable_secrets,omitempty"`
 	SSH               bool            `json:"ssh"`
 	SSHPort           int             `json:"ssh_port,omitempty"`
 	ConsoleTimeout    int             `json:"console_timeout_seconds"`
@@ -59,6 +61,13 @@ type AAA struct {
 }
 
 const VTYCount = 16
+
+func (a AAA) EnableVerifier(level int) string {
+	if level == 15 {
+		return a.EnableSecret
+	}
+	return a.EnableSecrets[level]
+}
 
 type VTYLine struct {
 	Timeout int  `json:"timeout_seconds"`
@@ -87,7 +96,7 @@ func (a AAA) HashPassword(password string) (string, error) {
 	if len(password) < a.PasswordMinLength {
 		return "", fmt.Errorf("password is shorter than the configured minimum of %d characters", a.PasswordMinLength)
 	}
-	return HashSecret(password)
+	return a.HashIOSSecret("9", password)
 }
 
 func HashSecret(password string) (string, error) {
@@ -117,6 +126,9 @@ func secretParts(encoded string) ([]byte, []byte, error) {
 	return salt, key, nil
 }
 func CheckSecret(encoded, password string) bool {
+	if strings.HasPrefix(encoded, "$8$") || strings.HasPrefix(encoded, "$9$") {
+		return checkIOSSecret(encoded, password)
+	}
 	salt, want, err := secretParts(encoded)
 	if err != nil || len(password) > 256 {
 		return false
@@ -134,7 +146,7 @@ func (a AAA) Validate() error {
 			return errors.New("invalid local username or privilege (0..15)")
 		}
 		if u.Secret != "" || len(u.SSHKeys) == 0 {
-			if _, _, err := secretParts(u.Secret); err != nil {
+			if err := ValidateSecret(u.Secret); err != nil {
 				return fmt.Errorf("user %s: %w", name, err)
 			}
 		}
@@ -169,8 +181,18 @@ func (a AAA) Validate() error {
 		}
 	}
 	if a.EnableSecret != "" {
-		_, _, err := secretParts(a.EnableSecret)
-		return err
+		err := ValidateSecret(a.EnableSecret)
+		if err != nil {
+			return err
+		}
+	}
+	for level, secret := range a.EnableSecrets {
+		if level < 1 || level >= 15 {
+			return errors.New("enable secret level must be 1..14; level 15 uses the default secret")
+		}
+		if err := ValidateSecret(secret); err != nil {
+			return err
+		}
 	}
 	return nil
 }

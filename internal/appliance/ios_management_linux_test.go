@@ -36,6 +36,7 @@ func TestIOSEnableConsoleAndVTY(t *testing.T) {
 	}
 	s := &loginSession{transport: "console", cli: &cli.Session{Running: c, Privilege: 1}}
 	c.AAA.EnableSecret = "configured"
+	c.AAA.EnableSecrets = map[int]string{7: "level-seven"}
 	if r := s.enable(7, c); !r.Secret || s.enableLevel != 7 || s.cli.Privilege != 1 {
 		t.Fatal(r)
 	}

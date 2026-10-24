@@ -39,7 +39,7 @@ func TestIOSPasswordDefaultsAndInputTypes(t *testing.T) {
 		t.Fatal("enable secret type 0 failed")
 	}
 	before := string(s.Candidate.JSON())
-	for _, line := range []string{"user freya priv 15 password 0", "user freya password 7 0822455D0A16", "user freya secret 9 CiscoEncodedSecret", "enable secret 5 CiscoEncodedSecret", "user newuser priv 15"} {
+	for _, line := range []string{"user freya priv 15 password 0", "user freya password 7 malformed", "user freya secret 7 0822455D0A16", "user freya secret 9 CiscoEncodedSecret", "enable secret 5 CiscoEncodedSecret", "user newuser priv 15"} {
 		if _, err := s.Execute(line); err == nil {
 			t.Fatalf("accepted %q", line)
 		}

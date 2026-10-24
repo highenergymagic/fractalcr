@@ -5,6 +5,28 @@ import (
 	"testing"
 )
 
+func TestOutputRedirectionGrammar(t *testing.T) {
+	s := session(t)
+	for _, cmd := range []string{"show version | redirect data0:version", "show clock | append data0:log", "show clock | tee /append data0:log"} {
+		w, _, err := s.Resolve(cmd)
+		if err != nil {
+			t.Fatal(cmd, err)
+		}
+		_, f, err := SplitFilter(w)
+		if err != nil || !f.Redirect() {
+			t.Fatal(f, err)
+		}
+	}
+	s.EnforcePrivilege = true
+	s.Privilege = 1
+	if _, _, err := s.Resolve("show clock | redirect data0:log"); err == nil {
+		t.Fatal("user EXEC can redirect output")
+	}
+	if strings.Contains(s.ContextHelp("show clock | "), "redirect") {
+		t.Fatal("privileged redirection shown in user EXEC")
+	}
+}
+
 func TestOutputFiltersShareGrammar(t *testing.T) {
 	s := session(t)
 	for _, tt := range []struct{ kind, want string }{{"include", "two"}, {"exclude", "one\nthree"}, {"begin", "two\nthree"}, {"count", "Number of lines which match regexp = 1"}} {

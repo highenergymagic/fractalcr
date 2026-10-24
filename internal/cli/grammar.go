@@ -36,12 +36,17 @@ var execCommands = []Command{
 	{"logout", "Close the EXEC session", false},
 	{"show privilege", "Current privilege level", false},
 	{"show users", "Authenticated sessions", false},
+	{"show users all", "Display all terminal lines", false},
+	{"show users wide", "Display complete user names", false},
+	{"show users all wide", "Display all terminal lines in wide format", false},
 	{"request container-engine <ARG...>", "Container Engine, Compose, Buildx and Swarm operations", false},
 	{"request container-build <ARG...>", "Image builds and build cache operations", false},
 	{"terminal length <0-512>", "Set page length; zero disables pagination", true},
 	{"terminal width <40-512>", "Set terminal display width", true},
 	{"terminal history size <0-256>", "Set command history size", true},
 	{"terminal history", "Enable command history", true},
+	{"terminal editing", "Enable enhanced command editing", true},
+	{"terminal no editing", "Disable enhanced command editing", true},
 	{"terminal no history", "Disable command history", true},
 	{"terminal no history size", "Restore the default history size", true},
 	{"terminal monitor", "Display system messages on this terminal", true},
@@ -49,7 +54,11 @@ var execCommands = []Command{
 	{"show version", "Software and platform version", true},
 	{"show inventory", "Hardware inventory", true},
 	{"show history", "Recent commands in this terminal session", true},
-	{"show terminal", "Terminal display and history settings", true},
+	{"show terminal", "Terminal parameters", false},
+	{"show line", "Terminal line summary", false},
+	{"show line <0-16>", "Terminal line parameters", false},
+	{"show line console 0", "Console line parameters", false},
+	{"show line vty <0-15>", "Virtual terminal line parameters", false},
 	{"show platform", "Platform status", true},
 	{"show platform software service", "Supervised service status", true},
 	{"show logging", "System event log", true},
@@ -87,6 +96,13 @@ var execCommands = []Command{
 	{"show images", "Container images", false},
 	{"show clock", "Current system time", false},
 	{"show clock detail", "System clock and time source", false},
+	{"show calendar", "Hardware calendar", false},
+	{"clock set <hh:mm:ss> <1-31> <MONTH> <1993-2035>", "Set the software clock", false},
+	{"clock set <hh:mm:ss> <MONTH> <1-31> <1993-2035>", "Set the software clock", false},
+	{"clock read-calendar", "Read the hardware calendar into the software clock", false},
+	{"clock update-calendar", "Update the hardware calendar from the software clock", false},
+	{"calendar set <hh:mm:ss> <1-31> <MONTH> <1993-2035>", "Set the hardware calendar", false},
+	{"calendar set <hh:mm:ss> <MONTH> <1-31> <1993-2035>", "Set the hardware calendar", false},
 	{"show ntp status", "Time synchronization status", false},
 	{"show ntp associations", "Time sources", false},
 	{"show networks", "Docker networks", false},
@@ -129,6 +145,10 @@ var configCommands = []Command{
 	{"username <NAME> secret pbkdf2 <SECRET...>", "Import a PBKDF2 secret verifier", false},
 	{"enable secret pbkdf2 <SECRET...>", "Import a PBKDF2 enable verifier", false},
 	{"no enable secret", "Remove the enable secret", false},
+	{"no enable secret level <1-15>", "Remove the enable secret for this privilege level", false},
+	{"enable secret level <1-15> <SECRET...>", "Set the enable secret for this privilege level", false},
+	{"enable secret level <1-15> 0 <SECRET...>", "Cleartext input, stored as a salted hash", false},
+	{"enable secret level <1-15> pbkdf2 <SECRET...>", "Import a PBKDF2 enable verifier", false},
 	{"aaa new-model", "Enable local authentication, authorization and accounting", false},
 	{"no aaa new-model", "Disable local AAA and SSH", false},
 	{"aaa authentication login default local", "Authenticate using local users", false},
@@ -157,6 +177,16 @@ var configCommands = []Command{
 	{"security passwords min-length <0-256>", "Minimum length for newly configured passwords", false},
 	{"no security passwords min-length", "Remove the minimum password length policy", false},
 	{"hostname <NAME>", "Set the appliance hostname", false},
+	{"clock timezone <ZONE> <HOURS>", "Timezone offset from UTC in hours", false},
+	{"clock timezone <ZONE> <HOURS> <0-59>", "Additional timezone offset minutes", false},
+	{"no clock timezone", "Use UTC", false},
+	{"default clock timezone", "Use UTC", false},
+	{"clock summer-time <ZONE> recurring", "Use recurring United States summer-time rules", false},
+	{"clock summer-time <ZONE> date <1-31> <MONTH> <1993-2035> <TIME> <1-31> <MONTH> <1993-2035> <TIME>", "Configure dated summer-time transitions", false},
+	{"clock summer-time <ZONE> date <1-31> <MONTH> <1993-2035> <TIME> <1-31> <MONTH> <1993-2035> <TIME> <1-1440>", "Summer-time offset in minutes", false},
+	{"clock summer-time <ZONE> date <MONTH> <1-31> <1993-2035> <TIME> <MONTH> <1-31> <1993-2035> <TIME>", "Configure dated summer-time transitions", false},
+	{"clock summer-time <ZONE> date <MONTH> <1-31> <1993-2035> <TIME> <MONTH> <1-31> <1993-2035> <TIME> <1-1440>", "Summer-time offset in minutes", false},
+	{"no clock summer-time", "Disable summer-time adjustment", false},
 	{"file prompt alert", "Prompt for destructive file operations", false},
 	{"file prompt noisy", "Confirm file operation parameters", false},
 	{"file prompt quiet", "Suppress file operation confirmations", false},
@@ -231,6 +261,30 @@ func commandTokenHelp(path []string) string {
 		path = path[1:]
 	}
 	prefix := strings.Join(path, " ")
+	if strings.HasPrefix(prefix, "clock summer-time ") {
+		switch word {
+		case "<ZONE>":
+			return "Name of time zone in summer"
+		case "<1-4>":
+			return "Week number"
+		case "first":
+			return "First week of the month"
+		case "last":
+			return "Last week of the month"
+		case "<DAY>":
+			return "Day of the week"
+		case "<MONTH>":
+			return "Month of the year"
+		case "<TIME>":
+			return "Transition time (hh:mm)"
+		case "<1-31>":
+			return "Day of the month"
+		case "<1993-2035>":
+			return "Year"
+		case "<1-1440>":
+			return "Offset to add in minutes"
+		}
+	}
 	switch {
 	case word == "/all":
 		return "Include all file entries"
@@ -274,6 +328,9 @@ func (n *node) add(c Command) {
 	if (strings.HasPrefix(c.Syntax, "show ") || strings.HasPrefix(c.Syntax, "do show ") || c.Syntax == "dir" || strings.HasPrefix(c.Syntax, "dir ") || c.Syntax == "do dir" || strings.HasPrefix(c.Syntax, "do dir ")) && !strings.Contains(c.Syntax, " | ") {
 		for _, kind := range []string{"include", "exclude", "begin", "count", "section", "section include", "section exclude"} {
 			n.add(Command{c.Syntax + " | " + kind + " <REGEX...>", "Filter output using a regular expression", c.Local})
+		}
+		for _, kind := range []string{"redirect", "append", "tee", "tee /append"} {
+			n.add(Command{c.Syntax + " | " + kind + " <filesystem:>", "Write command output to a file", c.Local})
 		}
 	}
 	path := strings.Fields(c.Syntax)
@@ -329,10 +386,34 @@ func (s *Session) grammar() *node {
 			}
 		}
 	}
+	if s.EnforcePrivilege && s.Privilege < 15 {
+		var hideWrites func(*node)
+		hideWrites = func(n *node) {
+			if n.word == "|" {
+				children := n.children[:0]
+				for _, child := range n.children {
+					if child.word != "redirect" && child.word != "append" && child.word != "tee" {
+						children = append(children, child)
+					}
+				}
+				n.children = children
+			}
+			for _, child := range n.children {
+				hideWrites(child)
+			}
+		}
+		hideWrites(root)
+	}
 	return root
 }
 
 func init() {
+	for _, first := range []string{"<1-4>", "first", "last"} {
+		for _, last := range []string{"<1-4>", "first", "last"} {
+			base := "clock summer-time <ZONE> recurring " + first + " <DAY> <MONTH> <TIME> " + last + " <DAY> <MONTH> <TIME>"
+			configCommands = append(configCommands, Command{base, "Configure recurring summer-time transitions", false}, Command{base + " <1-1440>", "Summer-time offset in minutes", false})
+		}
+	}
 	for _, mode := range []string{"line-console", "line-vty"} {
 		modeCommands[mode] = append(modeCommands[mode], "no exec-timeout", "default exec-timeout")
 	}
@@ -370,6 +451,14 @@ func (e *SyntaxError) Error() string {
 func parameter(n *node) bool { return strings.HasPrefix(n.word, "<") }
 
 func acceptsArgument(n *node, word string) bool {
+	if n.word == "<MONTH>" {
+		for _, month := range []string{"january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"} {
+			if len(word) >= 3 && strings.HasPrefix(month, strings.ToLower(word)) {
+				return true
+			}
+		}
+		return false
+	}
 	// Ranges are grammar constraints, so parsing, help traversal and completion
 	// all reject an out-of-range value at the same token.
 	limits := strings.Split(strings.Trim(n.word, "<>"), "-")

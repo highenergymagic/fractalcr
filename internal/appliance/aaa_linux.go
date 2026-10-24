@@ -14,18 +14,25 @@ import (
 
 type managementRequest struct {
 	// Action is an editor/control event. Command is always literal user text.
-	Action    string `json:"action,omitempty"`
-	Command   string `json:"command"`
-	User      string `json:"user,omitempty"`
-	Transport string `json:"transport,omitempty"`
-	Verifier  string `json:"verifier,omitempty"`
-	VTY       int    `json:"vty,omitempty"`
-	Peer      string `json:"peer,omitempty"`
+	Action    string         `json:"action,omitempty"`
+	Command   string         `json:"command"`
+	User      string         `json:"user,omitempty"`
+	Transport string         `json:"transport,omitempty"`
+	Verifier  string         `json:"verifier,omitempty"`
+	VTY       int            `json:"vty,omitempty"`
+	Peer      string         `json:"peer,omitempty"`
+	Terminal  *terminalState `json:"terminal,omitempty"`
 }
 
 func (r managementRequest) validate() error {
+	if (r.Action != "output" && len(r.Command) > 16384) || len(r.Command) > 1024*1024 {
+		return fmt.Errorf("management input exceeds limit")
+	}
+	if r.Terminal != nil && (r.Terminal.Length > 512 || r.Terminal.Width < 40 || r.Terminal.Width > 512 || r.Terminal.HistorySize > 256) {
+		return fmt.Errorf("invalid terminal state")
+	}
 	switch r.Action {
-	case "", "help", "complete":
+	case "", "help", "complete", "output":
 		return nil
 	case "connect", "tick", "cancel", "end":
 		if r.Command == "" {
@@ -50,6 +57,10 @@ type loginSession struct {
 	peer                             string
 	workingDirectory                 string
 	last                             time.Time
+	activated                        time.Time
+	terminal                         terminalState
+	noticeSequence                   uint64
+	pendingOutput                    *cli.Filter
 }
 type loginFailure struct {
 	count int
@@ -134,6 +145,7 @@ func (s *loginSession) logout() {
 	s.pendingFile = nil
 	s.pendingReload = nil
 	s.pendingCopy = nil
+	s.pendingOutput = nil
 	s.setup = nil
 	s.authenticated = false
 	s.bootstrap = false
@@ -198,6 +210,7 @@ func (s *loginSession) authenticate(r managementRequest, c config.Config, now ti
 			s.bootstrap = true
 		}
 		if s.authenticated {
+			s.activated = now
 			if c.AAA.Enabled {
 				if e := audit(s.user, s.transport, "login", ""); e != nil {
 					s.logout()
@@ -273,7 +286,7 @@ func (s *loginSession) authenticate(r managementRequest, c config.Config, now ti
 		u, exists := c.AAA.Users[s.user]
 		verifier := u.Secret
 		if s.stage == "enable" {
-			verifier = c.AAA.EnableSecret
+			verifier = c.AAA.EnableVerifier(s.enableLevel)
 			exists = verifier != ""
 		}
 		if !exists || !config.CheckSecret(verifier, r.Command) {
@@ -297,12 +310,10 @@ func (s *loginSession) authenticate(r managementRequest, c config.Config, now ti
 		event := "login"
 		if s.stage == "enable" {
 			s.cli.Privilege = s.enableLevel
-			if s.enableLevel == 0 {
-				s.cli.Privilege = 15
-			}
 			event = "enable"
 		} else {
 			s.cli.Privilege = u.Privilege
+			s.activated = now
 			s.verifier = u.AuthVerifier()
 			s.userPrivilege = u.Privilege
 		}

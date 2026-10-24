@@ -6,13 +6,37 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"fractalcr/internal/config"
 )
 
 func sessionUsers(sessions map[int32]*loginSession, current *loginSession, now time.Time) string {
+	return sessionUsersOptions(sessions, current, now, false, false)
+}
+
+func sessionUsersOptions(sessions map[int32]*loginSession, current *loginSession, now time.Time, all, wide bool) string {
 	var users []*loginSession
 	for _, s := range sessions {
 		if s.authenticated {
 			users = append(users, s)
+		}
+	}
+	if all {
+		for n := -1; n < config.VTYCount; n++ {
+			found := false
+			for _, s := range users {
+				if (n == -1 && s.transport == "console") || (n >= 0 && s.transport == "ssh" && s.vty == n) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				s := &loginSession{transport: "ssh", vty: n}
+				if n == -1 {
+					s.transport = "console"
+				}
+				users = append(users, s)
+			}
 		}
 	}
 	sort.Slice(users, func(i, j int) bool {
@@ -32,6 +56,10 @@ func sessionUsers(sessions map[int32]*loginSession, current *loginSession, now t
 		if s == current {
 			marker = "*"
 		}
+		if !s.authenticated {
+			fmt.Fprintf(&b, "  %10s\n", line)
+			continue
+		}
 		seconds := int(now.Sub(s.last) / time.Second)
 		if seconds < 0 || s == current {
 			seconds = 0
@@ -41,7 +69,11 @@ func sessionUsers(sessions map[int32]*loginSession, current *loginSession, now t
 		if host, _, err := net.SplitHostPort(peer); err == nil {
 			peer = host
 		}
-		fmt.Fprintf(&b, "%s %10s %-10s %-20s %-10s %s\n", marker, line, displayText(s.user), "idle", idle, displayText(peer))
+		user := displayText(s.user)
+		if !wide && len(user) > 10 {
+			user = user[:10]
+		}
+		fmt.Fprintf(&b, "%s %10s %-10s %-20s %-10s %s\n", marker, line, user, "idle", idle, displayText(peer))
 	}
 	return b.String()
 }

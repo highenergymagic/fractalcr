@@ -27,10 +27,10 @@ func (s *Session) Allowed(words []string) bool {
 	if s.Privilege < 1 {
 		return false
 	}
-	if words[0] == "terminal" {
+	if words[0] == "terminal" || (len(words) >= 2 && words[0] == "show" && (words[1] == "users" || words[1] == "line")) {
 		return true
 	}
-	if words[0] == "dir" || words[0] == "cd" || command == "pwd" || command == "show file systems" || command == "show reload" || command == "show clock detail" {
+	if words[0] == "dir" || words[0] == "cd" || command == "pwd" || command == "show file systems" || command == "show reload" || command == "show clock detail" || command == "show calendar" {
 		return true
 	}
 	// Configuration, logs, workload inspection and native clients may contain
@@ -43,6 +43,28 @@ func (s *Session) Allowed(words []string) bool {
 	return false
 }
 func (s *Session) aaaCommand(w []string) (bool, string, error) {
+	if len(w) > 0 && (w[0] == "enable" || w[0] == "username") {
+		for _, i := range []int{1, 2, 4} {
+			if i >= len(w) || w[i] != "algorithm-type" || (w[0] == "enable" && i != 1) || (w[0] == "username" && (i == 1 || (i == 4 && w[2] != "privilege"))) {
+				continue
+			}
+			if i+3 >= len(w) || w[i+2] != "secret" {
+				return true, "", errors.New("incomplete secret algorithm command")
+			}
+			kind := "9"
+			if w[i+1] == "sha256" {
+				kind = "8"
+			} else if w[i+1] != "scrypt" {
+				return true, "", errors.New("unsupported secret algorithm")
+			}
+			h, err := s.Candidate.AAA.HashIOSSecret(kind, strings.Join(w[i+3:], " "))
+			if err != nil {
+				return true, "", err
+			}
+			next := append(append([]string{}, w[:i]...), "secret", kind, h)
+			return s.aaaCommand(next)
+		}
+	}
 	if len(w) > 0 && w[0] == "disable" {
 		level := 1
 		if s.Privilege < level {
@@ -181,6 +203,9 @@ func (s *Session) aaaCommand(w []string) (bool, string, error) {
 			i += 2
 		}
 		if i < len(w) {
+			if w[i] == "secret" && i+1 < len(w) && w[i+1] == "7" {
+				return true, "", errors.New("type 7 is a password encoding, not a secret encoding")
+			}
 			h, e := s.hashCLISecret(w[i+1:])
 			if e != nil {
 				return true, "", e
@@ -196,11 +221,35 @@ func (s *Session) aaaCommand(w []string) (bool, string, error) {
 		return true, "", nil
 	}
 	if len(w) >= 3 && w[0] == "enable" && w[1] == "secret" {
-		h, e := s.hashCLISecret(w[2:])
+		level, start := 15, 2
+		if w[2] == "level" {
+			level, _ = strconv.Atoi(w[3])
+			start = 4
+		}
+		if start < len(w) && w[start] == "7" {
+			return true, "", errors.New("type 7 is a password encoding, not a secret encoding")
+		}
+		h, e := s.hashCLISecret(w[start:])
 		if e == nil {
-			s.Candidate.AAA.EnableSecret = h
+			if level == 15 {
+				s.Candidate.AAA.EnableSecret = h
+			} else {
+				if s.Candidate.AAA.EnableSecrets == nil {
+					s.Candidate.AAA.EnableSecrets = map[int]string{}
+				}
+				s.Candidate.AAA.EnableSecrets[level] = h
+			}
 		}
 		return true, "", e
+	}
+	if len(w) == 5 && w[0] == "no" && w[1] == "enable" && w[2] == "secret" && w[3] == "level" {
+		level, _ := strconv.Atoi(w[4])
+		if level == 15 {
+			s.Candidate.AAA.EnableSecret = ""
+		} else {
+			delete(s.Candidate.AAA.EnableSecrets, level)
+		}
+		return true, "", nil
 	}
 	if (len(w) == 2 || len(w) == 3) && w[0] == "exec-timeout" {
 		m, e := strconv.Atoi(w[1])
@@ -225,6 +274,25 @@ func (s *Session) aaaCommand(w []string) (bool, string, error) {
 // Type 0 describes input, never the on-disk representation. Do not silently
 // treat an imported Cisco ciphertext as the password a user must log in with.
 func (s *Session) hashCLISecret(words []string) (string, error) {
+	if len(words) > 0 && (words[0] == "8" || words[0] == "9") {
+		if len(words) != 2 || !strings.HasPrefix(words[1], "$"+words[0]+"$") {
+			return "", errors.New("invalid encoded secret")
+		}
+		if err := config.ValidateSecret(words[1]); err != nil {
+			return "", err
+		}
+		return words[1], nil
+	}
+	if len(words) > 0 && words[0] == "7" {
+		if len(words) != 2 {
+			return "", errors.New("expected a type 7 password")
+		}
+		password, err := config.DecodeIOSPassword7(words[1])
+		if err != nil {
+			return "", err
+		}
+		return s.Candidate.AAA.HashIOSSecret("9", password)
+	}
 	if len(words) > 0 && words[0] == "pbkdf2" {
 		if len(words) != 2 {
 			return "", errors.New("expected a PBKDF2 secret verifier")

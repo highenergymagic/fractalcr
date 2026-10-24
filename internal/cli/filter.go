@@ -11,6 +11,10 @@ type Filter struct {
 	Pattern string `json:"pattern"`
 }
 
+func (f *Filter) Redirect() bool {
+	return f != nil && (f.Mode == "redirect" || f.Mode == "append" || f.Mode == "tee" || f.Mode == "tee-append")
+}
+
 func SplitFilter(words []string) ([]string, *Filter, error) {
 	start := 0
 	if len(words) > 0 && words[0] == "do" {
@@ -25,6 +29,19 @@ func SplitFilter(words []string) ([]string, *Filter, error) {
 				return nil, nil, fmt.Errorf("filter requires a regular expression")
 			}
 			f := &Filter{words[i+1], strings.Join(words[i+2:], " ")}
+			if f.Mode == "tee" && words[i+2] == "/append" {
+				if len(words) != i+4 {
+					return nil, nil, fmt.Errorf("output destination required")
+				}
+				f.Mode = "tee-append"
+				f.Pattern = words[i+3]
+			}
+			if f.Redirect() {
+				if f.Mode != "tee-append" && len(words) != i+3 {
+					return nil, nil, fmt.Errorf("one output destination required")
+				}
+				return words[:i], f, nil
+			}
 			if f.Mode == "section" && len(words) > i+3 && (words[i+2] == "include" || words[i+2] == "exclude") {
 				f.Mode = "section-" + words[i+2]
 				f.Pattern = strings.Join(words[i+3:], " ")

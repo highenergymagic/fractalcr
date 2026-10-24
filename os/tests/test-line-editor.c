@@ -37,9 +37,25 @@ int main(void) {
     type("draft"); assert(editor_feed(&e,26)==EDIT_END && !e.length);
     assert(editor_feed(&e,4)==EDIT_EOF && !e.length);
     puts("PASS transpose, cancellation and return to EXEC");
+    e.editing=0; type("abc");
+    assert(editor_feed(&e,1)==EDIT_BELL && e.cursor==3);
+    assert(editor_feed(&e,127)==EDIT_ERASE && !strcmp(e.line,"ab"));
+    assert(editor_feed(&e,'\n')==EDIT_SUBMIT);
+    e.editing=1; assert(editor_feed(&e,1)==EDIT_REDRAW && e.cursor==0);
+    editor_clear(&e);
+    puts("PASS disabled enhanced editing retains basic input and can be reenabled");
     for (unsigned i=0;i<LINE_CAPACITY-1;i++) editor_feed(&e,'x');
     assert(editor_feed(&e,'x')==EDIT_BELL && e.overflow && e.length==LINE_CAPACITY-1);
     editor_feed(&e,127); assert(!e.overflow && e.length==LINE_CAPACITY-2);
     puts("PASS bounded input rejects overflow and permits correction");
+    editor_init(&e);editor_history_limit(&e,2);
+    type("first");editor_record(&e);editor_clear(&e);
+    type("second");editor_record(&e);editor_clear(&e);
+    type("third");editor_record(&e);editor_clear(&e);
+    editor_history_limit(&e,3);
+    editor_feed(&e,16);assert(!strcmp(e.line,"third"));
+    editor_feed(&e,16);assert(!strcmp(e.line,"second"));
+    assert(editor_feed(&e,16)==EDIT_BELL);
+    puts("PASS increasing history size cannot resurrect commands evicted from a smaller buffer");
     return 0;
 }

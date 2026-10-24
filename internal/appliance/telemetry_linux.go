@@ -125,11 +125,23 @@ func chronyIP(b []byte) string {
 	return "unspecified"
 }
 
+func configuredClockStatus(c config.Clock, now time.Time, detail bool) string {
+	output := clockStatus(c.LocalTime(now), detail)
+	if detail && c.Summer != nil {
+		start, end := c.SummerTransitions(now)
+		output += "\nSummer time starts " + start.Format("15:04:05 MST Mon Jan 2 2006")
+		output += "\nSummer time ends " + end.Format("15:04:05 MST Mon Jan 2 2006")
+	}
+	return output
+}
+
 func clockStatus(now time.Time, detail bool) string {
 	mark, source := "*", "none"
 	var state syscall.Timex
 	if result, err := syscall.Adjtimex(&state); err == nil && result != unix.TIME_ERROR && state.Status&unix.STA_UNSYNC == 0 {
 		mark, source = "", "NTP"
+	} else if data, err := os.ReadFile(clockSourcePath); err == nil && (string(data) == "user configuration" || string(data) == "hardware calendar") {
+		mark, source = "", string(data)
 	} else if _, err := os.Stat("/sys/class/rtc/rtc0"); err == nil && now.Year() >= 2025 {
 		mark, source = ".", "hardware calendar"
 	}

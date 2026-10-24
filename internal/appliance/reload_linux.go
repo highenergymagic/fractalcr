@@ -13,20 +13,55 @@ import (
 )
 
 type reloadPlan struct {
-	At        time.Time `json:"at"`
-	Reason    string    `json:"reason"`
-	User      string    `json:"user"`
-	Scheduled bool      `json:"scheduled"`
+	At           time.Time `json:"at"`
+	Reason       string    `json:"reason"`
+	User         string    `json:"user"`
+	Scheduled    bool      `json:"scheduled"`
+	Requested    time.Time `json:"requested"`
+	WarnedMinute bool      `json:"warned_minute,omitempty"`
 }
 
 // Pending reloads live outside terminal sessions and survive a management
 // service restart, but not a machine reboot (/run is volatile).
 type reloadManager struct {
-	mu      sync.Mutex
-	path    string
-	plan    *reloadPlan
-	failure string
-	fire    func() error
+	mu       sync.Mutex
+	path     string
+	plan     *reloadPlan
+	failure  string
+	fire     func() error
+	notices  []reloadNotice
+	sequence uint64
+}
+
+type reloadNotice struct {
+	sequence uint64
+	text     string
+}
+
+func (m *reloadManager) notify(text string) {
+	m.sequence++
+	m.notices = append(m.notices, reloadNotice{m.sequence, text})
+	if len(m.notices) > 32 {
+		m.notices = m.notices[len(m.notices)-32:]
+	}
+}
+func (m *reloadManager) notifications(after uint64) (uint64, string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var b strings.Builder
+	for _, n := range m.notices {
+		if n.sequence > after {
+			b.WriteString(n.text)
+		}
+	}
+	return m.sequence, b.String()
+}
+func shutdownNotice(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	seconds := int(d / time.Second)
+	return fmt.Sprintf("\n***\n*** --- SHUTDOWN in %d:%02d:%02d ---\n***\n", seconds/3600, seconds/60%60, seconds%60)
 }
 
 func newReloadManager(path string, fire func() error) (*reloadManager, error) {
@@ -57,6 +92,9 @@ func (m *reloadManager) set(p reloadPlan) error {
 		return err
 	}
 	m.plan, m.failure = &p, ""
+	if p.Scheduled {
+		m.notify(shutdownNotice(p.At.Sub(p.Requested)))
+	}
 	return nil
 }
 
@@ -70,6 +108,7 @@ func (m *reloadManager) cancel() (string, error) {
 		return "", err
 	}
 	m.plan, m.failure = nil, ""
+	m.notify("\n***\n*** --- SHUTDOWN ABORTED ---\n***\n")
 	return "%Reload cancelled.", nil
 }
 
@@ -115,7 +154,24 @@ func reloadInterval(d time.Duration) string {
 func (m *reloadManager) due(now time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.plan == nil || now.Before(m.plan.At) {
+	if m.plan == nil {
+		return
+	}
+	if now.Before(m.plan.At) {
+		if m.plan.Scheduled && !m.plan.WarnedMinute && m.plan.At.Sub(now) <= time.Minute {
+			p := *m.plan
+			p.WarnedMinute = true
+			data, err := json.Marshal(p)
+			if err == nil {
+				err = config.AtomicWrite(m.path, data, 0600)
+			}
+			if err != nil {
+				m.failure = err.Error()
+				return
+			}
+			m.plan = &p
+			m.notify(shutdownNotice(p.At.Sub(now)))
+		}
 		return
 	}
 	// Delete the record before sending the request: a failed supervisor request
@@ -173,7 +229,7 @@ func reloadMonth(s string) time.Month {
 }
 
 func parseReload(w []string, now time.Time) (reloadPlan, error) {
-	p := reloadPlan{At: now}
+	p := reloadPlan{At: now, Requested: now}
 	args := w[1:]
 	if len(args) > 0 && strings.HasPrefix(args[0], "/") {
 		return p, fmt.Errorf("Image authentication is enforced by ROMMON; reload verification overrides are not supported")
@@ -264,6 +320,7 @@ func (d *reloadDialog) prompt() reply {
 }
 
 func (s *loginSession) beginReload(w []string, m *reloadManager, now time.Time) reply {
+	now = s.cli.Running.Clock.LocalTime(now)
 	r := reply{Prompt: s.cli.Prompt()}
 	if len(w) == 2 && w[1] == "cancel" {
 		var err error
@@ -337,6 +394,7 @@ func (s *loginSession) answerReload(answer string, m *reloadManager, now time.Ti
 		r.Error = "Scheduled reload time has passed"
 		return r
 	}
+	d.plan.Requested = now
 	if err := m.set(d.plan); err != nil {
 		r.Error = err.Error()
 		return r
@@ -375,7 +433,7 @@ func (s *loginSession) enable(level int, c config.Config) reply {
 		r.Prompt = s.cli.Prompt()
 		return r
 	}
-	if c.AAA.EnableSecret == "" {
+	if c.AAA.EnableVerifier(level) == "" {
 		if s.transport == "console" {
 			s.cli.Privilege = level
 			r.Prompt = s.cli.Prompt()

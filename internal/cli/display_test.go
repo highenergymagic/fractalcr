@@ -10,7 +10,7 @@ func TestConfigurationDisplayRoundTrip(t *testing.T) {
 	s := session(t)
 	execute(t, s, "conf t", "hostname firmware", "user admin priv 15 secret 0 Synthetic-display-592!", "security passwords min-length 12", "interface GigabitEthernet0", "ip address dhcp", "exit", "network apps", "subnet 172.29.0.0/24", "exit", "container web", "image sample:1", "network apps", "environment MESSAGE \"hello world\"", "command \"/bin/demo\" \"two words\"", "memory 128M", "read-only", "exit", "line vty 0 4", "exec-timeout 1 20", "end")
 	expected := s.Running.CLI()
-	if strings.Contains(expected, "Synthetic-display") || !strings.Contains(expected, "secret pbkdf2 $fcr-") {
+	if strings.Contains(expected, "Synthetic-display") || !strings.Contains(expected, "secret 9 $9$") {
 		t.Fatal("invalid secret display")
 	}
 	clone := session(t)

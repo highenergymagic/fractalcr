@@ -42,7 +42,7 @@ func TestAAAAuthenticationAuthorizationTimeoutAndAccounting(t *testing.T) {
 	if !s.cli.Allowed([]string{"show", "version"}) {
 		t.Fatal("public show denied")
 	}
-	s.stage = "enable"
+	s.enable(15, c)
 	r, _ = s.authenticate(managementRequest{Command: "operator test password"}, c, now)
 	if s.cli.Privilege != 15 || r.Challenge {
 		t.Fatal(r)

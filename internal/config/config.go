@@ -27,6 +27,7 @@ type Config struct {
 	Network    *Network                    `json:"network,omitempty"`
 	Interfaces map[string]*Network         `json:"interfaces,omitempty"`
 	NTP        NTP                         `json:"ntp,omitempty"`
+	Clock      Clock                       `json:"clock,omitempty"`
 	Engine     Engine                      `json:"engine,omitempty"`
 	Networks   map[string]DockerNetwork    `json:"docker_networks,omitempty"`
 	Datastores map[string]Datastore        `json:"datastores"`
@@ -180,6 +181,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := c.AAA.Validate(); err != nil {
+		return err
+	}
+	if err := c.Clock.Validate(); err != nil {
 		return err
 	}
 	if len(c.JSON()) > 65536 {

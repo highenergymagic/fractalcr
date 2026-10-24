@@ -5,6 +5,7 @@ func (s *loginSession) cancelDialog() reply {
 	s.pendingCopy = nil
 	s.pendingReload = nil
 	s.pendingFile = nil
+	s.pendingOutput = nil
 	r := reply{Prompt: s.cli.Prompt()}
 	if s.setup != nil {
 		s.setup = nil

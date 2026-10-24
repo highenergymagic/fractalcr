@@ -244,6 +244,8 @@ func Apply(old, next config.Config) error {
 	nextPlatform.Hostname = ""
 	oldPlatform.FilePrompt = ""
 	nextPlatform.FilePrompt = ""
+	oldPlatform.Clock = config.Clock{}
+	nextPlatform.Clock = config.Clock{}
 	if string(oldPlatform.JSON()) == string(nextPlatform.JSON()) {
 		if old.Hostname != next.Hostname {
 			if err := syscall.Sethostname([]byte(next.Hostname)); err != nil {

@@ -14,6 +14,8 @@ import (
 func Operations(w []string, c config.Config) (string, error) {
 	if len(w) > 0 {
 		switch w[0] {
+		case "clock", "calendar":
+			return clockOperation(w, c)
 		case "copy":
 			return copyFile(w, c)
 		case "dir", "delete", "move", "rename", "mkdir", "rmdir":
@@ -95,7 +97,13 @@ func Operations(w []string, c config.Config) (string, error) {
 	case "show system resources":
 		return resources()
 	case "show clock", "show clock detail":
-		return clockStatus(time.Now().UTC(), line == "show clock detail"), nil
+		return configuredClockStatus(c.Clock, time.Now(), line == "show clock detail"), nil
+	case "show calendar":
+		calendar, err := readHardwareClock()
+		if err != nil {
+			return "", fmt.Errorf("Hardware calendar is unavailable")
+		}
+		return c.Clock.LocalTime(calendar).Format("15:04:05 MST Mon Jan 2 2006"), nil
 	case "show ntp status":
 		return ntpStatus()
 	case "show ntp associations":

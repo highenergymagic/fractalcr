@@ -40,23 +40,32 @@ logout
 Activating AAA preserves the current physical bootstrap session until logout or
 its configured idle timeout. New sessions require local login immediately.
 Configuration cannot enable AAA
-without a privilege 15 account or remove its last administrator. Secrets use
-PBKDF2-HMAC-SHA256 with 600,000 iterations and a fresh 128-bit salt. They are
-not Cisco type 7/8/9 encodings. Both `username NAME privilege LEVEL password 0 TEXT`
+without a privilege 15 account or remove its last administrator. New secrets use
+IOS type 9 scrypt verifiers with fresh salts. `algorithm-type sha256 secret`
+selects IOS type 8 PBKDF2-SHA256; `algorithm-type scrypt secret` selects type 9.
+Existing FractalCR PBKDF2 verifiers remain readable. Both `username NAME privilege LEVEL password 0 TEXT`
 and `username NAME privilege LEVEL secret 0 TEXT` accept plaintext input that is
 immediately hashed. Keywords accept unique prefixes, including
 `user freya priv 15 password 0 TEXT`. The `0` is optional. Omitting `privilege`
 retains an existing account's level or uses level 1 for a new account;
 `username NAME privilege LEVEL` changes an existing user's level without
-replacing its password. Encoded Cisco password imports are rejected. The input
+replacing its password. `secret 8` and `secret 9` import validated encoded
+verifiers. `password 7` imports a reversible IOS password and immediately hashes
+it as type 9; the reversible representation is not retained. Other Cisco secret
+encodings remain unsupported. The input
 may contain 1..256 characters. `security passwords min-length 12` enforces an explicit minimum for newly configured passwords. Password prompts do not echo or
-enter command history. Configuration commands are omitted from history.
+enter command history. EXEC and configuration modes have separate history buffers;
+configuration history includes commands as entered, including secret-setting
+commands. Logout and privilege downgrade clear both buffers.
 
 Privilege 0 provides session control, enable and help. Levels 1 through 14
 provide explicitly allowed read-only views and terminal settings; level 15
 provides configuration and operational control. Native Docker/BuildKit commands,
 workload logs, configuration files, service control and debug entry require
-level 15. `enable` authenticates the configured enable secret; `disable` returns
+level 15. `enable` defaults to level 15. `enable LEVEL` authenticates the secret
+configured by `enable secret level LEVEL ...`; each level has a separate
+verifier. An unset secret allows elevation at the physical console and denies
+remote elevation. `disable` returns
 to level 1 (remaining at level 0 if already there) and clears terminal history. Help and completion use the same
 authorization rules as execution. SSH sessions have the same editor and pager
 as the physical console, with independent identities and privileges. Normal
