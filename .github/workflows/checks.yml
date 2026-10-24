@@ -47,7 +47,14 @@ jobs:
       - name: Reachability-aware Go vulnerability scan
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
-          govulncheck ./...
+          govulncheck -json ./cmd/... ./internal/... ./pkg/... > govulncheck.json
+          python3 tools/security/check-go-findings.py govulncheck.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: management-vulnerability-report
+          path: govulncheck.json
+          if-no-files-found: ignore
   integration:
     # Private component credentials are never supplied to pull request code.
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
