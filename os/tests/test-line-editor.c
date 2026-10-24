@@ -5,6 +5,14 @@
 static struct line_editor e;
 static void type(const char *s) { while (*s) editor_feed(&e,(unsigned char)*s++); }
 int main(void) {
+    const char *framed="one\r\ntwo\rthree\n\r\n\n";
+    char normalized[64]={0}; size_t used=0; int after_cr=0;
+    while (*framed) {
+        unsigned char c=(unsigned char)*framed++;
+        if(terminal_input_byte(&c,&after_cr)) normalized[used++]=(char)c;
+    }
+    assert(!strcmp(normalized,"one\ntwo\nthree\n\n\n"));
+    puts("PASS CR, LF and fragmented CRLF produce exactly one submission per line ending");
     editor_init(&e); type("sh");
     assert(editor_feed(&e,'?')==EDIT_HELP && !strcmp(e.line,"sh") && e.cursor==2);
     type("ow "); assert(editor_feed(&e,'?')==EDIT_HELP && !strcmp(e.line,"show "));

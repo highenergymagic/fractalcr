@@ -13,6 +13,8 @@ import (
 )
 
 type managementRequest struct {
+	// Action is an editor/control event. Command is always literal user text.
+	Action    string `json:"action,omitempty"`
 	Command   string `json:"command"`
 	User      string `json:"user,omitempty"`
 	Transport string `json:"transport,omitempty"`
@@ -20,8 +22,21 @@ type managementRequest struct {
 	VTY       int    `json:"vty,omitempty"`
 	Peer      string `json:"peer,omitempty"`
 }
+
+func (r managementRequest) validate() error {
+	switch r.Action {
+	case "", "help", "complete":
+		return nil
+	case "connect", "tick", "cancel", "end":
+		if r.Command == "" {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid management event")
+}
+
 type loginSession struct {
-	pendingFile                      []string
+	pendingFile                      *fileDialog
 	pendingReload                    *reloadDialog
 	pendingCopy                      *copyDialog
 	enableLevel                      int
@@ -137,8 +152,8 @@ func (s *loginSession) logout() {
 // supply a verified VTY principal; SSH env/exec/subsystem requests are refused.
 // Command execution is activity, not time spent idle at the prompt. Heartbeats
 // must never renew the idle deadline, including while a native client streams.
-func (s *loginSession) commandCompleted(command string, now time.Time) {
-	if s.authenticated && command != "__tick" {
+func (s *loginSession) commandCompleted(r managementRequest, now time.Time) {
+	if s.authenticated && r.Action != "tick" {
 		s.last = now
 	}
 }
@@ -148,7 +163,7 @@ func (s *loginSession) authenticate(r managementRequest, c config.Config, now ti
 	if !s.cli.Transactional {
 		s.cli.Candidate = c.Clone()
 	}
-	if r.Command == "__cancel" {
+	if r.Action == "cancel" {
 		if s.authenticated && s.stage == "enable" {
 			s.stage = ""
 			return reply{Prompt: s.cli.Prompt()}, true
@@ -157,8 +172,9 @@ func (s *loginSession) authenticate(r managementRequest, c config.Config, now ti
 			s.logout()
 			return s.challenge(), true
 		}
+		return s.cancelDialog(), true
 	}
-	if r.Command == "__connect" {
+	if r.Action == "connect" {
 		s.logout()
 		s.transport = "console"
 		s.peer = r.Peer
@@ -222,7 +238,7 @@ func (s *loginSession) authenticate(r managementRequest, c config.Config, now ti
 			return s.challenge(), true
 		}
 	}
-	if r.Command == "__tick" {
+	if r.Action == "tick" {
 		if s.stage == "enable" {
 			return s.challenge(), true
 		}
@@ -233,7 +249,7 @@ func (s *loginSession) authenticate(r managementRequest, c config.Config, now ti
 	}
 	s.last = now
 	if !s.authenticated || s.stage == "enable" {
-		if strings.HasPrefix(r.Command, "__") {
+		if r.Action != "" {
 			return s.challenge(), true
 		}
 		if s.stage == "username" {

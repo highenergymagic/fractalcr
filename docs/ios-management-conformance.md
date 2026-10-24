@@ -13,11 +13,15 @@ Consulted 2026-10-24:
 - [Configuration Fundamentals: D through E](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/command/cf_command_ref/D_through_E.html): directory operations, privilege transitions, command editing, and `do`.
 - [Configuration Fundamentals: R through setup](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/command/cf_command_ref/R_through_setup.html): reload scheduling and rename.
 - [Configuration Fundamentals: C commands](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/command/cf_command_ref/C_commands.html): copy operands and interactive filename selection.
+- [Configuration Fundamentals: F through K](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/command/cf_command_ref/F_through_K.html): `file prompt` confirmation policies and required information.
+- [Configuration Fundamentals: show through show fm summary](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/command/cf_command_ref/show_through_show_fm_summary.html): filesystem types, aliases, flags and default-device marker.
 - [Configuration Fundamentals: show protocols through showmon](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/command/cf_command_ref/show_protocols_through_showmon.html): scheduled reload status, configuration display, version information.
 - [Configuration Fundamentals: terminal commands](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/command/cf_command_ref/slave_auto-sync_config_through_terminal-type.html): history, screen geometry, and terminal monitoring.
 - [Configuration Fundamentals: monitor through Q](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/command/cf_command_ref/monitor_event-trace_through_Q.html): `pwd` and filesystem context.
 - [Show-command filtering](https://www.cisco.com/c/en/us/td/docs/ios/fundamentals/command/reference/cf_book/cf_s1.html): section include/exclude behavior.
+- [Cisco IOS XE advisory command example](https://sec.cloudapps.cisco.com/security/center/content/CiscoSecurityAdvisory/cisco-sa-webui-cmdij-FzZAeXAy): the displayed label for `show ... | count ...`.
 - [show clock](https://www.cisco.com/E-Learning/bulk/public/tac/cim/cib/using_cisco_ios_software/cmdrefs/show_clock.htm): synchronization markers and detail output.
+- [Security command reference: show through show users](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/security/s1/sec-s1-cr-book/sec-cr-s5.html): `show users` variants; these remain unimplemented beyond the base command.
 - [IP Addressing Services command reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipaddr/command/ipaddr-cr-book.pdf): primary and secondary IPv4 addresses and subnet masks.
 - [ISR 4000 IOS XE 17 software installation](https://www.cisco.com/c/en/us/td/docs/routers/access/isr4400/software/configuration/xe-17/isr4400-sw-config-xe-17/installing_the_software.html): platform boot and filesystem context.
 
@@ -28,20 +32,29 @@ Consulted 2026-10-24:
 | Context help | Word-boundary filesystem placeholder and mounted prefixes; partial filesystem help preserves the typed prefix; unique Tab completion | `TestIOSFilesystemHelpAndReloadGrammar`; `qemu-ios-workflow.py` |
 | Privilege | Console enable without a configured secret; remote sessions require a secret; explicit levels; disable never raises privilege; removable enable secret; cancel an enable challenge; configuration commands reach the configuration transaction | `TestIOSEnableConsoleAndVTY`; `TestIOSEnableDispatchDoesNotConsumeConfiguration`; serial/SSH AAA workflow |
 | Directory | `/all`, `/recursive`, both orders, `all-filesystems`, individual files, IOS prefix wildcard matching, timestamp offsets, capacity footer, output filters | `TestIOSDirectoryOptionsAndConfinement` |
+| Filesystem display | Default bootflash marker, `flash:` alias, logical flash/NVRAM types, actual capacity and access flags | `TestIOSDirectoryOptionsAndConfinement` |
 | Current directory | `cd`, `pwd`, relative file operands, volume changes, parent traversal confined to the volume, separate session defaults | `TestIOSWorkingDirectoryIsolation`; serial workflow |
 | Delete | `/force`, `/recursive`, combinations and options before/after the URL; rooted filesystem operations; protected volume roots | Filesystem confinement and recursive-delete tests |
 | Copy | Source filename prompt when omitted; destination default; explicit overwrite confirmation; cancellation and privilege recheck before mutation | `TestIOSCopyPromptsAndOverwrite`; serial configuration-copy workflow |
+| File prompting | Persistent `alert`, `noisy`, `quiet`, `no` and `default` forms; quiet still requests missing source information; native copy/delete/rename/move/mkdir/rmdir confirmation handling; `/force` overrides delete prompting; policy changes do not restart platform services | `TestIOSFilePromptConfiguration`; `TestIOSFilePromptPolicy`; `TestFilePromptApplyDoesNotRestartServices`; serial workflow |
+| Literal dialog input | Editor actions are separate JSON fields, never reserved password/filename strings; real Ctrl-C cancels without interpreting typed `__cancel` as an event | `TestManagementLiteralAuthenticationInput`; `TestManagementEventFraming`; `TestCopyLiteralControlFilenames`; serial workflow |
+| Line endings | CR, LF and fragmented CRLF submit once across authentication/dialog state transitions | Native editor test; serial CRLF username/password workflow |
 | Reload | Unsaved-configuration question, confirmation, Ctrl-C, immediate and reasoned reload, `in` minutes/hours, `at` time/date, both date orders, 24-day boundary, `cancel`, `show reload` | Reload parser/dialog tests; serial reload and reboot workflow |
 | Reload lifetime | Timer independent of terminal connection; state survives management service restart; cancellation prevents firing; supervisor failure reported | `TestIOSReloadSaveConfirmCancelAndRestart` |
 | Configuration display/save | Actual rendered configuration byte count; write acknowledgement; running/startup separation | CLI and serial persistence tests |
 | Terminal | History enable/disable/default size; monitor on/off; filename and reload prompts preserve session display/history settings; heartbeat preserves partially typed usernames and passwords | Native C checks; serial workflow pauses across heartbeat intervals |
 | IPv4 | Address plus dotted subnet mask, secondary addresses, corresponding removal, contiguous-mask validation, dotted-mask configuration display | `TestIOSAddressMasksAndSaveOutput` |
-| Filtering | Section selection with implicit/explicit include and exclude; Go and native-console filtering | `TestIOSSectionFilters`; serial section-filter check |
+| Filtering | Section selection with implicit/explicit include and exclude; IOS count-result label in Go and native-console filtering | `TestIOSSectionFilters`; filter tests; serial section/count checks |
 | Line timeout | `no exec-timeout` disables the timer; `default exec-timeout` restores ten minutes | `TestIOSLineTimeoutReset` |
 | Session and clock display | Active-line marker, line/user/idle/peer columns; clock detail and synchronization marker | Serial workflow; native clock/session APIs |
 
 Test names identify executable evidence, not a declaration of complete IOS
 compatibility. The VM report identifies the exact tested system image hash.
+These checks compare documented behavior with FractalCR tests. They do not run
+the same command transcript against a licensed ISR 4331 IOS XE instance, and
+therefore do not establish byte-for-byte prompt/output equivalence. Differences
+between Cisco platforms and releases also require an explicit reference version
+before a transcript can serve as that oracle.
 
 ## Platform boundaries and outstanding differences
 
@@ -54,21 +67,22 @@ they must not be hidden behind accepted no-op keywords:
   ROMMON, and the platform currently implements cold reload only.
 - The storage uses immediate unlink, not the deleted-file records of legacy
   linear flash. `/all` has no additional deleted entries on these filesystems.
-- Network copy protocols, IOS `file prompt` policy, and the entire
+- Network copy protocols and the entire
   IOS output redirection/filter family have not been qualified by this change.
   Copy's durable configuration representation is the appliance JSON model.
 - Local AAA is not all IOS AAA: CLI views, arbitrary per-command privilege
   assignment, level-specific enable secrets, legacy Cisco password encodings,
   RADIUS/TACACS+, and every line/login setting need separate implementation and
   conformance work.
-- Authentication input still shares reserved `__` control strings with the
-  management protocol. Literal passwords beginning with that prefix require
-  separate response framing; arbitrary password-text parity is not established.
 - Reload warning broadcasts and reload-history output have not been matched.
   Scheduled reloads are not retained across a complete machine reboot.
 - All `show users` variants, interface counters/variants, NTP command options, clock
   configuration, and all terminal editor/history edge cases still need a
   command-by-command comparison. Existing support is not proof of parity.
+  Concrete gaps include `show users all`, `wide`, and `summary`; separate EXEC
+  and configuration history buffers; and full `show terminal`/`show line` fields.
+  Generic clock and NTP
+  support does not imply support for every IOS clock/NTP command.
 - FractalCR workload, storage-array, Kata, Compose, BuildKit and Swarm commands
   are appliance extensions, not IOS commands.
 

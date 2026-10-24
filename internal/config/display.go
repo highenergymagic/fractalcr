@@ -21,6 +21,9 @@ func (c Config) CLI() string {
 	var b strings.Builder
 	line := func(format string, args ...any) { fmt.Fprintf(&b, format+"\n", args...) }
 	line("!\nhostname %s", c.Hostname)
+	if c.FilePrompt != "" && c.FilePrompt != "alert" {
+		line("file prompt %s", c.FilePrompt)
+	}
 	c.Engine.RenderCLI(line)
 	for _, name := range Keys(c.Volumes) {
 		c.Volumes[name].RenderCLI(name, line)

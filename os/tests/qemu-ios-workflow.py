@@ -32,7 +32,7 @@ if os.name == 'nt':
 else:
     subprocess.run(['cp', '--sparse=always', str(art/'data-os-containers.img'), str(out/'data.img')], check=True)
 flash = art/('flash-os-optional-firmware.img' if whpx else 'flash-os-containers.img')
-password = 'Synthetic-ios-login-592!'
+password = '__connect'
 result = dict(case='ios-workflow-'+a.accelerator, passed=False, checks=[],
               system_sha256=hashlib.file_digest((art/'system.bin').open('rb'), 'sha256').hexdigest(),
               rommon_sha256=hashlib.file_digest((art/'rommon.efi').open('rb'), 'sha256').hexdigest(),
@@ -106,8 +106,8 @@ def command(text, mode='', error=False):
     return response
 
 def login():
-    expect('Username: '); send('test'); time.sleep(1.2); send('admin\n')
-    expect('Password: '); send(password[:8]); time.sleep(1.2); send(password[8:]+'\n')
+    expect('Username: '); send('test'); time.sleep(1.2); send('admin\r\n')
+    expect('Password: '); send(password[:8]); time.sleep(1.2); send(password[8:]+'\r\n')
     response = prompt()
     assert password not in response, 'login password echoed'
 
@@ -120,6 +120,8 @@ try:
     expect(re.escape('Enter initial configuration dialog? [yes/no]: ')); send('no\n'); prompt()
     command('write memory')  # Seed startup so reconnect does not repeat first-use setup.
     command('terminal length 0')
+    command('__connect', error=True)
+    command('__help show ', error=True)
     send('disable\n'); expect(re.escape('ctr> ')); send('enable\n'); prompt()
     check('Console disable/enable works without an enable secret')
     send('dir ?'); help=prompt()
@@ -139,13 +141,40 @@ try:
     assert 'maintenance' in command('show reload')
     assert '%Reload cancelled.' in command('reload cancel')
     assert 'No reload is scheduled.' in command('show reload')
-    send('reload\n'); expect(re.escape('Proceed with reload? [confirm]')); send('\x03'); prompt()
+    send('reload\r\n'); expect(re.escape('Proceed with reload? [confirm]'))
+    time.sleep(1.2); send('\x03'); prompt()  # CRLF must not confirm the new dialog.
     command('show version')
     assert 'Time source is' in command('show clock detail')
+    assert 'Number of lines which match regexp = 1' in command('show running-config | count hostname')
+    assert 'Number of lines which match regexp = 1' in command('show version | count Source build:')
     assert 'Line' in command('show users') and 'Host(s)' in command('show users')
     section=command('show running-config | section line')
     assert 'line console 0' in section and 'exec-timeout' in section and 'hostname ctr' not in section
     check('Copy prompts, scheduled reload, show reload, cancellation and Ctrl-C work through the serial console')
+    policy_before=command('show platform software service')
+    policy_engine=re.search(r'container-engine\s+running\s+(\d+)\s+(\d+)', policy_before)
+    assert policy_engine, policy_before
+    command('conf t', 'config'); command('file prompt quiet', 'config'); send('\x1a'); prompt()
+    assert 'file prompt quiet' in command('show running-config')
+    command('copy running-config data0:__cancel')
+    command('copy running-config data0:__cancel')  # Quiet permits overwrite.
+    send('copy data0: data0:__tick\n'); expect(re.escape('Source filename []? ')); send('__cancel\n'); prompt()
+    assert '__tick' in command('dir data0:')
+    command('conf t', 'config'); command('file prompt noisy', 'config'); send('\x1a'); prompt()
+    send('copy data0:__tick data0:__end\n')
+    expect(re.escape('Source filename [data0:/__tick]? ')); send('\n')
+    expect(re.escape('Destination filename [__end]? ')); send('\n'); prompt()
+    send('delete data0:__end\n'); expect(re.escape('Filename [data0:/__end]? ')); send('\n')
+    expect(re.escape('Delete data0:/__end? [confirm]')); send('\x03'); prompt()
+    assert '__end' in command('dir data0:__end')
+    command('delete /force data0:__end')
+    command('conf t', 'config'); command('no file prompt', 'config'); send('\x1a'); prompt()
+    assert 'file prompt ' not in command('show running-config')
+    command('delete /force data0:__tick'); command('delete /force data0:__cancel')
+    policy_after=command('show platform software service')
+    assert re.search(r'container-engine\s+running\s+(\d+)\s+(\d+)', policy_after).groups() == policy_engine.groups(), policy_after
+    check('File prompt policies honor required information, overwrite, noisy confirmations and Ctrl-C; reserved-looking filenames remain literal')
+    check('File prompt changes apply live without restarting Docker or platform configuration')
     for key in ['logout\n', 'exit\n', '\x04']:
         send(key); expect('Press RETURN to get started!')
         send('show version\n'); response = prompt()  # Text before RETURN must be ignored.
@@ -244,6 +273,13 @@ try:
         send(key); login()
     check('Logout, exit and Ctrl-D require local authentication after login local')
     check('Authentication retains partial usernames and passwords across heartbeat intervals')
+    check('CRLF login submissions remain single events across username/password/EXEC transitions')
+    check('A configured password beginning with the former control prefix authenticates literally')
+    command('conf t', 'config'); command('enable secret 0 __tick', 'config'); send('\x1a'); prompt()
+    send('disable\n'); expect(re.escape(hostname+'> ')); send('enable\n'); expect('Password: ')
+    send('__tick\n'); prompt()
+    command('conf t', 'config'); command('no enable secret', 'config'); send('\x1a'); prompt()
+    check('Literal former connect/tick events work as login and enable passwords without resetting the session')
     command('conf t', 'config'); command('line con 0', 'config-line')
     send('\x04'); prompt('config'); send('\x04'); prompt()
     check('Empty-line Ctrl-D leaves each configuration context; Ctrl-Z returns directly to EXEC')
@@ -263,6 +299,7 @@ try:
     command('ip address 192.0.2.100 255.255.255.0','config-interface'); send('\x1a'); prompt()
     interfaces=command('show ip interface brief')
     assert 'Port-channel1' in interfaces and re.search(r'Vlan100\s+192\.0\.2\.100',interfaces),interfaces
+    command('conf t', 'config'); command('file prompt quiet', 'config'); send('\x1a'); prompt()
     command('write memory')
     check('Packaged kernel creates a native port-channel and VLAN and applies its address from configuration mode')
     command('conf t', 'config')
@@ -275,6 +312,10 @@ try:
     startup = command('show startup-config')
     assert 'thething' in startup and 'testadmin' in startup and password not in startup and 'unsaved' not in startup
     assert 'ip address 192.0.2.100 255.255.255.0' in startup
+    assert 'file prompt quiet' in startup
+    command('copy running-config data0:prompt-persistence')
+    command('delete data0:prompt-persistence')
+    check('Saved file prompt policy survives a full reboot and controls native copy/delete without confirmations')
     interfaces=command('show ip interface brief')
     assert 'Port-channel1' in interfaces and re.search(r'Vlan100\s+192\.0\.2\.100',interfaces),interfaces
     check('Full reboot loads saved hostname and hashed local account, requires login, and discards unsaved running edits')

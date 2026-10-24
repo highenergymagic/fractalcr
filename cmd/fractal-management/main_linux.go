@@ -19,8 +19,8 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	if len(os.Args) == 3 && os.Args[1] == "recover" {
-		if appliance.Recovery(os.Args[2], os.Stdout) != nil {
+	if len(os.Args) == 4 && os.Args[1] == "recover" {
+		if appliance.Recovery(os.Args[2], os.Args[3], os.Stdout) != nil {
 			os.Exit(1)
 		}
 		return

@@ -1,9 +1,52 @@
 package cli
 
 import (
+	"fractalcr/internal/config"
 	"strings"
 	"testing"
 )
+
+func TestIOSFilePromptConfiguration(t *testing.T) {
+	s := session(t)
+	if _, err := s.Execute("conf t"); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"quiet", "noisy", "alert"} {
+		if _, err := s.Execute("file prompt " + mode); err != nil {
+			t.Fatal(err)
+		}
+		c, err := config.Decode(s.Running.JSON())
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := mode
+		if mode == "alert" {
+			want = ""
+		}
+		if c.FilePrompt != want {
+			t.Fatal("policy did not persist", c.FilePrompt)
+		}
+	}
+	for _, line := range []string{"no file prompt", "default file prompt"} {
+		if _, err := s.Execute("file prompt quiet"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Execute(line); err != nil {
+			t.Fatal(err)
+		}
+		if s.Running.FilePrompt != "" {
+			t.Fatal("default not restored", line)
+		}
+	}
+	if _, err := s.Execute("file prompt invalid"); err == nil {
+		t.Fatal("accepted unknown policy")
+	}
+	c := config.Default()
+	c.FilePrompt = "invalid"
+	if _, err := config.Decode(c.JSON()); err == nil {
+		t.Fatal("accepted invalid saved policy")
+	}
+}
 
 func TestIOSFilesystemHelpAndReloadGrammar(t *testing.T) {
 	s := session(t)

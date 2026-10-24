@@ -75,7 +75,7 @@ func (f *Filter) Apply(text string) string {
 		}
 	}
 	if f.Mode == "count" {
-		return fmt.Sprintf("%d", count)
+		return fmt.Sprintf("Number of lines which match regexp = %d", count)
 	}
 	return strings.Join(out, "\n")
 }

@@ -311,7 +311,7 @@ func fileOperation(w []string) (string, error) {
 	}
 	if strings.Join(w, " ") == "show file systems" {
 		var b strings.Builder
-		b.WriteString("File Systems:\n\n       Size(b)       Free(b)  Type     Flags  Prefixes\n")
+		b.WriteString("File Systems:\n\n         Size(b)       Free(b)      Type  Flags  Prefixes\n")
 		for _, v := range fileSystems() {
 			var st syscall.Statfs_t
 			if syscall.Statfs(v.Root, &st) != nil {
@@ -321,7 +321,14 @@ func fileOperation(w []string) (string, error) {
 			if v.ReadOnly {
 				flags = "ro"
 			}
-			fmt.Fprintf(&b, "%14d %13d  %-8s %-5s  %s:\n", st.Blocks*uint64(st.Bsize), st.Bavail*uint64(st.Bsize), "disk", flags, v.Name)
+			marker, kind, prefixes := " ", "disk", v.Name+":"
+			switch v.Name {
+			case "bootflash":
+				marker, kind, prefixes = "*", "flash", "bootflash: flash:"
+			case "nvram":
+				kind = "nvram"
+			}
+			fmt.Fprintf(&b, "%s %14d %13d  %8s  %-5s  %s\n", marker, st.Blocks*uint64(st.Bsize), st.Bavail*uint64(st.Bsize), kind, flags, prefixes)
 		}
 		return b.String(), nil
 	}

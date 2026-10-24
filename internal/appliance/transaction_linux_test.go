@@ -12,6 +12,26 @@ import (
 	"testing"
 )
 
+func TestFilePromptApplyDoesNotRestartServices(t *testing.T) {
+	oldRunning, oldCheck := runningPath, checkDatastore
+	runningPath = filepath.Join(t.TempDir(), "running.json")
+	checkDatastore = func() error { return errors.New("platform apply must not run for a CLI policy") }
+	defer func() { runningPath, checkDatastore = oldRunning, oldCheck }()
+	old := config.Default()
+	for _, mode := range []string{"quiet", "noisy", ""} {
+		next := old.Clone()
+		next.FilePrompt = mode
+		if err := Apply(old, next); err != nil {
+			t.Fatal(err)
+		}
+		got, err := config.Load(runningPath)
+		if err != nil || got.FilePrompt != mode {
+			t.Fatal("CLI policy not persisted", got.FilePrompt, err)
+		}
+		old = next
+	}
+}
+
 // Model the actual fixed-size supervisor protocol, including a latched failed
 // configuration worker and a manually disabled container engine.
 func TestTransactionRollbackAndRecovery(t *testing.T) {

@@ -5,23 +5,25 @@ import (
 	"fractalcr/internal/cli"
 	"fractalcr/internal/config"
 	"io"
-	"strings"
 )
 
 // Recovery uses the same parser without a management socket, configuration
 // transaction, datastore or Docker dependency.
-func Recovery(line string, out io.Writer) error {
+func Recovery(action, line string, out io.Writer) error {
 	if c, err := loadRunning(); err != nil || c.AAA.Enabled {
 		return json.NewEncoder(out).Encode(reply{Error: "Management unavailable; authenticated recovery requires restoring the management service or ROMMON recovery.", Close: true})
+	}
+	if err := (managementRequest{Action: action, Command: line}).validate(); err != nil {
+		return json.NewEncoder(out).Encode(reply{Error: err.Error(), Close: true})
 	}
 	s := &cli.Session{Running: config.Default(), Recovery: true}
 	r := reply{Prompt: "ctr# "}
 	switch {
-	case line == "__connect" || line == "__end" || line == "__tick":
-	case strings.HasPrefix(line, "__help "):
-		r.Output = s.ContextHelp(strings.TrimPrefix(line, "__help "))
-	case strings.HasPrefix(line, "__complete "):
-		value, output := s.Complete(strings.TrimPrefix(line, "__complete "))
+	case action == "connect" || action == "end" || action == "tick" || action == "cancel":
+	case action == "help":
+		r.Output = s.ContextHelp(line)
+	case action == "complete":
+		value, output := s.Complete(line)
 		r.Completion, r.Output = &value, output
 	default:
 		words, local, err := s.Resolve(line)

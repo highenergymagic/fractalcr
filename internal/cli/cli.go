@@ -399,6 +399,17 @@ func (s *Session) execute(line string) (string, error) {
 		s.Candidate.Hostname = w[1]
 		return "", nil
 	}
+	if len(w) == 3 && w[0] == "file" && w[1] == "prompt" {
+		s.Candidate.FilePrompt = w[2]
+		if w[2] == "alert" {
+			s.Candidate.FilePrompt = ""
+		}
+		return "", nil
+	}
+	if len(w) == 3 && (w[0] == "no" || w[0] == "default") && w[1] == "file" && w[2] == "prompt" {
+		s.Candidate.FilePrompt = ""
+		return "", nil
+	}
 	if len(w) == 5 && strings.Join(w[:4], " ") == "storage datastore name" {
 		// Kept below as exact four-token syntax; no permissive prefix matching.
 		return "", errors.New("syntax: storage datastore name NAME")

@@ -15,6 +15,9 @@ func (d *copyDialog) prompt() reply {
 	text := "Destination filename [" + d.suggested + "]? "
 	if d.stage == "source" {
 		text = "Source filename []? "
+		if !strings.HasSuffix(d.source, ":") {
+			text = "Source filename [" + d.source + "]? "
+		}
 	}
 	if d.stage == "overwrite" {
 		text = "Destination file exists, overwrite? [confirm]"
@@ -24,11 +27,14 @@ func (d *copyDialog) prompt() reply {
 
 func (s *loginSession) beginCopy(w []string) reply {
 	d := &copyDialog{source: w[1], destination: w[2], stage: "destination"}
-	if strings.HasSuffix(d.source, ":") {
+	if strings.HasSuffix(d.source, ":") || s.cli.Running.FilePrompt == "noisy" {
 		d.stage = "source"
 	}
 	d.defaultName()
 	s.pendingCopy = d
+	if d.stage == "destination" && s.cli.Running.FilePrompt == "quiet" && d.suggested != "" {
+		return s.answerCopy("")
+	}
 	return d.prompt()
 }
 
@@ -58,21 +64,23 @@ func (s *loginSession) answerCopy(answer string) reply {
 		r.Error = "Authorization failed."
 		return r
 	}
-	if answer == "__cancel" || answer == "__end" {
-		s.pendingCopy = nil
-		return r
-	}
 	if d.stage == "source" {
 		if answer == "" {
-			return d.prompt()
-		}
-		if strings.Contains(answer, ":") {
+			if strings.HasSuffix(d.source, ":") {
+				return d.prompt()
+			}
+		} else if strings.Contains(answer, ":") {
 			d.source = answer
-		} else {
+		} else if strings.HasSuffix(d.source, ":") {
 			d.source += answer
+		} else {
+			d.source = s.fileURL(answer)
 		}
 		d.stage = "destination"
 		d.defaultName()
+		if s.cli.Running.FilePrompt == "quiet" && d.suggested != "" {
+			return s.answerCopy("")
+		}
 		return d.prompt()
 	}
 	overwrite := d.stage == "overwrite"
@@ -132,10 +140,13 @@ func (s *loginSession) answerCopy(answer string) reply {
 				r.Error = "Destination must be a regular file"
 				return r
 			}
-			d.stage = "overwrite"
-			return d.prompt()
+			if s.cli.Running.FilePrompt != "quiet" {
+				d.stage = "overwrite"
+				return d.prompt()
+			}
+			overwrite = true
 		}
-		if !os.IsNotExist(err) {
+		if err != nil && !os.IsNotExist(err) {
 			s.pendingCopy = nil
 			r.Error = fileError(d.destination, err).Error()
 			return r

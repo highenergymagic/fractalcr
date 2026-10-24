@@ -242,6 +242,8 @@ func Apply(old, next config.Config) error {
 	nextPlatform.AAA = config.AAA{}
 	oldPlatform.Hostname = ""
 	nextPlatform.Hostname = ""
+	oldPlatform.FilePrompt = ""
+	nextPlatform.FilePrompt = ""
 	if string(oldPlatform.JSON()) == string(nextPlatform.JSON()) {
 		if old.Hostname != next.Hostname {
 			if err := syscall.Sethostname([]byte(next.Hostname)); err != nil {

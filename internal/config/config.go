@@ -22,6 +22,7 @@ import (
 type Config struct {
 	Version    int                         `json:"version"`
 	Hostname   string                      `json:"hostname"`
+	FilePrompt string                      `json:"file_prompt,omitempty"`
 	AAA        AAA                         `json:"aaa"`
 	Network    *Network                    `json:"network,omitempty"`
 	Interfaces map[string]*Network         `json:"interfaces,omitempty"`
@@ -186,6 +187,11 @@ func (c Config) Validate() error {
 	}
 	if c.Version != 1 {
 		return errors.New("unsupported configuration version")
+	}
+	switch c.FilePrompt {
+	case "", "alert", "noisy", "quiet":
+	default:
+		return errors.New("file prompt must be alert, noisy or quiet")
 	}
 	if !Name.MatchString(c.Hostname) {
 		return errors.New("invalid hostname")

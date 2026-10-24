@@ -37,9 +37,6 @@ func (s *setupDialog) prompt() reply {
 }
 func (s *setupDialog) answer(input string, session *cli.Session) reply {
 	value := strings.TrimSpace(input)
-	if strings.HasPrefix(value, "__") {
-		return s.prompt()
-	}
 	if value == "abort" || ((s.stage == "begin" || s.stage == "confirm") && value == "no") {
 		return reply{Output: "Setup cancelled. No configuration saved.", Prompt: session.Prompt()}
 	}

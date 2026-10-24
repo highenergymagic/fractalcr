@@ -7,7 +7,7 @@ import (
 
 func TestOutputFiltersShareGrammar(t *testing.T) {
 	s := session(t)
-	for _, tt := range []struct{ kind, want string }{{"include", "two"}, {"exclude", "one\nthree"}, {"begin", "two\nthree"}, {"count", "1"}} {
+	for _, tt := range []struct{ kind, want string }{{"include", "two"}, {"exclude", "one\nthree"}, {"begin", "two\nthree"}, {"count", "Number of lines which match regexp = 1"}} {
 		w, _, e := s.Resolve("sh ver | " + tt.kind + " ^two$")
 		if e != nil {
 			t.Fatal(e)

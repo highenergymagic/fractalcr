@@ -82,6 +82,14 @@ wildcards are supported. `copy` prompts for omitted source names, destination
 names and overwrite confirmation. `delete /force` suppresses confirmation;
 `/recursive` includes directory contents. Operations use named appliance volumes.
 
+`file prompt alert` is the default confirmation policy. `file prompt noisy`
+confirms file-operation parameters; `file prompt quiet` suppresses confirmation,
+including overwrite confirmation, while still requesting missing information.
+`no file prompt` and `default file prompt` restore the default. Like other global
+settings, save the policy with `write memory` to retain it after reload. Ctrl-C
+cancels a pending file dialog. Passwords and filenames beginning with `__` are
+ordinary input; console control events are framed separately from typed text.
+
 `reload` asks whether to save modified running configuration, then asks for
 confirmation. Return confirms; Ctrl-C cancels. `reload in 10 maintenance` schedules
 a reload ten minutes ahead; `reload at 23:30` uses the next occurrence of that

@@ -300,10 +300,6 @@ func (s *loginSession) answerReload(answer string, m *reloadManager, now time.Ti
 		r.Error = "Authorization failed."
 		return r
 	}
-	if answer == "__cancel" || answer == "__end" {
-		s.pendingReload = nil
-		return r
-	}
 	if d.save {
 		switch strings.ToLower(strings.TrimSpace(answer)) {
 		case "y", "yes":

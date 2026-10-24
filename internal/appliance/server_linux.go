@@ -44,6 +44,9 @@ func readManagementRequest(r io.Reader) (managementRequest, error) {
 		return request, io.EOF
 	}
 	err := json.Unmarshal(scanner.Bytes(), &request)
+	if err == nil {
+		err = request.validate()
+	}
 	return request, err
 }
 
@@ -111,7 +114,7 @@ func Serve() error {
 		}
 		login := sessions[peerPID]
 		newSession := login == nil
-		if login == nil || request.Command == "__connect" {
+		if login == nil || request.Action == "connect" {
 			for pid, old := range sessions {
 				if syscall.Kill(int(pid), 0) != nil {
 					if old.authenticated && old.cli.Running.AAA.Enabled {
@@ -129,7 +132,7 @@ func Serve() error {
 		}
 		session := login.cli
 		respond := func(response reply) {
-			login.commandCompleted(request.Command, time.Now())
+			login.commandCompleted(request, time.Now())
 			conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 			json.NewEncoder(conn).Encode(response)
 		}
@@ -139,9 +142,10 @@ func Serve() error {
 			conn.Close()
 			continue
 		}
-		if newSession && request.Command != "__connect" && (!current.AAA.Enabled || request.Transport == "ssh") {
+		if newSession && request.Action != "connect" && (!current.AAA.Enabled || request.Transport == "ssh") {
 			connect := request
-			connect.Command = "__connect"
+			connect.Action = "connect"
+			connect.Command = ""
 			response, _ := login.authenticate(connect, current, time.Now())
 			if !login.authenticated {
 				respond(response)
@@ -150,23 +154,36 @@ func Serve() error {
 			}
 		}
 		if response, handled := login.authenticate(request, current, time.Now()); handled {
-			if request.Command == "__connect" && login.authenticated && login.transport == "console" && !current.AAA.Enabled && !recoveryBoot() {
+			if request.Action == "connect" && login.authenticated && login.transport == "console" && !current.AAA.Enabled && !recoveryBoot() {
 				if _, e := os.Stat(startupPath); os.IsNotExist(e) {
 					login.setup = newSetup(current)
 					response = login.setup.prompt()
 				}
-			} else if login.setup != nil && login.authenticated && request.Command == "__tick" {
+			} else if login.setup != nil && login.authenticated && request.Action == "tick" {
 				response = login.setup.prompt()
 				response.Output = ""
 			}
-			if login.authenticated && len(login.pendingFile) > 0 && request.Command == "__tick" {
-				response = reply{Prompt: "Delete " + deleteURL(login.pendingFile) + "? [confirm]", Challenge: true}
+			if login.authenticated && login.pendingFile != nil && request.Action == "tick" {
+				response = login.pendingFile.prompt()
 			}
-			if login.authenticated && login.pendingReload != nil && request.Command == "__tick" {
+			if login.authenticated && login.pendingReload != nil && request.Action == "tick" {
 				response = login.pendingReload.prompt()
 			}
-			if login.authenticated && login.pendingCopy != nil && request.Command == "__tick" {
+			if login.authenticated && login.pendingCopy != nil && request.Action == "tick" {
 				response = login.pendingCopy.prompt()
+			}
+			respond(response)
+			conn.Close()
+			continue
+		}
+		if request.Action == "end" {
+			response := login.cancelDialog()
+			if session.Mode != "" {
+				response.Output, e = session.Execute("end")
+				if e != nil {
+					response.Error = e.Error()
+				}
+				response.Prompt = session.Prompt()
 			}
 			respond(response)
 			conn.Close()
@@ -183,22 +200,8 @@ func Serve() error {
 			conn.Close()
 			continue
 		}
-		if len(login.pendingFile) > 0 {
-			pending := login.pendingFile
-			login.pendingFile = nil
-			response := reply{Prompt: session.Prompt()}
-			if session.Privilege != 15 {
-				response.Error = "Authorization failed."
-			} else if line == "" || strings.EqualFold(line, "y") || strings.EqualFold(line, "yes") {
-				out, err := fileOperation(pending)
-				response.Output = out
-				if err != nil {
-					response.Error = err.Error()
-				}
-			} else {
-				response.Output = "Delete cancelled."
-			}
-			respond(response)
+		if login.pendingFile != nil {
+			respond(login.answerFile(line))
 			conn.Close()
 			continue
 		}
@@ -242,16 +245,16 @@ func Serve() error {
 		}
 		if recoveryErr != nil {
 			err = fmt.Errorf("interrupted configuration transaction needs recovery: %w", recoveryErr)
-		} else if strings.HasPrefix(request.Command, "__complete ") {
-			completed, matches := session.Complete(strings.TrimPrefix(request.Command, "__complete "))
+		} else if request.Action == "complete" {
+			completed, matches := session.Complete(request.Command)
 			completion = &completed
 			output = matches
-		} else if strings.HasPrefix(request.Command, "__help ") {
-			output, err = session.QueryHelp(strings.TrimPrefix(request.Command, "__help "))
+		} else if request.Action == "help" {
+			output, err = session.QueryHelp(request.Command)
 		} else {
 			var words []string
 			var local bool
-			if line != "__connect" && line != "__end" {
+			{
 				words, local, err = session.Resolve(request.Command)
 				if err == nil {
 					words, filter, err = cli.SplitFilter(words)
@@ -266,7 +269,7 @@ func Serve() error {
 			if err == nil && !session.Allowed(words) {
 				err = fmt.Errorf("Authorization failed.")
 			}
-			if err == nil && current.AAA.Enabled && line != "__end" {
+			if err == nil && current.AAA.Enabled {
 				err = audit(login.user, login.transport, "command", line)
 			}
 			if err == nil {
@@ -275,17 +278,13 @@ func Serve() error {
 					fwords = fwords[1:]
 				}
 				fwords = login.fileWords(fwords)
-				force := false
-				for _, word := range fwords {
-					if word == "/force" {
-						force = true
+				if len(fwords) >= 2 {
+					switch fwords[0] {
+					case "delete", "mkdir", "rmdir", "rename", "move":
+						respond(login.beginFile(fwords))
+						conn.Close()
+						continue
 					}
-				}
-				if len(fwords) >= 2 && fwords[0] == "delete" && !force {
-					login.pendingFile = append([]string(nil), fwords...)
-					respond(reply{Prompt: "Delete " + deleteURL(fwords) + "? [confirm]", Challenge: true})
-					conn.Close()
-					continue
 				}
 				if len(fwords) > 0 && fwords[0] == "reload" {
 					respond(login.beginReload(fwords, reloads, time.Now()))
@@ -338,14 +337,6 @@ func Serve() error {
 				localCommand = line
 			} else if err == nil {
 				switch line {
-				case "__end":
-					if session.Mode != "" {
-						output, err = session.Execute("end")
-					}
-				case "__connect":
-					session.Mode = ""
-					session.Object = ""
-					session.Candidate = session.Running.Clone()
 				case "help":
 					output = cli.Help
 				case "show users":

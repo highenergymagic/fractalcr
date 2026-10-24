@@ -153,7 +153,7 @@ func TestIOSReloadSaveConfirmCancelAndRestart(t *testing.T) {
 	if r.Prompt != "Proceed with reload? [confirm]" {
 		t.Fatal(r)
 	}
-	s.answerReload("__cancel", m, now)
+	s.cancelDialog()
 	if m.plan != nil || s.pendingReload != nil {
 		t.Fatal("Ctrl-C did not cancel")
 	}
@@ -187,6 +187,10 @@ func TestIOSDirectoryOptionsAndConfinement(t *testing.T) {
 	os.WriteFile(filepath.Join(outside, "sentinel"), []byte("safe"), 0600)
 	os.Symlink(outside, filepath.Join(root, "escape"))
 	fileSystems = func() []applianceFS { return []applianceFS{{"bootflash", root, false}, {"nvram", outside, true}} }
+	systems, err := fileOperation([]string{"show", "file", "systems"})
+	if err != nil || !strings.Contains(systems, "bootflash: flash:") || !strings.Contains(systems, "nvram  ro") || !strings.Contains(systems, "\n* ") {
+		t.Fatal("filesystem prefixes or default marker missing", systems, err)
+	}
 	for _, command := range []string{"dir /all /recursive flash:", "dir /recursive /all bootflash:", "dir all-filesystems"} {
 		out, e := fileOperation(strings.Fields(command))
 		if e != nil || !strings.Contains(out, "bytes total") {
@@ -240,7 +244,7 @@ func TestIOSCopyPromptsAndOverwrite(t *testing.T) {
 	if !strings.Contains(r.Prompt, "overwrite? [confirm]") {
 		t.Fatal(r)
 	}
-	s.answerCopy("__cancel")
+	s.cancelDialog()
 	data, _ := os.ReadFile(filepath.Join(root, "dest"))
 	if string(data) != "original" {
 		t.Fatal("overwrite without confirmation")
