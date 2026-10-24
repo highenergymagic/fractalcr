@@ -115,6 +115,18 @@ jobs:
           compression-level: 0
           retention-days: 30
           if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: firmware-qualification-diagnostics
+          # Never upload the test directories: they contain SSH private keys.
+          path: |
+            release-stage/cloud-test/console.log
+            release-stage/cloud-test/result.json
+            release-stage/usb-test/required.log
+            release-stage/usb-test/optional.log
+            release-stage/usb-test/result.json
+          if-no-files-found: ignore
   publish:
     if: github.ref_type == 'tag'
     needs: build
