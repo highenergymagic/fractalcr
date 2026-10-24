@@ -33,7 +33,7 @@ python3 /src/boot/tools/sign-image.py --key /boot-work/build/keys/release.key \
     --kernel artifacts/system.efi --output artifacts/system.bin
 cp /boot-work/artifacts/rommon.efi /boot-work/artifacts/firmware.crt \
     /boot-work/artifacts/OVMF_CODE_4M.secboot.fd /boot-work/artifacts/OVMF_VARS-trusted.fd artifacts/
-cp /boot-work/build/keys/release.pub artifacts/release.pub
+install -m 0644 /boot-work/build/keys/release.pub artifacts/release.pub
 cp /boot-work/artifacts/buildroot-packages.json /boot-work/artifacts/boot-sources.json artifacts/
 tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
     -C build/tmp/deploy -cf - licenses | gzip -n > artifacts/system-licenses.tar.gz
