@@ -44,6 +44,10 @@ func renameFile(root *os.Root, source, destination string) error {
 }
 
 func copyFile(w []string, c config.Config) (string, error) {
+	return copyFileOverwrite(w, c, false)
+}
+
+func copyFileOverwrite(w []string, c config.Config, overwrite bool) (string, error) {
 	if len(w) != 3 {
 		return "", fmt.Errorf("Source and destination required")
 	}
@@ -114,7 +118,12 @@ func copyFile(w []string, c config.Config) (string, error) {
 	if err != nil {
 		return "", fileError(w[2], err)
 	}
-	if err = renameFile(root, temporary, name); err != nil {
+	if overwrite {
+		err = root.Rename(temporary, name)
+	} else {
+		err = renameFile(root, temporary, name)
+	}
+	if err != nil {
 		return "", fileError(w[2], err)
 	}
 	if parent, e := root.Open(path.Dir(name)); e == nil {
@@ -130,6 +139,27 @@ type applianceFS struct {
 }
 
 var fileSystems = discoverFileSystems
+
+func filesystemNames() []string {
+	var names []string
+	for _, v := range fileSystems() {
+		names = append(names, v.Name+":")
+		if v.Name == "bootflash" {
+			names = append(names, "flash:")
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+func deleteURL(w []string) string {
+	for _, word := range w[1:] {
+		if word != "/force" && word != "/recursive" {
+			return word
+		}
+	}
+	return ""
+}
 
 // Only named appliance volumes are addressable. os.Root confines every operation
 // even if a container concurrently replaces a path component with a symlink.
@@ -256,6 +286,29 @@ func protectedFile(v applianceFS, name string) bool {
 	return false
 }
 func fileOperation(w []string) (string, error) {
+	if len(w) == 0 {
+		return "", fmt.Errorf("File operation required")
+	}
+	if w[0] == "dir" {
+		return directoryOperation(w[1:])
+	}
+	recursive := false
+	if w[0] == "delete" {
+		args := []string{"delete"}
+		for _, arg := range w[1:] {
+			switch arg {
+			case "/force":
+			case "/recursive":
+				recursive = true
+			default:
+				args = append(args, arg)
+			}
+		}
+		w = args
+		if len(w) != 2 {
+			return "", fmt.Errorf("Filename required")
+		}
+	}
 	if strings.Join(w, " ") == "show file systems" {
 		var b strings.Builder
 		b.WriteString("File Systems:\n\n       Size(b)       Free(b)  Type     Flags  Prefixes\n")
@@ -285,38 +338,19 @@ func fileOperation(w []string) (string, error) {
 		return "", fileError(url, err)
 	}
 	defer root.Close()
-	if w[0] == "dir" {
-		f, err := root.Open(name)
-		if err != nil {
-			return "", fileError(url, err)
-		}
-		defer f.Close()
-		entries, err := f.Readdir(-1)
-		if err != nil {
-			return "", fileError(url, err)
-		}
-		sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
-		var b strings.Builder
-		fmt.Fprintf(&b, "Directory of %s:/%s\n\n", v.Name, strings.TrimPrefix(name, "."))
-		for i, e := range entries {
-			mode := "-rw-"
-			if e.IsDir() {
-				mode = "drw-"
-			}
-			fmt.Fprintf(&b, "%5d  %s %12d  %s  %s\n", i+1, mode, e.Size(), e.ModTime().UTC().Format("Jan 02 2006 15:04:05 MST"), displayText(e.Name()))
-		}
-		var st syscall.Statfs_t
-		if syscall.Fstatfs(int(f.Fd()), &st) == nil {
-			fmt.Fprintf(&b, "\n%d bytes total (%d bytes free)\n", st.Blocks*uint64(st.Bsize), st.Bavail*uint64(st.Bsize))
-		}
-		return b.String(), nil
-	}
 	if protectedFile(v, name) {
 		return "", fmt.Errorf("%s: Protected system object", url)
 	}
 	switch w[0] {
 	case "delete", "rmdir":
-		err = root.Remove(name)
+		if recursive {
+			// The descriptor-rooted operation cannot escape through symlinks.
+			if _, err = root.Lstat(name); err == nil {
+				err = root.RemoveAll(name)
+			}
+		} else {
+			err = root.Remove(name)
+		}
 	case "mkdir":
 		err = root.Mkdir(name, 0700)
 	case "move", "rename":

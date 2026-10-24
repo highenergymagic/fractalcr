@@ -18,9 +18,13 @@ type managementRequest struct {
 	Transport string `json:"transport,omitempty"`
 	Verifier  string `json:"verifier,omitempty"`
 	VTY       int    `json:"vty,omitempty"`
+	Peer      string `json:"peer,omitempty"`
 }
 type loginSession struct {
 	pendingFile                      []string
+	pendingReload                    *reloadDialog
+	pendingCopy                      *copyDialog
+	enableLevel                      int
 	setup                            *setupDialog
 	cli                              *cli.Session
 	user, stage, transport, verifier string
@@ -28,6 +32,8 @@ type loginSession struct {
 	bootstrap                        bool
 	vty                              int
 	userPrivilege                    int
+	peer                             string
+	workingDirectory                 string
 	last                             time.Time
 }
 type loginFailure struct {
@@ -109,7 +115,10 @@ func (s *loginSession) challenge() reply {
 	return reply{Prompt: prompt, Challenge: true, Secret: secret}
 }
 func (s *loginSession) logout() {
+	s.workingDirectory = ""
 	s.pendingFile = nil
+	s.pendingReload = nil
+	s.pendingCopy = nil
 	s.setup = nil
 	s.authenticated = false
 	s.bootstrap = false
@@ -139,9 +148,20 @@ func (s *loginSession) authenticate(r managementRequest, c config.Config, now ti
 	if !s.cli.Transactional {
 		s.cli.Candidate = c.Clone()
 	}
+	if r.Command == "__cancel" {
+		if s.authenticated && s.stage == "enable" {
+			s.stage = ""
+			return reply{Prompt: s.cli.Prompt()}, true
+		}
+		if !s.authenticated {
+			s.logout()
+			return s.challenge(), true
+		}
+	}
 	if r.Command == "__connect" {
 		s.logout()
 		s.transport = "console"
+		s.peer = r.Peer
 		s.last = now
 		if r.Transport == "ssh" {
 			s.transport = "ssh"
@@ -260,7 +280,10 @@ func (s *loginSession) authenticate(r managementRequest, c config.Config, now ti
 		delete(loginFailures, key)
 		event := "login"
 		if s.stage == "enable" {
-			s.cli.Privilege = 15
+			s.cli.Privilege = s.enableLevel
+			if s.enableLevel == 0 {
+				s.cli.Privilege = 15
+			}
 			event = "enable"
 		} else {
 			s.cli.Privilege = u.Privilege

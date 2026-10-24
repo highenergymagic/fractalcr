@@ -14,6 +14,7 @@ import socket
 import subprocess
 import time
 import pexpect
+from ios_prompts import reload_appliance
 
 p=argparse.ArgumentParser()
 p.add_argument('--artifacts',type=Path,required=True)
@@ -136,7 +137,7 @@ try:
             time.sleep(1)
         # Keep the short restart-to-reload interval: waiting for Docker first
         # would conceal the interrupted startup failure this exercises.
-        child.sendline('reload'); child.expect(pexpect.EOF,timeout=120); child.close()
+        reload_appliance(child); child.expect(pexpect.EOF,timeout=120); child.close()
         child=boot(); login()
         assert 'tenant' in command('show networks')
         assert command('show running-config').count('ip address dhcp') >= 2

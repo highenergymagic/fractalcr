@@ -20,7 +20,7 @@ func (s *Session) Allowed(words []string) bool {
 		return true
 	}
 	command := strings.Join(words, " ")
-	switch command {
+	switch words[0] {
 	case "enable", "disable", "exit", "logout", "help":
 		return true
 	}
@@ -28,6 +28,9 @@ func (s *Session) Allowed(words []string) bool {
 		return false
 	}
 	if words[0] == "terminal" {
+		return true
+	}
+	if words[0] == "dir" || words[0] == "cd" || command == "pwd" || command == "show file systems" || command == "show reload" || command == "show clock detail" {
 		return true
 	}
 	// Configuration, logs, workload inspection and native clients may contain
@@ -40,17 +43,39 @@ func (s *Session) Allowed(words []string) bool {
 	return false
 }
 func (s *Session) aaaCommand(w []string) (bool, string, error) {
+	if len(w) > 0 && w[0] == "disable" {
+		level := 1
+		if s.Privilege < level {
+			level = s.Privilege
+		}
+		if len(w) == 2 {
+			level, _ = strconv.Atoi(w[1])
+		}
+		if level > s.Privilege {
+			return true, "", fmt.Errorf("New privilege level must be less than current privilege level")
+		}
+		s.Privilege = level
+		s.Mode, s.Object = "", ""
+		return true, "", nil
+	}
 	line := strings.Join(w, " ")
 	switch line {
+	case "no exec-timeout", "default exec-timeout":
+		timeout := 0
+		if line == "default exec-timeout" {
+			timeout = 600
+		}
+		if s.Mode == "line-console" {
+			s.Candidate.AAA.ConsoleTimeout = timeout
+		} else {
+			s.editVTY(func(line *config.VTYLine) { line.Timeout = timeout })
+		}
+		return true, "", nil
+	case "no enable secret":
+		s.Candidate.AAA.EnableSecret = ""
+		return true, "", nil
 	case "show privilege":
 		return true, fmt.Sprintf("Current privilege level is %d", s.Privilege), nil
-	case "disable":
-		if s.Privilege > 1 {
-			s.Privilege = 1
-		}
-		s.Mode = ""
-		s.Object = ""
-		return true, "", nil
 	case "aaa new-model", "aaa authentication login default local", "aaa authorization exec default local", "aaa accounting exec default start-stop local", "aaa accounting commands 15 default start-stop local":
 		s.Candidate.AAA.Enabled = true
 		return true, "", nil

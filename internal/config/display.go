@@ -2,9 +2,18 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 )
+
+func IPv4CLI(address string) string {
+	ip, network, err := net.ParseCIDR(address)
+	if err != nil || ip.To4() == nil {
+		return address
+	}
+	return ip.String() + " " + net.IP(network.Mask).String()
+}
 
 // CLI renders the configuration model, never a host tool's output. JSON remains
 // the durable storage and machine interchange format.
@@ -55,7 +64,7 @@ func (c Config) CLI() string {
 		if n.DHCP {
 			line(" ip address dhcp")
 		} else if n.Address != "" {
-			line(" ip address %s", n.Address)
+			line(" ip address %s", IPv4CLI(n.Address))
 		}
 		if n.Gateway != "" {
 			line(" ip gateway %s", n.Gateway)

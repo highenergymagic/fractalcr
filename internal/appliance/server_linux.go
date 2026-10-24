@@ -55,6 +55,11 @@ func Serve() error {
 		return err
 	}
 	defer listener.Close()
+	reloads, err := newReloadManager("/run/fractal-reload.json", func() error { _, err := control(4, ""); return err })
+	if err != nil {
+		return err
+	}
+	go reloads.run()
 	if err = os.Chmod(path, 0600); err != nil {
 		return err
 	}
@@ -64,7 +69,9 @@ func Serve() error {
 		if e != nil {
 			c = config.Default()
 		}
-		return &loginSession{cli: &cli.Session{Running: c, Candidate: c.Clone(), StateDir: "/datastore/data0/config", Apply: Apply, Platform: Operations, InterfaceName: canonicalInterface, InterfaceNames: interfaceNames, Save: Save, EnforcePrivilege: true}, stage: "username", last: time.Now()}
+		s := &loginSession{cli: &cli.Session{Running: c, Candidate: c.Clone(), StateDir: "/datastore/data0/config", Apply: Apply, InterfaceName: canonicalInterface, InterfaceNames: interfaceNames, FileSystems: filesystemNames, Save: Save, EnforcePrivilege: true}, stage: "username", last: time.Now()}
+		s.cli.Platform = s.operations
+		return s
 	}
 	// Malformed configuration fails closed; ROMMON 0x2142 selects explicit
 	// physical-console recovery without discarding the saved configuration.
@@ -153,13 +160,29 @@ func Serve() error {
 				response.Output = ""
 			}
 			if login.authenticated && len(login.pendingFile) > 0 && request.Command == "__tick" {
-				response = reply{Prompt: "Delete " + login.pendingFile[1] + "? [confirm]", Challenge: true}
+				response = reply{Prompt: "Delete " + deleteURL(login.pendingFile) + "? [confirm]", Challenge: true}
+			}
+			if login.authenticated && login.pendingReload != nil && request.Command == "__tick" {
+				response = login.pendingReload.prompt()
+			}
+			if login.authenticated && login.pendingCopy != nil && request.Command == "__tick" {
+				response = login.pendingCopy.prompt()
 			}
 			respond(response)
 			conn.Close()
 			continue
 		}
 		line := strings.TrimSpace(request.Command)
+		if login.pendingCopy != nil {
+			respond(login.answerCopy(line))
+			conn.Close()
+			continue
+		}
+		if login.pendingReload != nil {
+			respond(login.answerReload(line, reloads, time.Now()))
+			conn.Close()
+			continue
+		}
 		if len(login.pendingFile) > 0 {
 			pending := login.pendingFile
 			login.pendingFile = nil
@@ -251,9 +274,35 @@ func Serve() error {
 				if len(fwords) > 0 && fwords[0] == "do" {
 					fwords = fwords[1:]
 				}
-				if len(fwords) == 2 && fwords[0] == "delete" {
+				fwords = login.fileWords(fwords)
+				force := false
+				for _, word := range fwords {
+					if word == "/force" {
+						force = true
+					}
+				}
+				if len(fwords) >= 2 && fwords[0] == "delete" && !force {
 					login.pendingFile = append([]string(nil), fwords...)
-					respond(reply{Prompt: "Delete " + fwords[1] + "? [confirm]", Challenge: true})
+					respond(reply{Prompt: "Delete " + deleteURL(fwords) + "? [confirm]", Challenge: true})
+					conn.Close()
+					continue
+				}
+				if len(fwords) > 0 && fwords[0] == "reload" {
+					respond(login.beginReload(fwords, reloads, time.Now()))
+					conn.Close()
+					continue
+				}
+				if len(fwords) == 3 && fwords[0] == "copy" && fwords[2] != "candidate-config" {
+					respond(login.beginCopy(fwords))
+					conn.Close()
+					continue
+				}
+				if strings.Join(fwords, " ") == "show reload" {
+					out := reloads.status(time.Now())
+					if filter != nil {
+						out = filter.Apply(out)
+					}
+					respond(reply{Prompt: session.Prompt(), Output: out})
 					conn.Close()
 					continue
 				}
@@ -269,16 +318,13 @@ func Serve() error {
 				conn.Close()
 				continue
 			}
-			if err == nil && line == "enable" {
-				response := reply{Prompt: session.Prompt()}
-				if session.Privilege != 15 {
-					if current.AAA.EnableSecret == "" {
-						response.Error = "No enable secret configured."
-					} else {
-						login.stage = "enable"
-						response = login.challenge()
-					}
+			if err == nil && (line == "enable" || strings.HasPrefix(line, "enable ")) {
+				level := 15
+				enableWords := strings.Fields(line)
+				if len(enableWords) == 2 {
+					level, _ = strconv.Atoi(enableWords[1])
 				}
+				response := login.enable(level, current)
 				respond(response)
 				conn.Close()
 				continue
@@ -308,15 +354,7 @@ func Serve() error {
 				case "help":
 					output = cli.Help
 				case "show users":
-					for _, user := range sessions {
-						if user.authenticated {
-							line := "console 0"
-							if user.transport == "ssh" {
-								line = fmt.Sprintf("vty %d", user.vty)
-							}
-							output += fmt.Sprintf("%-20s %-12s privilege %d\n", user.user, line, user.cli.Privilege)
-						}
-					}
+					output = sessionUsers(sessions, login, time.Now())
 				case "show configuration diff":
 					output = configDiff(session.Running, session.Candidate)
 				case "copy startup-config candidate-config":

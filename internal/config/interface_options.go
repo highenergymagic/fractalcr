@@ -50,7 +50,7 @@ func (n Network) RenderOptionsCLI(line func(string, ...any)) {
 		line(" mtu %d", n.MTU)
 	}
 	for _, address := range n.SecondaryAddresses {
-		line(" ip address %s secondary", address)
+		line(" ip address %s secondary", IPv4CLI(address))
 	}
 	for _, address := range n.IPv6Addresses {
 		line(" ipv6 address %s", address)

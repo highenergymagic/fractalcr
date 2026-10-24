@@ -15,8 +15,11 @@ type Command struct {
 }
 
 var execCommands = []Command{
+	{"cd", "Change to the root of the current filesystem", false},
+	{"cd <filesystem:>", "Change the default directory", false},
+	{"pwd", "Display the current directory", false},
 	{"dir", "List files on bootflash", false},
-	{"dir <URL>", "List files on an appliance filesystem", false},
+	{"dir <filesystem:>", "Directory or file name", false},
 	{"show file systems", "Available appliance filesystems", false},
 	{"delete <URL>", "Delete a file after confirmation", false},
 	{"delete /force <URL>", "Delete a file without confirmation", false},
@@ -26,7 +29,9 @@ var execCommands = []Command{
 	{"rmdir <URL>", "Remove an empty directory", false},
 	{"setup", "Run the physical-console setup dialog", false},
 	{"enable", "Enter privileged EXEC", false},
+	{"enable <0-15>", "Privilege level", false},
 	{"disable", "Return to user EXEC", false},
+	{"disable <0-15>", "Privilege level", false},
 	{"exit", "Close the EXEC session", false},
 	{"logout", "Close the EXEC session", false},
 	{"show privilege", "Current privilege level", false},
@@ -36,6 +41,11 @@ var execCommands = []Command{
 	{"terminal length <0-512>", "Set page length; zero disables pagination", true},
 	{"terminal width <40-512>", "Set terminal display width", true},
 	{"terminal history size <0-256>", "Set command history size", true},
+	{"terminal history", "Enable command history", true},
+	{"terminal no history", "Disable command history", true},
+	{"terminal no history size", "Restore the default history size", true},
+	{"terminal monitor", "Display system messages on this terminal", true},
+	{"terminal no monitor", "Disable system messages on this terminal", true},
 	{"show version", "Software and platform version", true},
 	{"show inventory", "Hardware inventory", true},
 	{"show history", "Recent commands in this terminal session", true},
@@ -51,7 +61,15 @@ var execCommands = []Command{
 	{"request platform debug service-container enter", "Enter the platform debug shell", true},
 	{"request platform debug service-container enable", "Enable the platform debug service", false},
 	{"request platform debug service-container disable", "Disable and remove the debug container", false},
-	{"reload", "Restart the appliance", true},
+	{"reload", "Halt and perform a cold restart", false},
+	{"reload cancel", "Cancel a pending reload", false},
+	{"reload in <DELAY>", "Delay before reload (minutes or hours:minutes)", false},
+	{"reload in <DELAY> <TEXT...>", "Reason for reload", false},
+	{"reload at <TIME>", "Time to reload (hh:mm)", false},
+	{"reload at <TIME> <TEXT...>", "Date (day month or month day) and reason", false},
+	{"reload reason <TEXT...>", "Reason for reload", false},
+	{"reload <TEXT...>", "Reason for reload", false},
+	{"show reload", "Scheduled reload", false},
 	{"configure terminal", "Enter configuration mode", false},
 	{"configure candidate", "Stage an explicit configuration transaction", false},
 	{"show running-config", "Running configuration", false},
@@ -68,6 +86,7 @@ var execCommands = []Command{
 	{"show container <NAME> logs", "Recent container logs", false},
 	{"show images", "Container images", false},
 	{"show clock", "Current system time", false},
+	{"show clock detail", "System clock and time source", false},
 	{"show ntp status", "Time synchronization status", false},
 	{"show ntp associations", "Time sources", false},
 	{"show networks", "Docker networks", false},
@@ -85,6 +104,8 @@ var execCommands = []Command{
 	{"show container-isolation detail", "Kata runtime profile", false},
 	{"show system resources", "CPU, memory and filesystem resources", false},
 	{"copy running-config startup-config", "Save running configuration", false},
+	{"copy running-config <URL>", "Copy running configuration", false},
+	{"copy startup-config <URL>", "Copy startup configuration", false},
 	{"copy <URL> <URL>", "Copy a file between appliance filesystems", false},
 	{"copy startup-config candidate-config", "Load startup configuration into the candidate", false},
 	{"write memory", "Save running configuration", false},
@@ -107,6 +128,7 @@ var configCommands = []Command{
 	{"username <NAME> privilege <0-15> secret pbkdf2 <SECRET...>", "Import a PBKDF2 secret verifier", false},
 	{"username <NAME> secret pbkdf2 <SECRET...>", "Import a PBKDF2 secret verifier", false},
 	{"enable secret pbkdf2 <SECRET...>", "Import a PBKDF2 enable verifier", false},
+	{"no enable secret", "Remove the enable secret", false},
 	{"aaa new-model", "Enable local authentication, authorization and accounting", false},
 	{"no aaa new-model", "Disable local AAA and SSH", false},
 	{"aaa authentication login default local", "Authenticate using local users", false},
@@ -205,6 +227,20 @@ func commandTokenHelp(path []string) string {
 	}
 	prefix := strings.Join(path, " ")
 	switch {
+	case word == "/all":
+		return "Include all file entries"
+	case word == "/recursive":
+		return "Include subdirectories"
+	case word == "/force":
+		return "Delete without prompting"
+	case word == "all-filesystems":
+		return "List files in every filesystem"
+	case word == "<NETMASK>":
+		return "IP subnet mask"
+	case word == "<DELAY>":
+		return "Delay in minutes or hours:minutes"
+	case word == "<TIME>":
+		return "Time to reload (hh:mm)"
 	case prefix == "line console 0":
 		return "Console line number"
 	case prefix == "line vty <0-15>":
@@ -230,8 +266,8 @@ type node struct {
 }
 
 func (n *node) add(c Command) {
-	if (strings.HasPrefix(c.Syntax, "show ") || strings.HasPrefix(c.Syntax, "do show ")) && !strings.Contains(c.Syntax, " | ") {
-		for _, kind := range []string{"include", "exclude", "begin", "count"} {
+	if (strings.HasPrefix(c.Syntax, "show ") || strings.HasPrefix(c.Syntax, "do show ") || c.Syntax == "dir" || strings.HasPrefix(c.Syntax, "dir ") || c.Syntax == "do dir" || strings.HasPrefix(c.Syntax, "do dir ")) && !strings.Contains(c.Syntax, " | ") {
+		for _, kind := range []string{"include", "exclude", "begin", "count", "section", "section include", "section exclude"} {
 			n.add(Command{c.Syntax + " | " + kind + " <REGEX...>", "Filter output using a regular expression", c.Local})
 		}
 	}
@@ -289,6 +325,24 @@ func (s *Session) grammar() *node {
 		}
 	}
 	return root
+}
+
+func init() {
+	for _, mode := range []string{"line-console", "line-vty"} {
+		modeCommands[mode] = append(modeCommands[mode], "no exec-timeout", "default exec-timeout")
+	}
+	// File options are ordered keywords, not a Unix argument pass-through.
+	for _, flags := range []string{"", "/all ", "/recursive ", "/all /recursive ", "/recursive /all "} {
+		for _, target := range []string{"", "<filesystem:>", "all-filesystems"} {
+			execCommands = append(execCommands, Command{strings.TrimSpace("dir " + flags + target), "List files", false})
+		}
+	}
+	for _, flags := range []string{"/recursive ", "/recursive /force ", "/force /recursive "} {
+		execCommands = append(execCommands, Command{"delete " + flags + "<URL>", "Delete files and directories", false})
+	}
+	for _, flags := range []string{"/force", "/recursive", "/recursive /force", "/force /recursive"} {
+		execCommands = append(execCommands, Command{"delete <URL> " + flags, "Delete files", false})
+	}
 }
 
 type SyntaxError struct {
@@ -458,6 +512,19 @@ func (s *Session) ContextHelp(line string) string {
 	sort.Slice(items, func(i, j int) bool { return items[i].word < items[j].word })
 	var out []string
 	for _, child := range items {
+		if (child.word == "<filesystem:>" || child.word == "<URL>") && s.FileSystems != nil {
+			if full {
+				out = append(out, fmt.Sprintf("  %-22s %s", "<filesystem:>", "File system or file name"))
+			}
+			for _, name := range s.FileSystems() {
+				if full {
+					out = append(out, fmt.Sprintf("  %-22s Directory or file name", name))
+				} else if strings.HasPrefix(name, partial) {
+					out = append(out, name)
+				}
+			}
+			continue
+		}
 		if child.word == "<INTERFACE>" && s.InterfaceNames != nil {
 			for _, name := range s.InterfaceNames() {
 				if full {
@@ -547,6 +614,16 @@ func (s *Session) completeHere(line string) (string, string) {
 	}
 	var found string
 	for _, child := range n.children {
+		if (child.word == "<filesystem:>" || child.word == "<URL>") && s.FileSystems != nil {
+			for _, name := range s.FileSystems() {
+				if strings.HasPrefix(name, partial) {
+					if found != "" {
+						return line, "\a"
+					}
+					found = name
+				}
+			}
+		}
 		if child.word == "<INTERFACE>" && s.InterfaceNames != nil {
 			if s.InterfaceName != nil {
 				if name, err := s.InterfaceName(partial); err == nil {

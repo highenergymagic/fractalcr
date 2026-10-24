@@ -24,6 +24,7 @@ type Session struct {
 	Platform         func([]string, config.Config) (string, error)
 	InterfaceName    func(string) (string, error)
 	InterfaceNames   func() []string
+	FileSystems      func() []string
 	Save             func(config.Config) error
 	Recovery         bool
 	EnforcePrivilege bool
@@ -58,7 +59,7 @@ func (s *Session) Prompt() string {
 		suffix += ")"
 	}
 	mark := "# "
-	if s.EnforcePrivilege && s.Privilege < 15 && s.Mode == "" {
+	if s.EnforcePrivilege && s.Privilege < 2 && s.Mode == "" {
 		mark = "> "
 	}
 	return s.Running.Hostname + suffix + mark
@@ -175,6 +176,9 @@ func (s *Session) execute(line string) (string, error) {
 			s.ConfigBase = string(s.Running.JSON())
 		}
 		s.Mode, s.Object = "config", ""
+		if line != "configure candidate" {
+			return "Enter configuration commands, one per line.  End with CNTL/Z.", nil
+		}
 		return "", nil
 	case "end":
 		if s.Transactional && string(s.Candidate.JSON()) != string(s.Running.JSON()) {
@@ -212,7 +216,7 @@ func (s *Session) execute(line string) (string, error) {
 		}
 		return "Running configuration committed. Use copy running-config startup-config to persist.", nil
 	}
-	if w[0] == "show" || w[0] == "copy" || w[0] == "request" || w[0] == "write" || w[0] == "ping" || w[0] == "dir" || w[0] == "delete" || w[0] == "move" || w[0] == "rename" || w[0] == "mkdir" || w[0] == "rmdir" {
+	if w[0] == "show" || w[0] == "copy" || w[0] == "request" || w[0] == "write" || w[0] == "ping" || w[0] == "dir" || w[0] == "cd" || w[0] == "pwd" || w[0] == "delete" || w[0] == "move" || w[0] == "rename" || w[0] == "mkdir" || w[0] == "rmdir" {
 		return s.operational(w)
 	}
 	if s.Mode == "" {
@@ -288,7 +292,18 @@ func (s *Session) execute(line string) (string, error) {
 		if handled, err := s.configureVirtualInterface(n, w); handled {
 			return "", err
 		}
+		w, err = normalizeInterfaceAddress(w)
+		if err != nil {
+			return "", err
+		}
 		if configureInterfaceOptions(n, w) {
+			return "", nil
+		}
+		if len(w) == 4 && w[0] == "no" && w[1] == "ip" && w[2] == "address" {
+			if n.Address != w[3] {
+				return "", errors.New("Invalid address")
+			}
+			n.Address = ""
 			return "", nil
 		}
 		if len(w) == 3 && w[0] == "ip" {
@@ -602,7 +617,8 @@ func (s *Session) operational(w []string) (string, error) {
 	line := strings.Join(w, " ")
 	switch line {
 	case "show running-config":
-		return "Building configuration...\n\nCurrent configuration:\n" + s.Running.CLI(), nil
+		text := s.Running.CLI()
+		return fmt.Sprintf("Building configuration...\n\nCurrent configuration : %d bytes\n%s", len(text), text), nil
 	case "show running-config json":
 		return string(s.Running.JSON()), nil
 	case "show candidate-config":
@@ -631,12 +647,12 @@ func (s *Session) operational(w []string) (string, error) {
 			if err := s.Save(s.Running); err != nil {
 				return "", err
 			}
-			return "Startup configuration saved.", nil
+			return "Building configuration...\n[OK]", nil
 		}
 		if err := config.AtomicWrite(filepath.Join(s.StateDir, "startup-config.json"), s.Running.JSON(), 0600); err != nil {
 			return "", err
 		}
-		return "Startup configuration saved.", nil
+		return "Building configuration...\n[OK]", nil
 	case "request system container-isolation install runtime kata-containers":
 		if s.Mode == "" {
 			return "", errors.New("enter config; runtime selection is part of candidate configuration")

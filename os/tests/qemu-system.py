@@ -12,6 +12,7 @@ import sys
 import time
 from quiet_console import assert_quiet_boot
 import pexpect
+from ios_prompts import reload_appliance
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "boot" / "tests"))
 from qemu_process import finish_qemu, stop_qemu
 
@@ -225,7 +226,7 @@ def configuration_cli():
     command("ip address 10.0.2.16/24", mode="-interface")
     command("commit", "Running configuration committed.", mode="-interface")
     command("do show interfaces", "Internet address is 10.0.2.16", mode="-interface")
-    command("do show running-config", "ip address 10.0.2.16/24", mode="-interface")
+    command("do show running-config", "ip address 10.0.2.16 255.255.255.0", mode="-interface")
     command("ip address 10.0.2.15/24", mode="-interface")
     command("commit", "Running configuration committed.", mode="-interface")
     command("ip address 10.0.2.17/24", mode="-interface")
@@ -234,7 +235,7 @@ def configuration_cli():
     command("abort", mode="exec")
     command("show interfaces", mode="exec")
     assert "Internet address is 10.0.2.15" in child.before and "Internet address is 10.0.2.17" not in child.before
-    command("show running-config", "ip address 10.0.2.15/24", mode="exec")
+    command("show running-config", "ip address 10.0.2.15 255.255.255.0", mode="exec")
     check("staging, abort, validation, live network apply and failed-apply rollback work")
     # All image/daemon information comes through the appliance command surface.
     command("show images", mode="exec")
@@ -259,7 +260,7 @@ def configuration_cli():
     time.sleep(2)
     command("show container cli-probe logs", "PERSISTENT_COUNTER=1", mode="exec")
     command("request container cli-probe remove", "cli-probe", mode="exec")
-    command("write memory", "Startup configuration saved.", mode="exec")
+    command("write memory", "[OK]", mode="exec")
     command("request platform software service management restart", mode="exec")
     child.expect_exact("management: Ready."); prompt()
     command("show running-config", 'container cli-probe', mode="exec")
@@ -440,8 +441,8 @@ def factory_persistence():
     witness(volume_command,2)
     execute("request container-engine volume rm factory-volume","factory-volume")
     check("Kata containers with persistent volumes retain shared writes through the cold-start path")
-    execute("write memory","Startup configuration saved.")
-    child.sendline("reload"); child.expect(pexpect.EOF); stop_qemu(child)
+    execute("write memory","[OK]")
+    reload_appliance(child); child.expect(pexpect.EOF); stop_qemu(child)
     child=spawn(); ready()
     execute("request system container-isolation kata-containers vm-factory create","CLH VM factory ready")
     witness("request container-engine start attach enable factory-persistent",4)
@@ -570,7 +571,7 @@ try:
         check("offline container passed PID/cgroup/seccomp/capability/read-only-root/bind-mount checks")
         check("container bridge and published TCP port worked")
         configuration_cli()
-        child.sendline("reload")
+        reload_appliance(child)
         child.expect(pexpect.EOF)
         stop_qemu(child)
         child = spawn()
@@ -607,10 +608,10 @@ try:
         child.expect_exact("ctr(config)# ")
         child.sendline("commit"); child.expect_exact("Running configuration committed."); child.expect_exact("ctr(config)# ")
         child.sendline("end"); prompt()
-        child.sendline("write memory"); child.expect_exact("Startup configuration saved."); prompt()
+        child.sendline("write memory"); child.expect_exact("[OK]"); prompt()
         for command in ("conf t", "line con 0", "login local", "end"):
             child.sendline(command); child.expect(r"ctr(?:\(config(?:-line)?\))?# ")
-        child.sendline("wr me"); child.expect_exact("Startup configuration saved."); prompt()
+        child.sendline("wr me"); child.expect_exact("[OK]"); prompt()
         child.sendline("logout"); child.expect_exact("Username: ")
         child.sendline("bootstrap-admin"); child.expect_exact("Password: ")
         child.sendline("Synthetic-bootstrap-592!"); prompt()
@@ -630,8 +631,8 @@ try:
         child.sendline("hostname ctr-test"); child.expect_exact("ctr-test(config)# ")
         child.sendline("commit"); child.expect_exact("Running configuration committed."); child.expect_exact("ctr-test(config)# ")
         child.sendline("end"); prompt()
-        child.sendline("write memory"); child.expect_exact("Startup configuration saved."); prompt()
-        child.sendline("reload"); child.expect(pexpect.EOF); stop_qemu(child)
+        child.sendline("write memory"); child.expect_exact("[OK]"); prompt()
+        reload_appliance(child); child.expect(pexpect.EOF); stop_qemu(child)
         recover_startup = False
         child = spawn(); ready()
         check("physical ROMMON 0x2142 recovery repairs damaged configuration and normal boot loads the repair")

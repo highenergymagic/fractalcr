@@ -11,6 +11,10 @@ filters and physical-console password recovery. Normal configuration edits
 running state immediately. Explicit candidate
 transactions have independent staging; stale commits are rejected.
 
+The [IOS management conformance record](../docs/ios-management-conformance.md)
+links the Cisco command references and records tested behavior and remaining
+differences.
+
 ## Configuration
 
 An empty datastore starts the serial setup dialog. `setup` runs it again from
@@ -29,7 +33,7 @@ use are refused. Setup never silently erases an existing installation.
 ctr# configure terminal
 ctr(config)# hostname edge
 edge(config)# interface GigabitEthernet0
-edge(config-interface)# ip address 192.0.2.10/24
+edge(config-interface)# ip address 192.0.2.10 255.255.255.0
 edge(config-interface)# ip gateway 192.0.2.1
 edge(config-interface)# ip name-server 192.0.2.53
 edge(config-interface)# exit
@@ -64,6 +68,27 @@ Local accounts accept `user freya priv 15 password 0 TEXT` and
 passwords may contain 1..256 characters. Use `security passwords min-length 12` to enforce a minimum on newly configured passwords. Use `username NAME ?` or
 `username NAME privilege 15 ?` to see the available account settings.
 `show version` includes the source-build identifier of the running image.
+
+Without an enable secret, the physical console can return from `disable` to
+`enable` without a password. SSH requires a configured enable secret to raise
+privilege. `enable LEVEL` and `disable LEVEL` select a privilege level; disable
+cannot raise it. `no enable secret` removes the configured secret.
+
+`dir ?` lists mounted filesystem prefixes alongside the filename placeholder.
+`dir fl?` lists matching prefixes and retains the partial input. Use `cd data0:`
+and `pwd` to select and inspect the default directory for this session. Relative
+filenames, `cd ..`, `/recursive`, `/all`, `all-filesystems`, and filename prefix
+wildcards are supported. `copy` prompts for omitted source names, destination
+names and overwrite confirmation. `delete /force` suppresses confirmation;
+`/recursive` includes directory contents. Operations use named appliance volumes.
+
+`reload` asks whether to save modified running configuration, then asks for
+confirmation. Return confirms; Ctrl-C cancels. `reload in 10 maintenance` schedules
+a reload ten minutes ahead; `reload at 23:30` uses the next occurrence of that
+time. An explicit date can follow the time in either day/month or month/day
+order. `show reload` displays the pending request and `reload cancel` cancels it.
+Schedules survive a management-service restart and expire on machine reboot.
+Image authentication remains mandatory during every boot.
 
 Network and runtime changes stop the configuration service's consumers,
 apply the new state, then wait for readiness. Failed apply attempts to restore

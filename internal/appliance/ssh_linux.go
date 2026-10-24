@@ -317,7 +317,7 @@ func handleSSHSession(conn net.Conn, channel ssh.Channel, requests <-chan *ssh.R
 			}
 			cmd := exec.Command("/usr/libexec/fractal-platform", "console")
 			cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
-			cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "TERM=vt100", "FCR_SSH_USER=" + user, "FCR_SSH_VERIFIER=" + verifier, "FCR_SSH_VTY=" + strconv.Itoa(vty)}
+			cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "TERM=vt100", "FCR_SSH_USER=" + user, "FCR_SSH_VERIFIER=" + verifier, "FCR_SSH_VTY=" + strconv.Itoa(vty), "FCR_SSH_PEER=" + conn.RemoteAddr().String()}
 			terminal, err := pty.StartWithSize(cmd, &size)
 			if err != nil {
 				request.Reply(false, nil)

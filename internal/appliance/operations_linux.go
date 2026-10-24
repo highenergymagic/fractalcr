@@ -17,9 +17,6 @@ func Operations(w []string, c config.Config) (string, error) {
 		case "copy":
 			return copyFile(w, c)
 		case "dir", "delete", "move", "rename", "mkdir", "rmdir":
-			if len(w) == 3 && w[0] == "delete" && w[1] == "/force" {
-				w = []string{"delete", w[2]}
-			}
 			return fileOperation(w)
 		}
 	}
@@ -97,8 +94,8 @@ func Operations(w []string, c config.Config) (string, error) {
 		return storageStatus(c)
 	case "show system resources":
 		return resources()
-	case "show clock":
-		return time.Now().UTC().Format("15:04:05.000 MST Mon Jan 2 2006"), nil
+	case "show clock", "show clock detail":
+		return clockStatus(time.Now().UTC(), line == "show clock detail"), nil
 	case "show ntp status":
 		return ntpStatus()
 	case "show ntp associations":

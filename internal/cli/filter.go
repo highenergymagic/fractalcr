@@ -16,7 +16,7 @@ func SplitFilter(words []string) ([]string, *Filter, error) {
 	if len(words) > 0 && words[0] == "do" {
 		start = 1
 	}
-	if len(words) <= start || words[start] != "show" {
+	if len(words) <= start || (words[start] != "show" && words[start] != "dir") {
 		return words, nil, nil
 	}
 	for i := start + 1; i < len(words); i++ {
@@ -25,8 +25,12 @@ func SplitFilter(words []string) ([]string, *Filter, error) {
 				return nil, nil, fmt.Errorf("filter requires a regular expression")
 			}
 			f := &Filter{words[i+1], strings.Join(words[i+2:], " ")}
+			if f.Mode == "section" && len(words) > i+3 && (words[i+2] == "include" || words[i+2] == "exclude") {
+				f.Mode = "section-" + words[i+2]
+				f.Pattern = strings.Join(words[i+3:], " ")
+			}
 			switch f.Mode {
-			case "include", "exclude", "begin", "count":
+			case "include", "exclude", "begin", "count", "section", "section-include", "section-exclude":
 			default:
 				return nil, nil, fmt.Errorf("unknown output filter")
 			}
@@ -49,12 +53,23 @@ func (f *Filter) Apply(text string) string {
 	var out []string
 	begun := false
 	count := 0
+	section := false
 	for _, line := range strings.Split(strings.TrimSuffix(text, "\n"), "\n") {
 		match := re.MatchString(line)
 		if match {
 			count++
 		}
 		begun = begun || match
+		if strings.HasPrefix(f.Mode, "section") {
+			if len(line) > 0 && line[0] != ' ' && line[0] != '\t' {
+				section = false
+			}
+			section = section || match
+			if section != (f.Mode == "section-exclude") {
+				out = append(out, line)
+			}
+			continue
+		}
 		if (f.Mode == "include" && match) || (f.Mode == "exclude" && !match) || (f.Mode == "begin" && begun) {
 			out = append(out, line)
 		}

@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"fractalcr/internal/config"
+	"golang.org/x/sys/unix"
 	"math"
 	"net"
 	"os"
@@ -122,6 +123,21 @@ func chronyIP(b []byte) string {
 		return net.IP(b[:16]).String()
 	}
 	return "unspecified"
+}
+
+func clockStatus(now time.Time, detail bool) string {
+	mark, source := "*", "none"
+	var state syscall.Timex
+	if result, err := syscall.Adjtimex(&state); err == nil && result != unix.TIME_ERROR && state.Status&unix.STA_UNSYNC == 0 {
+		mark, source = "", "NTP"
+	} else if _, err := os.Stat("/sys/class/rtc/rtc0"); err == nil && now.Year() >= 2025 {
+		mark, source = ".", "hardware calendar"
+	}
+	output := mark + now.Format("15:04:05.000 MST Mon Jan 2 2006")
+	if detail {
+		output += "\nTime source is " + source
+	}
+	return output
 }
 func ntpStatus() (string, error) {
 	data, err := chronyQuery(33, 5, 0, 104)

@@ -118,6 +118,33 @@ try:
     spawn()
     expect(re.escape('Enter initial configuration dialog? [yes/no]: ')); send('no\n'); prompt()
     command('write memory')  # Seed startup so reconnect does not repeat first-use setup.
+    command('terminal length 0')
+    send('disable\n'); expect(re.escape('ctr> ')); send('enable\n'); prompt()
+    check('Console disable/enable works without an enable secret')
+    send('dir ?'); help=prompt()
+    assert all(word in help for word in ['<filesystem:>', 'data0:', 'flash:', 'nvram:', '/recursive']), help
+    expect('dir '); send('\x15'); prompt()
+    send('dir fl?'); help=prompt(); assert 'flash:' in help
+    expect('dir fl'); send('\x15'); prompt()
+    assert 'Directory of' in command('dir /recursive /all data0:')
+    # Session filesystem state must affect native operations, not host cwd.
+    command('mkdir data0:session-test'); command('cd data0:session-test')
+    assert 'data0:/session-test' in command('pwd')
+    assert 'Directory of data0:/session-test' in command('dir')
+    command('cd ..'); command('rmdir session-test'); command('cd bootflash:')
+    check('Directory help enumerates mounted filesystem prefixes and preserves typed input')
+    send('copy running-config startup-config\n'); expect(re.escape('Destination filename [startup-config]? ')); send('\n'); prompt()
+    send('reload in 10 maintenance\n'); expect(re.escape('Proceed with reload? [confirm]')); send('\n'); prompt()
+    assert 'maintenance' in command('show reload')
+    assert '%Reload cancelled.' in command('reload cancel')
+    assert 'No reload is scheduled.' in command('show reload')
+    send('reload\n'); expect(re.escape('Proceed with reload? [confirm]')); send('\x03'); prompt()
+    command('show version')
+    assert 'Time source is' in command('show clock detail')
+    assert 'Line' in command('show users') and 'Host(s)' in command('show users')
+    section=command('show running-config | section line')
+    assert 'line console 0' in section and 'exec-timeout' in section and 'hostname ctr' not in section
+    check('Copy prompts, scheduled reload, show reload, cancellation and Ctrl-C work through the serial console')
     for key in ['logout\n', 'exit\n', '\x04']:
         send(key); expect('Press RETURN to get started!')
         send('show version\n'); response = prompt()  # Text before RETURN must be ignored.
@@ -165,13 +192,13 @@ try:
     command('line con 0', 'config-line')
     command('login local', 'config-line')
     send('\x1a'); prompt()
-    assert 'Startup configuration saved.' in command('wr me')
+    assert '[OK]' in command('wr me')
     command('conf t', 'config')
     send('hostn thething\n'); hostname='thething'; prompt('config')
     command('hostn bad_name', 'config', error=True)
     command('no user testadmin', 'config', error=True)
     send('\x1a'); prompt()
-    assert 'Startup configuration saved.' in command('wr me')
+    assert '[OK]' in command('wr me')
     after = command('show platform software service')
     assert re.search(r'container-engine\s+running\s+(\d+)\s+(\d+)', after).groups() == identity.groups()
     running = command('sh run')
@@ -231,18 +258,21 @@ try:
     command('role container','config-interface'); command('member '+physical.group(1),'config-interface')
     command('exit','config'); command('interface vl100','config-interface')
     command('role container','config-interface'); command('parent po1','config-interface')
-    command('ip address 192.0.2.100/24','config-interface'); send('\x1a'); prompt()
+    command('ip address 192.0.2.100 255.255.255.0','config-interface'); send('\x1a'); prompt()
     interfaces=command('show ip interface brief')
     assert 'Port-channel1' in interfaces and re.search(r'Vlan100\s+192\.0\.2\.100',interfaces),interfaces
     command('write memory')
     check('Packaged kernel creates a native port-channel and VLAN and applies its address from configuration mode')
     command('conf t', 'config')
     send('hostn unsaved\n'); hostname='unsaved'; prompt('config')
-    send('\x1a'); prompt(); send('reload\n'); finish()
+    send('\x1a'); prompt(); send('reload\n')
+    expect(re.escape('System configuration has been modified. Save? [yes/no]: ')); send('no\n')
+    expect(re.escape('Proceed with reload? [confirm]')); send('\n'); finish()
     hostname='thething'; spawn(); login()
     command('terminal length 0'); command('terminal width 512')
     startup = command('show startup-config')
     assert 'thething' in startup and 'testadmin' in startup and password not in startup and 'unsaved' not in startup
+    assert 'ip address 192.0.2.100 255.255.255.0' in startup
     interfaces=command('show ip interface brief')
     assert 'Port-channel1' in interfaces and re.search(r'Vlan100\s+192\.0\.2\.100',interfaces),interfaces
     check('Full reboot loads saved hostname and hashed local account, requires login, and discards unsaved running edits')

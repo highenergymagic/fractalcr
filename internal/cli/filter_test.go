@@ -36,3 +36,26 @@ func TestOutputFiltersShareGrammar(t *testing.T) {
 		t.Fatal("filter bypassed authorization")
 	}
 }
+
+func TestIOSSectionFilters(t *testing.T) {
+	s := session(t)
+	text := "hostname box\ninterface Ethernet0\n ip address 192.0.2.1 255.255.255.0\n shutdown\n!\nline console 0\n login local\n!\nend\n"
+	for _, kind := range []string{"section", "section include", "section exclude"} {
+		words, _, err := s.Resolve("show running-config | " + kind + " ^interface")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, filter, err := SplitFilter(words)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := filter.Apply(text)
+		if kind == "section exclude" {
+			if strings.Contains(out, "192.0.2.1") || !strings.Contains(out, "hostname box") {
+				t.Fatal(out)
+			}
+		} else if !strings.Contains(out, "192.0.2.1") || strings.Contains(out, "console") || strings.Contains(out, "hostname") {
+			t.Fatal(out)
+		}
+	}
+}

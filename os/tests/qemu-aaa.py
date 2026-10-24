@@ -3,6 +3,7 @@
 import argparse, hashlib, json, re, shutil, socket, subprocess, sys, time
 from pathlib import Path
 import pexpect
+from ios_prompts import reload_appliance
 SRC=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(SRC/'boot/tests'))
 from qemu_process import stop_qemu
@@ -82,6 +83,13 @@ try:
     check('user EXEC authorization, inline help, output filter, enable password and disable work over serial')
     admin=ssh_login('admin',ADMIN);reader=ssh_login('reader',READER)
     assert 'privilege level is 1' in command(reader,'show privilege',user=True)
+    for line in ['conf t','no enable secret','end']: command(admin,line)
+    assert 'No password set' in command(reader,'enable',user=True)
+    assert 'privilege level is 1' in command(reader,'show privilege',user=True)
+    command(child,'enable');assert 'privilege level is 15' in command(child,'show privilege')
+    command(child,'disable',user=True)
+    for line in ['conf t',f'enable secret 0 {ENABLE}','end']: command(admin,line)
+    check('Removing the enable secret permits console enable but denies remote privilege elevation')
     command(admin,'configure candidate');command(admin,'hostname staged-elsewhere')
     assert 'Platform kernel:' in command(reader,'show version',user=True)
     command(admin,'abort')
@@ -167,16 +175,16 @@ try:
     assert all(secret not in accounting for secret in [ADMIN,READER,ENABLE])
     check('persistent AAA accounting records identities and command classes without plaintext secrets')
     command(admin,'write memory')
-    admin.sendline('reload');child.expect(pexpect.EOF,timeout=180);stop_qemu(child)
+    reload_appliance(admin);child.expect(pexpect.EOF,timeout=180);stop_qemu(child)
     child=spawn();child.expect_exact('Username: ');login(child,'admin',ADMIN)
     check('AAA configuration and SSH host identity persist across a complete reboot')
     admin2=ssh_login('admin',ADMIN);assert 'privilege level is 15' in command(admin2,'show privilege')
-    admin2.sendline('reload');child.expect(pexpect.EOF,timeout=180);stop_qemu(child)
+    reload_appliance(admin2);child.expect(pexpect.EOF,timeout=180);stop_qemu(child)
     child=spawn(recovery=True);prompt(child)
     for line in ['terminal length 0','terminal width 512','configure candidate','do copy startup-config candidate-config',f'username admin privilege 15 secret {ADMIN}-recovered']:
         command(child,line)
     command(child,'commit');command(child,'end');child.sendline('logout');child.expect_exact('Username: ');login(child,'admin',ADMIN+'-recovered')
-    command(child,'write memory');child.sendline('reload');child.expect(pexpect.EOF,timeout=180);stop_qemu(child)
+    command(child,'write memory');reload_appliance(child);child.expect(pexpect.EOF,timeout=180);stop_qemu(child)
     child=spawn();child.expect_exact('Username: ');login(child,'admin',ADMIN+'-recovered')
     admin3=ssh_login('admin',ADMIN+'-recovered');assert 'privilege level is 15' in command(admin3,'show privilege')
     check('physical ROMMON recovery restores a forgotten administrator secret, preserves configuration and returns to authenticated normal boot')

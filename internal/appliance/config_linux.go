@@ -86,7 +86,9 @@ func supported(c config.Config) error {
 // ready and before networking or Docker start. The runtime snapshot stays put
 // until the old networking worker has removed its owned addresses.
 func Prepare() error {
-	if err := provisionCloud(); err != nil { return fmt.Errorf("initial provisioning: %w", err) }
+	if err := provisionCloud(); err != nil {
+		return fmt.Errorf("initial provisioning: %w", err)
+	}
 	c, err := loadRunning()
 	if err != nil {
 		return err
