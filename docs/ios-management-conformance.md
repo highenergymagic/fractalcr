@@ -125,3 +125,11 @@ The native service check is `tools/check-services.sh` inside the Linux builder.
 The serial qualification is `os/tests/qemu-ios-workflow.py` with disposable
 launcher disks on a KVM host. The script tests actual console prompts and a
 complete reboot, not just direct Go calls.
+
+`tools/qualify-management.py --artifacts <signed-artifacts> --output <new-directory>`
+prepares disposable launcher disks and runs both the serial and console/SSH AAA
+suites sequentially on KVM. Its result binds both reports to the signed image
+hash. The development-release workflow requires this gate and publishes its
+report as `management-qualification.json`; it fails rather than skipping the
+checks when its runner lacks KVM. Test disks and private SSH material are not
+included in release assets or failure diagnostics.

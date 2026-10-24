@@ -25,6 +25,8 @@ jobs:
       - run: go vet -mod=vendor ./...
       - name: Validate GitHub Actions workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck=
+      - name: Reject mismatched firmware qualification evidence
+        run: python3 -m unittest discover -s tools/tests -p test_management_qualification.py -v
       - name: Verify CLI catalogs match linked API clients
         run: |
           go build -mod=vendor -o /tmp/fractal-workload ./cmd/fractal-workload

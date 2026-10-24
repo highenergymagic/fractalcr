@@ -82,15 +82,19 @@ not automatically expand its GPT partition or Btrfs filesystem.
    Cold OpenEmbedded builds are substantial; set the repository variable
    `FIRMWARE_BUILD_RUNNER` to an ordinary larger Linux x86-64 runner label if
    needed. There is no release-signing runner, vault, or release-key secret.
-   Docker, Python 3, sufficient build storage and at least 16 GiB RAM are needed;
-   KVM accelerates tests and TCG is used when it is absent. The three existing
+   Docker, Python 3, sufficient build storage, at least 16 GiB RAM, and KVM are
+   needed. Media tests can use TCG, but the serial/SSH management gate requires
+   KVM and will fail rather than skip qualification. The three existing
    private-component read-key secrets authorize source checkout only.
 4. Run **Release firmware images** manually on the release branch first. Inspect
-   its build tests, NoCloud cold-boot/reboot SSH test, and uploaded firmware.
+   its build tests, NoCloud cold-boot/reboot SSH test, serial IOS and AAA reports,
+   and uploaded firmware.
 5. Tag the reviewed integration commit `v1.0.0` (or `v1.0`) and push that tag.
    The workflow checks VERSION, builds pinned components in Docker, runs firmware
    tests, packages both USB policies and qcow2, and publishes a development-signed prerelease only after the
-   single-disk provisioning qualification passes.
+   single-disk provisioning, both USB images, and serial/SSH management
+   qualification pass. `management-qualification.json` binds the management
+   reports to the released system image hash.
 
 Development keys are generated in the builder's work volume. An ephemeral hosted
 runner therefore produces a new development trust anchor; distribute and upgrade

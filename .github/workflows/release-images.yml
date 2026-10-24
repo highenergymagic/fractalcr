@@ -97,6 +97,15 @@ jobs:
             --mount "type=bind,source=$PWD/release-stage,target=/output" \
             fractalcr-os-builder python3 /src/os/tests/qemu-cloud.py \
               --artifacts /work/artifacts --image "/output/images/fractalcr-$(cat VERSION)-x86_64-devsigned-vps.qcow2" --output /output/cloud-test --accel "$accel"
+      - name: Qualify IOS console and SSH management
+        run: |
+          test -c /dev/kvm || { echo 'KVM is required for management release qualification.' >&2; exit 1; }
+          docker run --rm --device /dev/kvm --network none \
+            --mount "type=bind,source=$PWD,target=/src,readonly" \
+            --mount type=volume,source=fractalcr-os-work,target=/work,readonly \
+            --mount "type=bind,source=$PWD/release-stage,target=/output" \
+            fractalcr-os-builder python3 /src/tools/qualify-management.py \
+              --artifacts /work/artifacts --output /output/management-test
       - name: Qualify both distributed USB images
         run: |
           devices=(); accel=tcg
@@ -111,6 +120,7 @@ jobs:
         run: |
           cp release-stage/cloud-test/result.json release-stage/images/qualification.json
           cp release-stage/usb-test/result.json release-stage/images/usb-qualification.json
+          cp release-stage/management-test/result.json release-stage/images/management-qualification.json
           cd release-stage/images
           find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -131,6 +141,11 @@ jobs:
             release-stage/usb-test/required.log
             release-stage/usb-test/optional.log
             release-stage/usb-test/result.json
+            release-stage/management-test/result.json
+            release-stage/management-test/ios/serial.log
+            release-stage/management-test/ios/result.json
+            release-stage/management-test/aaa/serial.log
+            release-stage/management-test/aaa/result-os-aaa.json
           if-no-files-found: ignore
   publish:
     if: github.ref_type == 'tag'
@@ -157,5 +172,5 @@ jobs:
             --prerelease --notes-file README.md README.md *.img.gz *.qcow2 *.img.json system.bin rommon.efi firmware.crt release.pub \
             SHA256SUMS release-manifest.json firmware-build-inputs.json system.spdx.json system.oe-vex.json packages.manifest \
             system-licenses.tar.gz buildroot-packages.json boot-sources.json oe-sources.json kernel-security.json builder-packages.txt \
-            nocloud-examples.tar.gz source.tar.gz qualification.json usb-qualification.json
+            nocloud-examples.tar.gz source.tar.gz qualification.json usb-qualification.json management-qualification.json
           gh release edit "$TAG" --draft=false
