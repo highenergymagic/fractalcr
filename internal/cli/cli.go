@@ -186,6 +186,10 @@ func (s *Session) execute(line string) (string, error) {
 		s.Candidate.Clock.OffsetMinutes = 0
 		return "", nil
 	}
+	if line == "clock calendar-valid" || line == "no clock calendar-valid" || line == "default clock calendar-valid" {
+		s.Candidate.Clock.CalendarValid = line == "clock calendar-valid"
+		return "", nil
+	}
 	if len(w) == 4 && w[0] == "clock" && w[1] == "save" && w[2] == "interval" {
 		s.Candidate.Clock.SaveIntervalHours, _ = strconv.Atoi(w[3])
 		return "", nil
@@ -203,6 +207,7 @@ func (s *Session) execute(line string) (string, error) {
 		if err == nil {
 			c.Summer = s.Candidate.Clock.Summer
 			c.SaveIntervalHours = s.Candidate.Clock.SaveIntervalHours
+			c.CalendarValid = s.Candidate.Clock.CalendarValid
 			s.Candidate.Clock = c
 		}
 		return "", err

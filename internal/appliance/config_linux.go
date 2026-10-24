@@ -56,6 +56,9 @@ func supported(c config.Config) error {
 	if c.Clock.SaveIntervalHours != 0 && hardwareCalendarPresent() {
 		return fmt.Errorf("clock save interval requires a platform without a hardware calendar")
 	}
+	if c.Clock.CalendarValid && !hardwareCalendarPresent() {
+		return fmt.Errorf("clock calendar-valid requires a hardware calendar")
+	}
 	for name := range c.AllInterfaces() {
 		if _, kind, _, _ := config.VirtualInterface(name); kind != "" {
 			continue

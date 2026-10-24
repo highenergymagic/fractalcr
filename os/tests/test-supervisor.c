@@ -30,7 +30,7 @@ int main(int argc, char **argv)
     if (argc == 3 && !strcmp(argv[1], "--worker")) {
         puts("worker diagnostic"); fflush(stdout);
         if (!strcmp(argv[2], "exit")) return 7;
-        if (!strcmp(argv[2], "ordered")) {
+        if (!strcmp(argv[2], "ordered") || !strcmp(argv[2], "initializing")) {
             int channel[2]; assert(!pipe(channel));
             pid_t child=fork(); assert(child>=0);
             if (!child) {
@@ -43,6 +43,12 @@ int main(int argc, char **argv)
             sigemptyset(&blocked); sigaddset(&blocked,SIGTERM);
             assert(!sigprocmask(SIG_BLOCK,&blocked,&previous_mask));
             signal(SIGTERM,request_stop);
+            if (!strcmp(argv[2], "initializing")) {
+                usleep(200000);
+                sigset_t pending; assert(!sigpending(&pending));
+                assert(!sigismember(&pending,SIGTERM));
+                puts("INITIALIZATION_FINISHED"); fflush(stdout);
+            }
             service_notify();
             while (!stop_requested) sigsuspend(&previous_mask);
             assert(!sigprocmask(SIG_SETMASK,&previous_mask,NULL));
@@ -126,6 +132,27 @@ int main(int argc, char **argv)
     while (fgets(line,sizeof(line),log)) if (strstr(line,"ORDERED_CHILD_CLEANUP_OK")) ordered=1;
     fclose(log); assert(ordered);
     puts("PASS leader-first termination lets daemons coordinate child shutdown before group cleanup");
+    args[2]="initializing"; s.finish_start_before_stop=1; s.start_ms=2000;
+    service_start(&s); assert(s.state==SV_STARTING);
+    long long startup_deadline=s.deadline;
+    service_stop(&s);
+    assert(s.state==SV_STARTING && s.stop_pending && !s.wanted && s.deadline==startup_deadline);
+    /* Repeated graph stop requests cannot extend either shutdown bound. */
+    service_stop(&s); assert(s.deadline==startup_deadline);
+    until(&s,SV_STOPPED,3000);
+    log=fopen(path,"r"); assert(log);
+    int initialized=0; ordered=0;
+    while (fgets(line,sizeof(line),log)) {
+        if (strstr(line,"INITIALIZATION_FINISHED")) initialized=1;
+        if (initialized && strstr(line,"ORDERED_CHILD_CLEANUP_OK")) ordered=1;
+    }
+    fclose(log); assert(initialized && ordered && !s.stop_pending);
+    puts("PASS stop during initialization waits for readiness before orderly shutdown");
+    args[2]="group"; s.notify=0; s.probe=probe; healthy=0; s.start_ms=100; s.stop_ms=50;
+    service_start(&s); service_stop(&s);
+    until(&s,SV_STOPPED,2000);
+    assert(!s.pid && !s.group && !s.stop_pending);
+    puts("PASS stuck initialization still reaches bounded process-group cleanup");
     unlink(path); unlink(previous); rmdir(temp);
     return 0;
 }

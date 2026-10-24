@@ -30,6 +30,9 @@ func (c Config) CLI() string {
 	if c.Clock.SaveIntervalHours != 0 {
 		line("clock save interval %d", c.Clock.SaveIntervalHours)
 	}
+	if c.Clock.CalendarValid {
+		line("clock calendar-valid")
+	}
 	if c.FilePrompt != "" && c.FilePrompt != "alert" {
 		line("file prompt %s", c.FilePrompt)
 	}

@@ -114,6 +114,7 @@ try:
     assert '% ' in command('show calendar', allow_error=True)
     command('conf t', 'config')
     command('clock save interval 8', 'config')
+    assert '% ' in command('clock calendar-valid', 'config', allow_error=True)
     command('end')
     check('No-RTC boot accepts the platform-specific clock save command')
     for _ in range(45):

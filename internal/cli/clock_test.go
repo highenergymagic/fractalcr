@@ -43,6 +43,38 @@ func TestClockSaveIntervalGrammarAndPersistence(t *testing.T) {
 	}
 }
 
+func TestCalendarAuthorityConfiguration(t *testing.T) {
+	s := session(t)
+	s.HardwareCalendar = func() bool { return true }
+	execute(t, s, "conf t", "clock calendar-valid", "clock timezone PST -8")
+	if !s.Running.Clock.CalendarValid || !strings.Contains(s.Running.CLI(), "clock calendar-valid\n") {
+		t.Fatal(s.Running.CLI())
+	}
+	parsed, err := s.ParseConfiguration([]byte(s.Running.CLI()), config.Default())
+	if err != nil || !parsed.Clock.CalendarValid {
+		t.Fatal(parsed.Clock, err)
+	}
+	for _, reset := range []string{"no", "default"} {
+		execute(t, s, reset+" clock calendar-valid")
+		if s.Running.Clock.CalendarValid {
+			t.Fatal("reset did not clear authority")
+		}
+		execute(t, s, "clock calendar-valid")
+	}
+	execute(t, s, "no clock calendar-valid")
+	s.HardwareCalendar = func() bool { return false }
+	if strings.Contains(s.ContextHelp("clock "), "calendar-valid") {
+		t.Fatal("calendar-less platform exposes authority")
+	}
+	if _, err := s.Execute("clock calendar-valid"); err == nil {
+		t.Fatal("accepted absent calendar")
+	}
+	c := config.Clock{CalendarValid: true, SaveIntervalHours: 8}
+	if c.Validate() == nil {
+		t.Fatal("accepted mutually exclusive hardware requirements")
+	}
+}
+
 func TestClockTimezoneAndDateGrammar(t *testing.T) {
 	s := session(t)
 	execute(t, s, "conf t", "clock timezone NST -3 30")

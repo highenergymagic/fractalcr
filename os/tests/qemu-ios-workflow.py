@@ -241,6 +241,14 @@ try:
     assert ' NST ' in command('show calendar')
     command('clock update-calendar')
     command('clock read-calendar')
+    calendar_clock = command('show clock detail')
+    assert re.search(r'\n\*\d\d:\d\d:', calendar_clock) and 'Time source is hardware calendar' in calendar_clock, calendar_clock
+    command('conf t', 'config'); command('clock calendar-valid', 'config'); send('\x1a'); prompt()
+    calendar_clock = command('show clock detail')
+    assert re.search(r'\n\d\d:\d\d:', calendar_clock) and 'Time source is hardware calendar' in calendar_clock, calendar_clock
+    command('conf t', 'config'); command('no clock calendar-valid', 'config'); send('\x1a'); prompt()
+    assert re.search(r'\n\*\d\d:\d\d:', command('show clock detail'))
+    check('Calendar authority changes live and resetting the policy removes hardware-clock authority')
     command('conf t', 'config'); command('clock summer-time NDT recurring', 'config'); send('\x1a'); prompt()
     assert 'Summer time ends' in command('show clock detail')
     command('conf t', 'config'); command('no clock summer-time', 'config'); send('\x1a'); prompt()

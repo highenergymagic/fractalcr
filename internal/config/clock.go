@@ -31,6 +31,7 @@ func (c Clock) LocalInstants(wall time.Time) []time.Time {
 }
 
 type Clock struct {
+	CalendarValid     bool        `json:"calendar_valid,omitempty"`
 	SaveIntervalHours int         `json:"save_interval_hours,omitempty"`
 	Zone              string      `json:"zone,omitempty"`
 	OffsetMinutes     int         `json:"offset_minutes,omitempty"`
@@ -44,6 +45,9 @@ func (c Clock) Location() *time.Location {
 	return time.FixedZone(c.Zone, c.OffsetMinutes*60)
 }
 func (c Clock) Validate() error {
+	if c.CalendarValid && c.SaveIntervalHours != 0 {
+		return fmt.Errorf("calendar authority and NVRAM-only clock persistence require different platforms")
+	}
 	if c.SaveIntervalHours != 0 && (c.SaveIntervalHours < 8 || c.SaveIntervalHours > 24) {
 		return fmt.Errorf("clock save interval must be 8..24 hours")
 	}

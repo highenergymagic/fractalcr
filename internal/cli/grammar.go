@@ -195,6 +195,9 @@ var configCommands = []Command{
 	{"hostname <NAME>", "Set the appliance hostname", false},
 	{"clock timezone <ZONE> <HOURS>", "Timezone offset from UTC in hours", false},
 	{"clock save interval <8-24>", "Hours between saving network time to NVRAM", false},
+	{"clock calendar-valid", "Treat the hardware calendar as an authoritative time source", false},
+	{"no clock calendar-valid", "Do not treat the hardware calendar as authoritative", false},
+	{"default clock calendar-valid", "Do not treat the hardware calendar as authoritative", false},
 	{"no clock save interval <8-24>", "Disable saving network time to NVRAM", false},
 	{"default clock save interval <8-24>", "Disable saving network time to NVRAM", false},
 	{"clock timezone <ZONE> <HOURS> <0-59>", "Additional timezone offset minutes", false},
@@ -437,6 +440,9 @@ func (s *Session) rawGrammar() *node {
 		}
 	} else {
 		for _, c := range configCommands {
+			if strings.Contains(c.Syntax, "clock calendar-valid") && s.HardwareCalendar != nil && !s.HardwareCalendar() {
+				continue
+			}
 			if strings.Contains(c.Syntax, "clock save interval") && s.HardwareCalendar != nil && s.HardwareCalendar() {
 				continue
 			}

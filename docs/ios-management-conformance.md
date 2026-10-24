@@ -90,6 +90,8 @@ Consulted 2026-10-24:
 | Persistent line terminals | Console/VTY `history`, `history size`, `editing`, `length`, and `no`/`default` forms; independent VTY ranges; line history-size changes do not reenable disabled history; new sessions inherit saved defaults while unrelated edits preserve session overrides; canonical `line con`, single-VTY display and omitted default timeout | `TestLineTerminalPersistenceAndDefaults`; `TestLineTerminalValidationAndClone`; `TestLineTerminalPolicyAndSessionOverrides`; `TestLineTerminalDelegatedDisplay`; new-image serial qualification pending |
 | Word editing | Escape-D cuts the next word into the delete buffer; Escape-C/U/L capitalize, uppercase and lowercase the remaining word; upper/lowercase key variants and leading spaces are handled | `os/tests/test-line-editor.c` with ASan/UBSan; new-image serial qualification pending |
 | Configuration files | CLI-text running/startup exports, local-file merge into running configuration, validated startup replacement, legacy JSON import, original-policy authorization throughout parsing, rooted bounded regular-file reads | `TestConfigurationImportIsStagedAndRoundTrips`; `TestConfigurationImportUsesOriginalAuthorization`; `TestConfigurationCopiesExportCLIAndImportObjects`; `TestConfigurationImportFileConfinement`; new-image serial qualification pending |
+| Calendar authority | `clock calendar-valid`, `no` and `default`; persistent hardware-calendar authority, NTP precedence, no promotion of a stopped NVRAM timestamp; command hidden/rejected without an RTC | `TestCalendarAuthorityConfiguration`; `TestCalendarAuthoritySourceSelection`; new-image serial qualification pending. This implements clock authority/display policy; NTP server distribution is still outstanding. |
+| Reload during engine initialization | Defer engine termination until API readiness, retaining providers; keep the original startup deadline and bounded forced cleanup; do not modify Docker's source or network database | Native supervisor and dependency-graph fault tests passed. Iteration 20 USB qualification reproduced a conflicting default bridge after reload during startup; the fix awaits five-cycle image qualification. |
 
 Test names identify executable evidence, not a declaration of complete IOS
 compatibility. The VM report identifies the exact tested system image hash.
@@ -156,8 +158,8 @@ they must not be hidden behind accepted no-op keywords:
   command-by-command comparison. Existing support is not proof of parity.
   Concrete gaps include `show users summary`;
   additional line/terminal settings and their corresponding display fields;
-  and the complete
-  clock command family (`clock calendar-valid`). The NVRAM fallback now has
+  and the complete NTP family, including distribution of authoritative calendar
+  time to network clients. The NVRAM fallback now has
   native persistence and restoration tests and a three-cold-boot KVM test with
   the CMOS driver disabled. That component test used source build
   `ee686b427839a5ec502c82a48b45b4165b6e054528d191ab257377b7ae5db378` and

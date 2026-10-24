@@ -125,7 +125,11 @@ func chronyIP(b []byte) string {
 }
 
 func configuredClockStatus(c config.Clock, now time.Time, detail bool) string {
-	output := clockStatus(c.LocalTime(now), detail)
+	mark, source := softwareClockState(now)
+	if c.CalendarValid && source == "hardware calendar" && hardwareCalendarPresent() {
+		mark = ""
+	}
+	output := formatClockStatus(c.LocalTime(now), detail, mark, source)
 	if detail && c.Summer != nil {
 		start, end := c.SummerTransitions(now)
 		output += "\nSummer time starts " + start.Format("15:04:05 MST Mon Jan 2 2006")
@@ -149,19 +153,25 @@ var softwareClockState = func(now time.Time) (string, string) {
 	// daemon itself so disabling calendar writes cannot hide valid NTP time.
 	if synchronizedNTP() {
 		mark, source = "", "NTP"
-	} else if data, err := os.ReadFile(clockSourcePath); err == nil && (string(data) == "user configuration" || string(data) == "hardware calendar") {
+	} else if data, err := os.ReadFile(clockSourcePath); err == nil && string(data) == "user configuration" {
 		mark, source = "", string(data)
+	} else if err == nil && string(data) == "hardware calendar" {
+		mark, source = "*", "hardware calendar"
 	} else if err == nil && string(data) == "NVRAM" {
 		// A saved timestamp did not run while power was off.
 		mark, source = "*", "NVRAM"
-	} else if _, err := os.Stat("/sys/class/rtc/rtc0"); err == nil && now.Year() >= 1993 {
-		mark, source = ".", "hardware calendar"
+	} else if hardwareCalendarPresent() && now.Year() >= 1993 {
+		mark, source = "*", "hardware calendar"
 	}
 	return mark, source
 }
 
 func clockStatus(now time.Time, detail bool) string {
 	mark, source := softwareClockState(now)
+	return formatClockStatus(now, detail, mark, source)
+}
+
+func formatClockStatus(now time.Time, detail bool, mark, source string) string {
 	output := mark + now.Format("15:04:05.000 MST Mon Jan 2 2006")
 	if detail {
 		output += "\nTime source is " + source

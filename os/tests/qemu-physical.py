@@ -142,7 +142,7 @@ try:
         after_time = command('show platform software service')
         assert re.search(r'container-engine\s+running\s+(\d+)\s+(\d+)', after_time).groups() == engine_identity.groups(), after_time
     check('NTP synchronization remains visible with RTC updates enabled or disabled and time policy changes preserve Docker')
-    for cycle in range(3):
+    for cycle in range(5):
         command('request platform software service networking restart')
         deadline = time.monotonic() + 30
         while True:
