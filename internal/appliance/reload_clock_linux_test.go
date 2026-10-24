@@ -38,6 +38,9 @@ func TestReloadAcrossSummerTime(t *testing.T) {
 	if err != nil || p.At.Sub(now) != 3*time.Hour {
 		t.Fatal("relative interval changed across transition", p, err)
 	}
+	if got := p.At.Format("15:04:05 MST"); got != "04:00:00 PDT" {
+		t.Fatal("relative schedule preview retained the old timezone", got)
+	}
 }
 
 func TestReloadClockLabelSurvivesRestart(t *testing.T) {

@@ -48,3 +48,42 @@ func TestClockTimezoneAndDateGrammar(t *testing.T) {
 		t.Fatal(help)
 	}
 }
+
+func TestClockEXECReachesNativeOperations(t *testing.T) {
+	s := session(t)
+	s.EnforcePrivilege, s.Privilege = true, 15
+	var calls []string
+	s.Platform = func(w []string, c config.Config) (string, error) {
+		calls = append(calls, strings.Join(w, " "))
+		if c.Clock.Zone != s.Running.Clock.Zone {
+			t.Fatal("operational command used candidate state")
+		}
+		return "native clock operation", nil
+	}
+	commands := []string{"clock read-calendar", "clock update-calendar", "clock set 12:30:00 24 October 2026", "calendar set 12:30:00 October 24 2026"}
+	for _, command := range commands {
+		if out, err := s.Execute(command); err != nil || out != "native clock operation" {
+			t.Fatal(command, out, err)
+		}
+	}
+	execute(t, s, "conf t", "clock timezone NST -3 30")
+	if len(calls) != len(commands) {
+		t.Fatal("configuration escaped into operational clock API", calls)
+	}
+	for _, command := range commands {
+		if out, err := s.Execute("do " + command); err != nil || out != "native clock operation" {
+			t.Fatal(command, out, err)
+		}
+	}
+	execute(t, s, "end")
+	s.Privilege = 1
+	before := len(calls)
+	for _, command := range commands {
+		if _, err := s.Execute(command); err == nil {
+			t.Fatal("unprivileged clock mutation", command)
+		}
+	}
+	if len(calls) != before {
+		t.Fatal("unauthorized command reached clock API")
+	}
+}

@@ -203,6 +203,14 @@ try:
     response = expect(r'Save\? \[yes/no\]: |Proceed with reload\? \[confirm\]')
     assert 'The clock has not been set' not in response, response
     send('\x03'); prompt()
+    command('conf t', 'config'); command('clock timezone PST -8', 'config')
+    command('clock summer-time PDT recurring', 'config'); send('\x1a'); prompt()
+    command('clock set 00:00:00 8 March 2026')
+    send('reload in 180\n')
+    response = expect(r'Save\? \[yes/no\]: |Proceed with reload\? \[confirm\]')
+    assert 'Reload scheduled for 04:00:' in response and 'PDT Sun Mar 8 2026' in response, response
+    send('\x03'); prompt()
+    command('conf t', 'config'); command('no clock summer-time', 'config'); command('no clock timezone', 'config'); send('\x1a'); prompt()
     now = datetime.now(timezone.utc)
     command('clock set '+now.strftime('%H:%M:%S %d %B %Y'))
     command('clock update-calendar')

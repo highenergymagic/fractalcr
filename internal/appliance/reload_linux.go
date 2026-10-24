@@ -332,6 +332,7 @@ func parseReload(w []string, now time.Time, clocks ...config.Clock) (reloadPlan,
 	if len(p.Reason) > 255 || strings.ContainsAny(p.Reason, "\r\n\x00") {
 		return p, fmt.Errorf("Reload reason must be 1 to 255 characters")
 	}
+	p.At = clock.LocalTime(p.At)
 	return p, nil
 }
 

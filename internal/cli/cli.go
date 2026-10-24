@@ -247,7 +247,7 @@ func (s *Session) execute(line string) (string, error) {
 		}
 		return "Running configuration committed. Use copy running-config startup-config to persist.", nil
 	}
-	if w[0] == "show" || w[0] == "copy" || w[0] == "request" || w[0] == "write" || w[0] == "ping" || w[0] == "dir" || w[0] == "cd" || w[0] == "pwd" || w[0] == "delete" || w[0] == "move" || w[0] == "rename" || w[0] == "mkdir" || w[0] == "rmdir" {
+	if w[0] == "show" || w[0] == "copy" || w[0] == "request" || w[0] == "write" || w[0] == "ping" || w[0] == "dir" || w[0] == "cd" || w[0] == "pwd" || w[0] == "delete" || w[0] == "move" || w[0] == "rename" || w[0] == "mkdir" || w[0] == "rmdir" || w[0] == "clock" || w[0] == "calendar" {
 		return s.operational(w)
 	}
 	if s.Mode == "" {
