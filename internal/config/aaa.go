@@ -53,6 +53,7 @@ type AAA struct {
 	EnableSecret      string             `json:"enable_secret,omitempty"`
 	EnableSecrets     map[int]string     `json:"enable_secrets,omitempty"`
 	CommandPrivileges []CommandPrivilege `json:"command_privileges,omitempty"`
+	FilePrivilege     *int               `json:"file_privilege,omitempty"`
 	SSH               bool               `json:"ssh"`
 	SSHPort           int                `json:"ssh_port,omitempty"`
 	ConsoleTimeout    int                `json:"console_timeout_seconds"`
@@ -138,6 +139,9 @@ func CheckSecret(encoded, password string) bool {
 	return err == nil && subtle.ConstantTimeCompare(want, got) == 1
 }
 func (a AAA) Validate() error {
+	if a.FilePrivilege != nil && (*a.FilePrivilege < 0 || *a.FilePrivilege > 15) {
+		return errors.New("file privilege must be 0..15")
+	}
 	if err := validateCommandPrivileges(a.CommandPrivileges); err != nil {
 		return err
 	}

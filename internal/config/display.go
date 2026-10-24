@@ -31,6 +31,9 @@ func (c Config) CLI() string {
 		line("file prompt %s", c.FilePrompt)
 	}
 	c.Engine.RenderCLI(line)
+	if c.AAA.FilePrivilege != nil && *c.AAA.FilePrivilege != 15 {
+		line("file privilege %d", *c.AAA.FilePrivilege)
+	}
 	for _, name := range Keys(c.Volumes) {
 		c.Volumes[name].RenderCLI(name, line)
 	}

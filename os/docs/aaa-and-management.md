@@ -99,6 +99,17 @@ operation grant once per second and stop on revocation or loss of management;
 these checks do not extend the session's idle timeout. Saving with `write memory`
 persists the policy across a reboot.
 
+At a delegated privilege level, `show running-config` and `write terminal`
+display only configuration commands the user can modify. Grant
+`show running-config view full` separately to allow a complete view without
+granting configuration changes. JSON configuration views remain separate full
+exports with their own command permissions.
+
+File content access also requires the configured `file privilege` level,
+which defaults to 15. For example, delegating `copy` to level 5 requires both
+`privilege exec all level 5 copy` and `file privilege 5`. Reset file access with
+`no file privilege`. Directory metadata remains available in user EXEC.
+
 Three failed local attempts lock that account for 30 seconds. SSH additionally
 limits authentication attempts and concurrent connections. Zero `exec-timeout`
 disables idle expiry; otherwise timeout is expressed as minutes and seconds.

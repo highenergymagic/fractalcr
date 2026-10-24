@@ -167,6 +167,15 @@ func (s *Session) execute(line string) (string, error) {
 	if handled, output, err := s.aaaCommand(w); handled {
 		return output, err
 	}
+	if line == "no file privilege" || line == "default file privilege" || strings.HasPrefix(line, "no file privilege ") {
+		s.Candidate.AAA.FilePrivilege = nil
+		return "", nil
+	}
+	if len(w) == 3 && w[0] == "file" && w[1] == "privilege" {
+		level, _ := strconv.Atoi(w[2])
+		s.Candidate.AAA.FilePrivilege = &level
+		return "", nil
+	}
 	if line == "no clock timezone" || line == "default clock timezone" {
 		s.Candidate.Clock.Zone = ""
 		s.Candidate.Clock.OffsetMinutes = 0
@@ -666,13 +675,16 @@ func memorySize(v string, minimum int) (int, error) {
 func (s *Session) operational(w []string) (string, error) {
 	line := strings.Join(w, " ")
 	switch line {
-	case "show running-config":
-		text := s.Running.CLI()
+	case "show running-config", "show running-config view full", "write terminal":
+		text := s.configurationText(s.Running)
+		if line == "show running-config view full" {
+			text = s.Running.CLI()
+		}
 		return fmt.Sprintf("Building configuration...\n\nCurrent configuration : %d bytes\n%s", len(text), text), nil
 	case "show running-config json":
 		return string(s.Running.JSON()), nil
 	case "show candidate-config":
-		return s.Candidate.CLI(), nil
+		return s.configurationText(s.Candidate), nil
 	case "show startup-config", "show startup-config json":
 		c, err := config.Load(filepath.Join(s.StateDir, "startup-config.json"))
 		if err != nil {

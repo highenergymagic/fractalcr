@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-var privilegeModes = []string{"exec", "configure", "interface", "line", "container", "network", "storage-datastore"}
+var privilegeModes = []string{"exec", "configure", "interface", "line", "container", "network", "storage-datastore", "engine", "volume"}
 
 func init() {
 	for _, mode := range privilegeModes {
@@ -97,6 +97,14 @@ func (s *Session) applyPrivilegeLevels(root *node) *node {
 		if len(path) > 1 && parameter(n) && n.defaultLevel <= parentDefault {
 			n.level = parentLevel
 		}
+		// Read-only output modifiers share the display command's level. File
+		// destinations retain a separate level and the file-access gate.
+		for i, word := range path {
+			if word == "|" && (i == len(path)-1 || (path[i+1] != "redirect" && path[i+1] != "append" && path[i+1] != "tee")) {
+				n.level = parentLevel
+				break
+			}
+		}
 		mode, command := privilegeMode(s.Mode), path
 		if len(path) > 0 && path[0] == "do" {
 			mode, command = "exec", path[1:]
@@ -132,6 +140,9 @@ func (s *Session) Allowed(words []string) bool {
 	}
 	if len(words) == 0 {
 		return true
+	}
+	if fileAccessCommand(words) && s.Privilege < s.Running.AAA.FileAccessLevel() {
+		return false
 	}
 	if _, _, ok := workloadInput(words); ok {
 		return s.workloadPolicyAllows(words)
@@ -371,7 +382,7 @@ func (s *Session) privilegeCommand(w []string) (bool, error) {
 		descend(r.mode, n, path)
 		if r.mode == "configure" {
 			// The parser's configuration entry commands select these submodes.
-			for _, entry := range []struct{ prefix, mode string }{{"interface", "interface"}, {"line", "line"}, {"container", "container"}, {"network", "network"}, {"storage datastore name", "storage-datastore"}} {
+			for _, entry := range []struct{ prefix, mode string }{{"interface", "interface"}, {"line", "line"}, {"container", "container"}, {"network", "network"}, {"storage datastore name", "storage-datastore"}, {"system container-engine", "engine"}, {"volume", "volume"}} {
 				p := strings.Join(path, " ")
 				if entry.prefix == p || strings.HasPrefix(entry.prefix, p+" ") || strings.HasPrefix(p, entry.prefix+" ") {
 					descend(entry.mode, privilegeSession(entry.mode).rawGrammar(), nil)

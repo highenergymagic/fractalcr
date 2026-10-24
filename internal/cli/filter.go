@@ -20,7 +20,7 @@ func SplitFilter(words []string) ([]string, *Filter, error) {
 	if len(words) > 0 && words[0] == "do" {
 		start = 1
 	}
-	if len(words) <= start || (words[start] != "show" && words[start] != "dir") {
+	if len(words) <= start || (words[start] != "show" && words[start] != "dir" && !(words[start] == "write" && len(words) > start+1 && words[start+1] == "terminal")) {
 		return words, nil, nil
 	}
 	for i := start + 1; i < len(words); i++ {

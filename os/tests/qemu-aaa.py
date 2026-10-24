@@ -97,7 +97,8 @@ try:
     check('SSH and serial share the CLI semantics; simultaneous sessions retain independent candidates and privileges')
     for line in ['conf t', f'username operator privilege 5 secret {READER}',
                  'privilege exec level 5 configure terminal', 'privilege configure level 5 hostname',
-                 'privilege exec level 5 delete', 'privilege exec all level 5 copy',
+                 'file privilege 5', 'privilege exec level 5 delete', 'privilege exec all level 5 copy',
+                 'privilege exec level 5 show running-config',
                  'privilege exec level 5 request container-engine events', 'end']:
         command(admin, line)
     operator = ssh_login('operator', READER)
@@ -105,6 +106,13 @@ try:
     command(operator, 'conf t')
     assert 'Invalid input' in command(operator, f'username forbidden privilege 15 secret {READER}')
     command(operator, 'end')
+    visible = command(operator, 'show running-config')
+    assert 'hostname ctr-test' in visible and 'username ' not in visible and 'enable secret' not in visible, visible
+    assert 'Invalid input' in command(operator, 'show running-config view full')
+    for line in ['conf t', 'privilege exec level 5 show running-config view full', 'end']: command(admin, line)
+    assert 'username admin' in command(operator, 'show running-config view full')
+    assert 'username admin' not in command(operator, 'show running-config')
+    check('Delegated running-config omits configuration above the user level; an explicit view-full grant exposes the complete configuration')
     assert 'Invalid input' in command(operator, 'request container-engine debug enable container rm argument forbidden')
     check('Level-five command delegation permits hostname edits and one native operation, while denying account creation and sibling operations')
     command(admin, 'show version | redirect data0:privilege-test.txt')
@@ -126,6 +134,7 @@ try:
     check('A running native Engine event stream terminates when its command grant is revoked')
     command(admin, 'request container-engine network rm argument privilege-fixture')
     for line in ['conf t', 'privilege exec reset configure terminal', 'privilege configure reset hostname',
+                 'privilege exec all reset show running-config', 'no file privilege',
                  'no username operator', 'end']: command(admin, line)
     operator.expect(pexpect.EOF, timeout=10)
     command(admin, 'delete /force data0:privilege-test.txt')

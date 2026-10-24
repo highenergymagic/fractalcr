@@ -29,7 +29,7 @@ func TestDelegatedFileConfirmationRevokesOnPolicyChange(t *testing.T) {
 	root := t.TempDir()
 	fileSystems = func() []applianceFS { return []applianceFS{{"data0", root, false}} }
 	s := &loginSession{cli: &cli.Session{Running: config.Default(), Privilege: 5, EnforcePrivilege: true}}
-	delegateCommand(t, s, "privilege exec level 5 delete")
+	delegateCommand(t, s, "file privilege 5", "privilege exec level 5 delete")
 	os.WriteFile(filepath.Join(root, "keep"), []byte("unchanged"), 0600)
 	r := s.beginFile([]string{"delete", "data0:keep"})
 	if !r.Challenge {
@@ -55,7 +55,7 @@ func TestDelegatedFileConfirmationRevokesOnPolicyChange(t *testing.T) {
 func TestDelegatedCopySaveAndRevocation(t *testing.T) {
 	saved := 0
 	s := &loginSession{cli: &cli.Session{Running: config.Default(), Privilege: 5, EnforcePrivilege: true, Save: func(config.Config) error { saved++; return nil }}}
-	delegateCommand(t, s, "privilege exec all level 5 copy")
+	delegateCommand(t, s, "file privilege 5", "privilege exec all level 5 copy")
 	s.beginCopy([]string{"copy", "running-config", "startup-config"})
 	if r := s.answerCopy(""); r.Error != "" || saved != 1 {
 		t.Fatal(r, saved)
@@ -69,7 +69,7 @@ func TestDelegatedCopySaveAndRevocation(t *testing.T) {
 
 func TestReloadAndOutputRecheckCommandPolicy(t *testing.T) {
 	s := &loginSession{cli: &cli.Session{Running: config.Default(), Privilege: 5, EnforcePrivilege: true}}
-	delegateCommand(t, s, "privilege exec all level 5 reload", "privilege exec all level 5 show version")
+	delegateCommand(t, s, "file privilege 5", "privilege exec all level 5 reload", "privilege exec all level 5 show version")
 	words := []string{"reload", "in", "5"}
 	if !s.cli.AllowedEXEC(words) {
 		t.Fatal("reload not delegated")
@@ -85,6 +85,25 @@ func TestReloadAndOutputRecheckCommandPolicy(t *testing.T) {
 	}
 	if _, err := s.writeOutput(&cli.Filter{Mode: "redirect", Pattern: "data0:version"}, "text"); err == nil {
 		t.Fatal("output authorization retained")
+	}
+}
+
+func TestCopySaveRejectsDirtyTransactionAndRevokedFileAccess(t *testing.T) {
+	saved := false
+	c := config.Default()
+	s := &loginSession{cli: &cli.Session{Running: c, Candidate: c.Clone(), Privilege: 15, EnforcePrivilege: true, Transactional: true, Save: func(config.Config) error { saved = true; return nil }}}
+	s.cli.Candidate.Hostname = "uncommitted"
+	s.beginCopy([]string{"copy", "running-config", "startup-config"})
+	if r := s.answerCopy(""); r.Error != "uncommitted transaction; commit before saving" || saved {
+		t.Fatal(r, saved)
+	}
+	s.cli.Transactional = false
+	delegateCommand(t, s, "file privilege 5", "privilege exec all level 5 copy")
+	s.cli.Privilege = 5
+	s.beginCopy([]string{"copy", "running-config", "startup-config"})
+	delegateCommand(t, s, "no file privilege")
+	if r := s.answerCopy(""); r.Error != "Authorization failed." || saved {
+		t.Fatal(r, saved)
 	}
 }
 

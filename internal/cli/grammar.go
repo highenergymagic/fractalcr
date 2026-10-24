@@ -82,6 +82,7 @@ var execCommands = []Command{
 	{"configure terminal", "Enter configuration mode", false},
 	{"configure candidate", "Stage an explicit configuration transaction", false},
 	{"show running-config", "Running configuration", false},
+	{"show running-config view full", "Full running configuration", false},
 	{"show running-config json", "Running configuration in interchange format", false},
 	{"show candidate-config", "Staged configuration", false},
 	{"show startup-config", "Saved startup configuration", false},
@@ -129,6 +130,7 @@ var execCommands = []Command{
 	{"copy <URL> <URL>", "Copy a file between appliance filesystems", false},
 	{"copy startup-config candidate-config", "Load startup configuration into the candidate", false},
 	{"write memory", "Save running configuration", false},
+	{"write terminal", "Display running configuration", false},
 	{"request image pull <IMAGE>", "Pull a container image", false},
 	{"request container <NAME> create", "Create a configured container", false},
 	{"request container <NAME> start", "Start a container", false},
@@ -195,6 +197,10 @@ var configCommands = []Command{
 	{"file prompt noisy", "Confirm file operation parameters", false},
 	{"file prompt quiet", "Suppress file operation confirmations", false},
 	{"no file prompt", "Restore default file prompting", false},
+	{"file privilege <0-15>", "Set file access privilege level", false},
+	{"no file privilege", "Restore default file access privilege", false},
+	{"no file privilege <0-15>", "Restore default file access privilege", false},
+	{"default file privilege", "Restore default file access privilege", false},
 	{"default file prompt", "Restore default file prompting", false},
 	{"interface <INTERFACE>", "Configure a physical interface", false},
 	{"network <NAME>", "Configure a Docker network", false},
@@ -288,6 +294,10 @@ func commandTokenHelp(path []string) string {
 			return "Container network configuration mode"
 		case "storage-datastore":
 			return "Datastore configuration mode"
+		case "engine":
+			return "Container engine configuration mode"
+		case "volume":
+			return "Volume configuration mode"
 		case "all":
 			return "All suboptions will be set to the same level"
 		case "level":
@@ -363,7 +373,7 @@ type node struct {
 }
 
 func (n *node) add(c Command) {
-	if (strings.HasPrefix(c.Syntax, "show ") || strings.HasPrefix(c.Syntax, "do show ") || c.Syntax == "dir" || strings.HasPrefix(c.Syntax, "dir ") || c.Syntax == "do dir" || strings.HasPrefix(c.Syntax, "do dir ")) && !strings.Contains(c.Syntax, " | ") {
+	if (strings.HasPrefix(c.Syntax, "show ") || strings.HasPrefix(c.Syntax, "do show ") || c.Syntax == "dir" || strings.HasPrefix(c.Syntax, "dir ") || c.Syntax == "do dir" || strings.HasPrefix(c.Syntax, "do dir ") || c.Syntax == "write terminal" || c.Syntax == "do write terminal") && !strings.Contains(c.Syntax, " | ") {
 		for _, kind := range []string{"include", "exclude", "begin", "count", "section", "section include", "section exclude"} {
 			n.add(Command{c.Syntax + " | " + kind + " <REGEX...>", "Filter output using a regular expression", c.Local})
 		}

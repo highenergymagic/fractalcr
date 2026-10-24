@@ -401,6 +401,11 @@ func (s *loginSession) answerReload(answer string, m *reloadManager, now time.Ti
 	if d.save {
 		switch strings.ToLower(strings.TrimSpace(answer)) {
 		case "y", "yes":
+			if s.cli.Privilege < s.cli.Running.AAA.FileAccessLevel() {
+				s.pendingReload = nil
+				r.Error = "Authorization failed."
+				return r
+			}
 			if s.cli.Save == nil {
 				r.Error = "Configuration storage is unavailable"
 				s.pendingReload = nil

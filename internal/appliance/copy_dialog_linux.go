@@ -104,6 +104,10 @@ func (s *loginSession) answerCopy(answer string) reply {
 		}
 		if d.source == "running-config" && (d.destination == "startup-config" || d.destination == "nvram:startup-config" || d.destination == "nvram:startup-config.json") {
 			s.pendingCopy = nil
+			if s.cli.Transactional && string(s.cli.Candidate.JSON()) != string(s.cli.Running.JSON()) {
+				r.Error = "uncommitted transaction; commit before saving"
+				return r
+			}
 			if !s.cli.AllowedEXEC([]string{"copy", d.source, d.destination}) {
 				r.Error = "Authorization failed."
 				return r

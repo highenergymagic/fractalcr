@@ -22,7 +22,7 @@ func validateCommandPrivileges(rules []CommandPrivilege) error {
 	seen := map[string]bool{}
 	for _, r := range rules {
 		switch r.Mode {
-		case "exec", "configure", "interface", "line", "container", "network", "storage-datastore":
+		case "exec", "configure", "interface", "line", "container", "network", "storage-datastore", "engine", "volume":
 		default:
 			return errors.New("invalid command privilege mode")
 		}
@@ -53,4 +53,11 @@ func (a AAA) PrivilegeCLI() []string {
 		out = append(out, fmt.Sprintf("privilege %s level %d %s", r.Mode, r.Level, r.Command))
 	}
 	return out
+}
+
+func (a AAA) FileAccessLevel() int {
+	if a.FilePrivilege == nil {
+		return 15
+	}
+	return *a.FilePrivilege
 }
