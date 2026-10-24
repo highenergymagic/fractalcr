@@ -81,6 +81,9 @@ func (s *Session) policyGrammar() *node {
 	root := s.rawGrammar()
 	if s.privilegeTarget {
 		addWorkloadPolicyNodes(root, s.Mode)
+		// EXEC policy is configured in exec mode. The configuration-mode
+		// escape is not itself a privilege target and must not be advertised.
+		root.children = slices.DeleteFunc(root.children, func(n *node) bool { return n.word == "do" })
 	}
 	return s.applyPrivilegeLevels(root)
 }

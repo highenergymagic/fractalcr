@@ -116,6 +116,9 @@ func TestPrivilegeHelpCompletionAndInvalidTargets(t *testing.T) {
 	if help := s.ContextHelp("privilege exec level 5 "); strings.Contains(help, "<cr>") {
 		t.Fatal("missing target offered as executable", help)
 	}
+	if help := s.ContextHelp("privilege configure level 5 do"); strings.Contains(help, "Run an EXEC") {
+		t.Fatal("unsupported privilege target advertised", help)
+	}
 	if help := s.ContextHelp("priv exec level 5 sh "); !strings.Contains(help, "version") || strings.Contains(help, "<COMMAND...>") {
 		t.Fatal(help)
 	}
@@ -137,6 +140,21 @@ func TestPrivilegeHelpCompletionAndInvalidTargets(t *testing.T) {
 		t.Fatal("invalid target accepted")
 	} else if syntax, ok := err.(*SyntaxError); !ok || syntax.Column != strings.Index(line, "nonexistent") {
 		t.Fatal(err)
+	}
+}
+
+func TestUserEXECReadOnlyFiltersDoNotGrantFileWrites(t *testing.T) {
+	s := session(t)
+	s.EnforcePrivilege, s.Privilege = true, 1
+	for _, command := range []string{"show version | include ^Platform", "show version | exclude Software", "show version | begin Platform", "show version | count ."} {
+		if _, _, err := s.Resolve(command); err != nil {
+			t.Fatal(command, err)
+		}
+	}
+	for _, command := range []string{"show version | redirect data0:version", "show version | append data0:version", "show version | tee data0:version"} {
+		if _, _, err := s.Resolve(command); err == nil {
+			t.Fatal("read-only output permission granted a file write", command)
+		}
 	}
 }
 
