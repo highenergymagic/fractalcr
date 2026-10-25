@@ -82,10 +82,14 @@ jobs:
           fi
           df -h .
           test -c /dev/kvm || { echo 'KVM is required for release qualification.' >&2; exit 1; }
-      - name: Build and qualify pinned firmware
+      - name: Build and qualify ROMMON
         env:
           FCR_DOCKER_DIRECT: '1'
-        run: bash tools/build.sh all All
+        run: bash tools/build.sh boot All
+      - name: Build and qualify system image
+        env:
+          FCR_DOCKER_DIRECT: '1'
+        run: bash tools/build.sh os All
       - name: Package USB and hypervisor images
         run: |
           mkdir -p release-stage

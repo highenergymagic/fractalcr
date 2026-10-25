@@ -75,11 +75,11 @@ if a.tcg:
         assert result["rommon_sha256"] == hashes["rommon.efi"], f"Stale TCG ROMMON result: {case}"
         assert result["system_sha256"] == hashes["system.bin"], f"Stale TCG OS result: {case}"
         lines.append(f"| Additional core regression: {case} (tcg) | PASS |")
-assert (art / "supervisor-tests.log").read_text().count("PASS ") == 6
-assert (art / "service-graph-tests.log").read_text().count("PASS ") == 6
+assert (art / "supervisor-tests.log").read_text().count("PASS ") == 8
+assert (art / "service-graph-tests.log").read_text().count("PASS ") == 7
 assert (art / "control-tests.log").read_text().count("PASS ") == 3
 assert (art / "health-tests.log").read_text().count("PASS ") == 3
-assert (art / "line-editor-tests.log").read_text().count("PASS ") == 6
+assert (art / "line-editor-tests.log").read_text().count("PASS ") == 10
 assert "PASS syslog delivery" in (art / "syslog-tests.log").read_text()
 lines += ["", "Supervisor fault tests: PASS (`supervisor-tests.log`).",
           "Dependency lifecycle tests: PASS (`service-graph-tests.log`).",
