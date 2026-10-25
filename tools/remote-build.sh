@@ -63,7 +63,16 @@ run_stage() {
             # Rebuild the pinned parent recipe first; never inherit an arbitrary
             # local 'latest' image left behind by an unrelated source checkout.
             docker build -t fractalcr-boot-builder -f "$src/boot/Dockerfile" "$src"
-            build_args+=(--build-arg "BOOT_BUILDER=$(docker image inspect --format '{{.Id}}' fractalcr-boot-builder)")
+            # BuildKit treats a bare sha256:image-ID in FROM as a registry
+            # repository named "sha256". Use a local content-derived tag,
+            # verified against the freshly built parent, instead.
+            local parent_id parent_ref
+            parent_id=$(docker image inspect --format '{{.Id}}' fractalcr-boot-builder)
+            [[ "$parent_id" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
+            parent_ref="fractalcr-boot-builder:content-${parent_id#sha256:}"
+            docker image tag "$parent_id" "$parent_ref"
+            [[ "$(docker image inspect --format '{{.Id}}' "$parent_ref")" == "$parent_id" ]] || exit 1
+            build_args+=(--build-arg "BOOT_BUILDER=$parent_ref")
         fi
         docker build "${build_args[@]}" -t "$image" -f "$src/$target/Dockerfile" "$src"
         local builder_id
