@@ -120,7 +120,7 @@ jobs:
         id: build-rommon
         env:
           FCR_DOCKER_DIRECT: '1'
-        run: bash tools/build.sh boot All
+        run: bash tools/ci-build.sh boot All
       - name: Make public ROMMON cache files readable by the cache action
         if: ${{ !cancelled() && steps.build-rommon.outcome != 'skipped' && steps.build-rommon.outcome != '' }}
         run: |
@@ -143,7 +143,7 @@ jobs:
         id: build-system
         env:
           FCR_DOCKER_DIRECT: '1'
-        run: bash tools/build.sh os All
+        run: bash tools/ci-build.sh os All
       - name: Make public system cache files readable by the cache action
         if: ${{ !cancelled() && steps.build-system.outcome != 'skipped' && steps.build-system.outcome != '' }}
         run: |
