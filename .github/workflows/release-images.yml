@@ -16,13 +16,22 @@ jobs:
     timeout-minutes: 360
     outputs:
       source_commit: ${{ steps.pins.outputs.commit }}
+      release_tag: ${{ steps.pins.outputs.release_tag }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
       - id: pins
         shell: bash
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
+          if [[ "$REF_TYPE" == tag ]]; then
+            echo "release_tag=$REF_NAME" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_tag=dev-$(date -u +%Y%m%d)-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+          fi
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "boot=$(git ls-tree HEAD boot | awk '{print $3}')" >> "$GITHUB_OUTPUT"
           echo "service=$(git ls-tree HEAD service | awk '{print $3}')" >> "$GITHUB_OUTPUT"
@@ -69,7 +78,7 @@ jobs:
         env:
           FCR_DOCKER_DIRECT: '1'
         run: bash tools/build.sh all All
-      - name: Package USB and VPS images
+      - name: Package USB and hypervisor images
         run: |
           mkdir -p release-stage
           # Public trust files may retain the key generator's restrictive modes.
@@ -86,6 +95,8 @@ jobs:
           cp "$RUNNER_TEMP/fractal-source.tar.gz" release-stage/images/source.tar.gz
       - name: Qualify single-disk NoCloud boot and SSH
         run: |
+          # Test the bytes recovered from the distributed compressed image.
+          gzip -dc release-stage/images/hv.qcow2.gz > release-stage/hv.qcow2
           devices=(); accel=tcg
           if [[ -c /dev/kvm ]]; then devices=(--device /dev/kvm); accel=kvm; fi
           docker run --rm "${devices[@]}" --network none \
@@ -93,7 +104,7 @@ jobs:
             --mount type=volume,source=fractalcr-os-work,target=/work,readonly \
             --mount "type=bind,source=$PWD/release-stage,target=/output" \
             fractalcr-os-builder python3 /src/os/tests/qemu-cloud.py \
-              --artifacts /work/artifacts --image "/output/images/fractalcr-$(cat VERSION)-x86_64-devsigned-vps.qcow2" --output /output/cloud-test --accel "$accel"
+              --artifacts /work/artifacts --image "/output/hv.qcow2" --output /output/cloud-test --accel "$accel"
       - name: Qualify IOS console and SSH management
         run: |
           test -c /dev/kvm || { echo 'KVM is required for management release qualification.' >&2; exit 1; }
@@ -118,6 +129,7 @@ jobs:
           cp release-stage/cloud-test/result.json release-stage/images/qualification.json
           cp release-stage/usb-test/result.json release-stage/images/usb-qualification.json
           cp release-stage/management-test/result.json release-stage/images/management-qualification.json
+          python3 tools/finalize-release.py release-stage/images --source-commit "${{ steps.pins.outputs.commit }}"
           cd release-stage/images
           find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -145,7 +157,6 @@ jobs:
             release-stage/management-test/aaa/result-os-aaa.json
           if-no-files-found: ignore
   publish:
-    if: github.ref_type == 'tag'
     needs: build
     runs-on: ubuntu-24.04
     permissions:
@@ -159,14 +170,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ needs.build.outputs.release_tag }}
+          REF_TYPE: ${{ github.ref_type }}
           SOURCE_COMMIT: ${{ needs.build.outputs.source_commit }}
         run: |
           cd release/images
           sha256sum --check SHA256SUMS
-          test "$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha)" = "$SOURCE_COMMIT"
-          gh release create "$TAG" --draft --verify-tag --title "FractalCR $TAG — development signed" \
-            --prerelease --notes-file README.md README.md *.img.gz *.qcow2 *.img.json system.bin rommon.efi firmware.crt release.pub \
+          tag_args=(--target "$SOURCE_COMMIT")
+          if [[ "$REF_TYPE" == tag ]]; then
+            test "$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha)" = "$SOURCE_COMMIT"
+            tag_args=(--verify-tag)
+          fi
+          gh release create "$TAG" --draft "${tag_args[@]}" --title "FractalCR $TAG — development signed" \
+            --prerelease --notes-file README.md README.md *.img.gz *.qcow2.gz *.img.json system.bin rommon.efi firmware.crt release.pub \
             SHA256SUMS release-manifest.json firmware-build-inputs.json system.spdx.json system.oe-vex.json packages.manifest \
             system-licenses.tar.gz buildroot-packages.json boot-sources.json oe-sources.json kernel-security.json builder-packages.txt \
             nocloud-examples.tar.gz source.tar.gz qualification.json usb-qualification.json management-qualification.json

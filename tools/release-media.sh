@@ -8,16 +8,18 @@ mkdir "$out"
 version=$(cat "$src/VERSION")
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]] || exit 2
 python3 "$src/tools/verify-development-artifacts.py" --artifacts "$art" --policy "$src/boot/image-policy.json"
-base="fractalcr-${version}-x86_64-devsigned"
 for policy in required optional; do
-    raw="$out/${base}-usb-${policy}.img"
+    name=usb
+    if [[ "$policy" == required ]]; then name=usb-secureboot; fi
+    raw="$out/$name.img"
     python3 "$src/os/tools/make-appliance.py" --efi "$art/rommon.efi" --system "$art/system.bin" \
         --output "$raw" --size-mib 16384 --firmware-policy "$policy"
     sfdisk --verify "$raw"
     if [[ "$policy" == optional ]]; then
-        qemu-img convert -f raw -O qcow2 -o compat=1.1,lazy_refcounts=off "$raw" "$out/${base}-vps.qcow2"
-        qemu-img check -f qcow2 "$out/${base}-vps.qcow2"
-        qemu-img compare -f raw -F qcow2 "$raw" "$out/${base}-vps.qcow2"
+        qemu-img convert -f raw -O qcow2 -o compat=1.1,lazy_refcounts=off "$raw" "$out/hv.qcow2"
+        qemu-img check -f qcow2 "$out/hv.qcow2"
+        qemu-img compare -f raw -F qcow2 "$raw" "$out/hv.qcow2"
+        gzip -n -1 "$out/hv.qcow2"
     fi
     gzip -n -1 "$raw"
 done
@@ -29,7 +31,7 @@ cp "$art/system.spdx.json" "$art/system.oe-vex.json" "$art/packages.manifest" "$
 cp "$art/build-inputs.json" "$out/firmware-build-inputs.json"
 cp "$art/system-licenses.tar.gz" "$art/buildroot-packages.json" "$art/boot-sources.json" "$art/oe-sources.json" "$art/kernel-security.json" "$out/"
 dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\n' > "$out/builder-packages.txt"
-cp "$src/os/docs/releases.md" "$out/README.md"
+cp "$src/docs/release-notes.md" "$out/README.md"
 tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -C "$src/os/examples" -cf - nocloud | gzip -n > "$out/nocloud-examples.tar.gz"
 python3 - "$src" "$out" <<'PY'
 import hashlib, json, os, pathlib, subprocess, sys

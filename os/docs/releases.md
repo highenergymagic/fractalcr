@@ -15,7 +15,7 @@ private key in an image.
 
 ## USB deployment
 
-Verify SHA256SUMS before decompressing the selected `usb-*.img.gz`. Write the
+Verify SHA256SUMS before decompressing the selected `usb.img.gz`. Write the
 decompressed image as a whole disk using your normal disk-imaging application;
 this replaces the destination disk's contents. Use a device at least as large as the uncompressed image; the release-workflow
 default is 16 GiB, so a nominal 16 GB drive is too small. The manual
@@ -24,15 +24,15 @@ before selecting a device. The image has a 1 GiB FAT32 ESP
 containing the EFI loader and authenticated OS, and a Btrfs single-disk datastore.
 The serial setup dialog configures accounts and networking on first boot.
 
-`usb-optional` works with firmware Secure Boot disabled; `usb-required` requires
+`usb.img.gz` works with firmware Secure Boot disabled; `usb-secureboot.img.gz` requires
 enrolling the accompanying firmware certificate into your firmware trust store.
 The development key belongs to the build installation, not an offline release
 authority. Keep the matching ROMMON and system image together. A build on a
 different installation can use a different trust anchor.
 
-## VPS deployment and cloud-init seed
+## Hypervisor and VPS deployment with optional NoCloud seed
 
-Import the standalone `vps.qcow2` as the VM's only system disk. It contains both
+Verify SHA256SUMS and decompress `hv.qcow2.gz`. Import the standalone `hv.qcow2` as the VM's only system disk. It contains both
 bootflash and data; it has no backing file. Select x86-64 UEFI, a serial console,
 at least 4 GiB RAM, and firmware Secure Boot disabled. An extra NoCloud seed disk
 is removable provisioning media, not a second persistent system disk. Nested
@@ -77,6 +77,19 @@ release image so they do not inherit accounts, host keys or container data.
 
 The datastore is sized when the image is built; increasing the virtual disk does
 not automatically expand its GPT partition or Btrfs filesystem.
+
+## Development releases
+
+Run **Release firmware images** from the repository's Actions tab on the desired
+branch. After all qualification gates pass, CI publishes a uniquely named
+`dev-YYYYMMDD-RUN-ATTEMPT` prerelease for that exact commit. It includes
+`usb.img.gz`, `hv.qcow2.gz`, and the optional `usb-secureboot.img.gz`, checksums,
+public trust files, source, and qualification reports. Failed builds publish no
+release. Manual runs publish prereleases too; they are not artifact-only dry runs.
+
+Builds are deliberately on demand or version-tag triggered: documentation pushes
+do not start a cold firmware build. Physical hardware testing follows CI's QEMU
+qualification; passing CI does not establish motherboard compatibility.
 
 ## Cutting 1.0
 

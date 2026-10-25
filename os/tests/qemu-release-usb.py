@@ -19,7 +19,7 @@ out.mkdir(parents=True,exist_ok=False)
 result={'passed':False,'images':{},'checks':[]}
 try:
     for policy in ('required','optional'):
-        matches=list(images.glob(f'*-usb-{policy}.img.gz'))
+        matches=list(images.glob('usb-secureboot.img.gz' if policy=='required' else 'usb.img.gz'))
         assert len(matches)==1,matches
         compressed=matches[0]
         result['images'][compressed.name]=hashlib.file_digest(compressed.open('rb'),'sha256').hexdigest()

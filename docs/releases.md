@@ -31,9 +31,9 @@ histories or complete unreviewed logs. GitHub's source zip omits submodules; use
 `python3 tools/source-archive.py --output out/fractalcr-source.tar.gz` instead.
 
 Release images must be the exact hashes tested. A newly rebuilt image does not
-inherit an older image's qualification report. The tag-triggered release workflow builds and qualifies development-signed images
+inherit an older image's qualification report. The manual and version-tag-triggered release workflow builds and qualifies development-signed images
 and publishes them as explicitly labelled GitHub prereleases. See
-[USB and VPS releases](../os/docs/releases.md) for artifacts, NoCloud provisioning,
+[USB and hypervisor releases](../os/docs/releases.md) for artifacts, NoCloud provisioning,
 runner setup, and the 1.0 checklist. It does not invoke the offline production vault.
 
 Outstanding release gates include independent review, a complete image SBOM and
