@@ -11,7 +11,7 @@ the integration repository therefore identifies the complete first-party tree.
 | highenergymagic/fractalcr-supervisor | service | Shared PID 1, service graph, health and control protocol |
 | highenergymagic/meta-fractalcr | os/meta-fractal | OE distro, machine, kernel and appliance recipes |
 
-The component repositories are intentionally checked out at the existing paths.
+The checkout paths in the table are required by the integration build.
 Use the integration checkout to build and qualify them together. The layer
 expects management and supervisor sources to be supplied by `os/tools/setup.sh`;
 it is not yet a standalone generic distro layer. Cross-component changes require

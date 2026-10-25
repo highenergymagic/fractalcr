@@ -2,7 +2,8 @@
 
 FractalCR currently targets evaluation and development. Read the
 [known issues](development-status.md) first. This guide takes you from source to
-a serial-managed VM; it does not assume access to a maintainer's build machines.
+a serial-managed VM. To install a published USB or hypervisor image, use
+[Image deployment](../os/docs/releases.md).
 
 ## 1. Choose a target and build host
 

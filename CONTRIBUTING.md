@@ -31,3 +31,30 @@ maintainer-specific machines. Keep dated test evidence separate from user steps.
 Use small commits describing the resulting behavior. Tests should cover the
 failure or trust boundary being changed. Runtime claims must identify exact
 image hashes; build success alone is not runtime qualification.
+
+## Documentation standards
+
+Write for an operator or contributor who has only the public source and release
+artifacts. Use an appliance configuration-guide style:
+
+- Begin with the task and its purpose. State the required privilege, command
+  mode, hardware, and starting configuration before the procedure.
+- Use numbered steps for ordered actions. Provide commands in copyable blocks,
+  explain placeholders, and identify whether commands run on the appliance,
+  in ROMMON, or on a build workstation.
+- Follow configuration procedures with verification commands and the expected
+  state. Include recovery steps when an operation can interrupt access or boot.
+- Put destructive consequences beside the command that causes them. State
+  restrictions as specific behavior, affected features, and operator actions.
+- Keep operator procedures, developer architecture, and qualification references
+  separate. Link to the relevant reference instead of repeating its detail.
+- Use example accounts, documentation addresses, and explicit host/path
+  placeholders. Omit private machine names, conversation references, internal
+  iteration numbers, planning diaries, and unrelated product comparisons.
+- Describe the current implementation directly. Avoid phrases such as "now
+  supports" or "in this change" outside versioned release notes. Identify the
+  tested revision and image in qualification reports, not private evidence paths.
+- Do not invent output, hardware properties, compatibility, or completed tests.
+  Keep known restrictions visible in release status and the relevant procedure.
+- Check headings, command modes, examples, and links before publishing. Links
+  between component repositories must use their public GitHub URLs.

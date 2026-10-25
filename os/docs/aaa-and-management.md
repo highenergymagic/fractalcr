@@ -1,13 +1,17 @@
 # Appliance management and local AAA
 
-The scope is IOS-style appliance management: the shared CLI editor and help
-grammar, local authentication, EXEC authorization, accounting, console and
-SSH sessions, enable/disable, timeouts and output filters. Routing protocols,
-Cisco binary compatibility and external TACACS+/RADIUS services are not part
-of this scope. Normal configuration commands update running state immediately; `write memory`
+Configure local authentication, EXEC authorization, accounting, console and
+SSH access, command privileges, and session timeouts. External TACACS+ and
+RADIUS services are not supported. Normal configuration commands update running
+state immediately; `write memory`
 persists the JSON startup configuration. `configure candidate` explicitly stages
-a transaction when needed. This guide assumes an initialized datastore and
-management interface; see [getting started](../../docs/getting-started.md).
+a transaction when needed.
+
+## Prerequisites
+
+Use a privilege 15 session with an initialized datastore and management
+interface. Retain physical console access while changing authentication.
+See [Getting started](../../docs/getting-started.md).
 
 ## Configure local accounts and SSH
 
@@ -40,7 +44,6 @@ exec-timeout 10 0
 exit
 end
 write memory
-logout
 ```
 
 Activating AAA preserves the current physical bootstrap session until logout or
@@ -77,6 +80,8 @@ authorization rules as execution. SSH sessions have the same editor and pager
 as the physical console, with independent identities and privileges. Normal
 configuration commands use the latest running state, preserving other sessions'
 edits. Explicit candidate transactions reject stale commits.
+
+## Delegate command privileges
 
 Command privileges can delegate individual operations and configuration modes:
 
@@ -122,6 +127,8 @@ For example, delegating `copy` to level 5 requires both
 `privilege exec all level 5 copy` and `file privilege 5`. Reset file access with
 `no file privilege`. Directory metadata remains available in user EXEC.
 
+## Session and accounting behavior
+
 Three failed local attempts lock that account for 30 seconds. SSH additionally
 limits authentication attempts and concurrent connections. Zero `exec-timeout`
 disables idle expiry; otherwise timeout is expressed as minutes and seconds.
@@ -164,6 +171,8 @@ copying the damaged file. Reboot normally; if 0x2142 was saved with `sync`, firs
 restore `confreg 0x2102` and `sync` in ROMMON. Protect physical-console and
 bootflash access: recovery intentionally authorizes their operator to reset AAA.
 
+## Filter command output
+
 Output filters use POSIX extended regular expressions and accept unique keyword
 abbreviations through the normal grammar:
 
@@ -175,7 +184,15 @@ show platform software service | count running
 ```
 
 `show version | ?` lists only filter keywords, and `show version ?` includes
-`|` and `<cr>`. This is output filtering, not Unix shell piping.
+`|` and `<cr>`.
+
+## Verification
+
+After saving, open a second SSH session and authenticate with the administrator
+account. Check `show users` and `show privilege`. Confirm that the lower-privilege
+account can run its delegated commands and is denied other administrative commands.
+Keep the original console session open until these checks succeed. Then use
+`logout` at the console and verify that local login accepts the new credentials.
 
 The VM acceptance harness is `os/tests/qemu-aaa.py`. It validates serial and SSH
 behavior, simultaneous sessions, privilege denial, filtering, timeout, account

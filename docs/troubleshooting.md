@@ -5,7 +5,7 @@ appliance prompt unless a host or ROMMON is specified.
 
 | Symptom | What to check |
 | --- | --- |
-| Build tries to connect to `carbon` | This is the wrapper's default SSH alias, not a public service. Pass `-BuildHost YOUR_HOST` to every remote build/status/export invocation. |
+| Remote build connects to the wrong host | Pass `-BuildHost BUILD_HOST` to every remote build, status, and export invocation. The selected host is not remembered between invocations. |
 | No output on a monitor | The console is serial-only. Use the first UART at 115200 baud, 8 data bits, no parity, 1 stop bit. |
 | WHPX launch fails | Enable Windows Hypervisor Platform, check QEMU and its bundled firmware. WHPX requires `-NoSecureBoot`; use TCG for Secure Boot. |
 | Boot pauses after image verification | Kernel authentication/loading is silent. TCG can take several minutes; the next normal message is `Booting authenticated system image...`. |
@@ -31,7 +31,7 @@ Missing storage or invalid configuration keeps dependent services stopped.
 Most service logs are volatile: collect relevant output before rebooting.
 Remove secrets and identifying data before sharing diagnostics.
 
-The [startup/reload blocker](development-status.md#known-blocker-and-remaining-work)
+The [startup/reload blocker](development-status.md#known-startup-and-reload-issue)
 can leave Docker unable to start because of a conflicting bridge record.
 Repeated restarts are not a demonstrated fix; do not erase the datastore as a
 default remedy. Preserve data and diagnostics. The fix awaits image qualification.

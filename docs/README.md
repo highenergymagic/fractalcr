@@ -31,20 +31,24 @@ Do not type prompt prefixes. Replace uppercase placeholders such as `BUILD_HOST`
 | Understand image authentication | [Image format](https://github.com/highenergymagic/fractalcr-rommon/blob/main/FORMAT.md) |
 | Sign releases or rotate keys | [Release policy](releases.md), [key management](https://github.com/highenergymagic/fractalcr-rommon/blob/main/docs/release-key-management.md) |
 
-## Status and engineering evidence
+## Release status and qualification
 
-[Development status](development-status.md) identifies current blockers and which
-source changes still need image tests. [IOS conformance](ios-management-conformance.md)
-tracks behavior and gaps. Neither passing source tests nor an older image's
-report qualifies a newly built image.
+[Release status](development-status.md) lists supported environments, known
+issues, and outstanding qualification. [Management conformance](ios-management-conformance.md)
+maps implemented behavior and restrictions to the IOS XE 17.12 reference.
 
-The [security review](security-review.md), [container qualification history](../os/docs/cli-and-container-qualification.md),
-[Swarm test contract](../os/docs/swarm-qualification.md), [ROMMON research](https://github.com/highenergymagic/fractalcr-rommon/blob/main/docs/isr4331-research.md),
-[upstream trust record](https://github.com/highenergymagic/fractalcr-rommon/blob/main/upstream-trust/README.md), [Go advisory dispositions](../tools/security/go-findings.md),
-and [publication review](publication-review.md) are engineering references.
-Dated measurements describe their recorded source/image hashes, not every build.
-Paths under `out/` refer to generated or maintainer-retained evidence, not files
-included in a source clone. They are not prerequisites for using these guides.
+For build acceptance procedures, use [Firmware qualification](../os/docs/cli-and-container-qualification.md)
+and [Three-node Swarm qualification](../os/docs/swarm-qualification.md).
+Qualification reports identify the exact images tested; results do not transfer
+to another build.
+
+Security and distribution references:
+
+- [Security assessment](security-review.md)
+- [Recovery architecture](https://github.com/highenergymagic/fractalcr-rommon/blob/main/docs/isr4331-research.md)
+- [Upstream source trust](https://github.com/highenergymagic/fractalcr-rommon/blob/main/upstream-trust/README.md)
+- [Go advisory dispositions](../tools/security/go-findings.md)
+- [Source distribution and reporting](publication-review.md)
 
 ## Terms used in these guides
 

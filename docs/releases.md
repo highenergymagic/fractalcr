@@ -1,45 +1,60 @@
-# Signing and release policy
+# Software signing and release policy
 
-An HSM is optional. FractalCR already supports an encrypted software key vault,
-public-only builders, offline signing of a reviewed hash, and UEFI key rotation.
-See the [key-management procedure](https://github.com/highenergymagic/fractalcr-rommon/blob/main/docs/release-key-management.md).
-Keep production private keys and their passphrases off GitHub and build hosts.
+This guide describes development-image trust and the requirements for publishing
+FractalCR firmware. For installation, see [Image deployment](../os/docs/releases.md).
 
-GrapheneOS's documented workflow separates building from signing, uses encrypted
-release keys, and pins source revisions in release manifests. That is a useful
-pattern to adopt; it does not establish which hardware GrapheneOS uses internally.
-See its [build and signing guide](https://grapheneos.org/build).
+## Development images
 
-Development images may be published as GitHub **prereleases** with an explicit
-development-signing label. Our development keys are randomly generated private
-keys, not publicly known test keys. They are retained on the builder, so a builder
-compromise also compromises that development identity. Do not present them as
-offline-custodied production releases or distribute their private keys.
+GitHub releases contain development-signed images. Each ephemeral build creates
+a firmware key and an image-signing key. Distribute the matching `rommon.efi`,
+`system.bin`, `firmware.crt`, and `release.pub` together. Private keys are excluded
+from release assets and CI caches.
 
-Every release must identify the integration commit, three component commits,
-dependency pins, builder package inventory, public-key fingerprints, unsigned
-payload hashes, signed artifact hashes, exact qualification evidence and known
-limitations. Signed source tags and an independently published verification key
-are needed before claiming authenticated source releases; an ordinary GitHub tag
-alone is not a cryptographic release-signing policy.
+UEFI verifies ROMMON when Secure Boot is enabled. ROMMON always verifies the
+system image. Disabling firmware Secure Boot does not disable system-image
+authentication; it removes firmware authentication of ROMMON itself.
 
-Publish only reviewed ROMMON/system images, public trust files, checksums,
-receipts, sanitized test summaries, complete recursive source archives, license
-notices and source-offer material required by included dependencies. Never upload
-private keys, encrypted vaults, datastore disks, QEMU variable stores, shell
-histories or complete unreviewed logs. GitHub's source zip omits submodules; use
-`python3 tools/source-archive.py --output out/fractalcr-source.tar.gz` instead.
+## Operator-managed signing
 
-Release images must be the exact hashes tested. A newly rebuilt image does not
-inherit an older image's qualification report. The manual and version-tag-triggered release workflow builds and qualifies development-signed images
-and publishes them as explicitly labelled GitHub prereleases. See
-[USB and hypervisor releases](../os/docs/releases.md) for artifacts, NoCloud provisioning,
-runner setup, and the 1.0 checklist. It does not invoke the offline production vault.
+Operators can build with their own public trust bundle and sign the resulting
+images on a separate signing workstation. The
+[key-management guide](https://github.com/highenergymagic/fractalcr-rommon/blob/main/docs/release-key-management.md)
+provides procedures for key creation, encrypted storage, offline signing,
+verification, rotation, and revocation. Keep private keys and passphrases off
+build workers and source-control services.
 
-Outstanding release gates include independent review, a complete image SBOM and
-dependency vulnerability disposition, source/license compliance for upstream
-binary bundles, fresh-builder reproduction, and hardware coverage. Format v2
-enforces a signed security epoch against the minimum embedded in ROMMON.
-Retiring an epoch requires a new ROMMON floor and firmware-key revocation;
-this is not an automatic per-boot monotonic counter. A/B power-loss-safe installation is also
-not yet implemented. These limits must accompany any development prerelease.
+## Release contents
+
+Each release must identify the integration revision, component revisions,
+dependency inputs, builder identity, image hashes, public trust, and qualification
+results. Include the recursive source archive, package inventory, license
+materials, SBOM, and advisory metadata. GitHub's automatic source ZIP omits
+component repositories; use the supplied `source.tar.gz`.
+
+Only publish the exact images covered by the qualification reports. A rebuild
+or a change of signing key produces different artifacts and requires new tests.
+The release workflow runs on demand and on version tags. It publishes a
+development prerelease only after the required image tests pass.
+
+## Verification
+
+1. Compare downloaded files with `SHA256SUMS` before installation.
+2. Inspect `release-manifest.json` for the source revision and artifact inventory.
+3. Inspect the USB, hypervisor, and management qualification reports for passed
+   checks and matching image hashes.
+4. Verify that ROMMON and the system image use the trust bundle intended for
+   the target appliance.
+
+Checksums detect changed files; the embedded signatures authenticate firmware.
+A Git tag alone does not provide an independent cryptographic source signature.
+
+## Restrictions
+
+- ROMMON enforces a signed security epoch against its embedded minimum. Retiring
+  an epoch requires an updated ROMMON and revocation of the old firmware signer.
+  The minimum does not advance automatically after each boot.
+- Power-loss-qualified A/B installation is not implemented. Retain a working
+  image and external recovery media when updating.
+- Production acceptance requires hardware qualification, independent security
+  review, complete advisory and license disposition, and reproducibility evidence.
+  See [Release status and restrictions](development-status.md).

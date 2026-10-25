@@ -20,7 +20,7 @@ The [IOS management conformance record](../docs/ios-management-conformance.md)
 links the Cisco command references and records tested behavior and remaining
 differences.
 
-## Configuration
+## Initial configuration
 
 An empty datastore starts the serial setup dialog. `setup` runs it again from
 privileged physical-console EXEC. It collects a hostname, management NIC,
@@ -46,6 +46,8 @@ edge(config)# end
 edge# write memory
 ```
 
+## Configuration modes and saving
+
 Each accepted command in `configure terminal` applies to running configuration
 immediately. `end` and Ctrl-Z return to EXEC without discarding changes;
 `write memory` saves running configuration for the next boot. Failed edits are
@@ -56,6 +58,9 @@ Use `configure candidate` when several dependent changes must apply together.
 In that explicit mode, `commit` applies the transaction and `abort` discards it.
 Leaving or saving with uncommitted changes is refused. In ordinary configuration
 mode, `abort` exits without undoing accepted commands.
+
+## Command entry and terminal settings
+
 `do` executes operational commands from configuration modes. Keywords accept
 unique abbreviations (`sh ver`). `sh?` lists matching words; `show ?` lists only
 the next command level. Both retain the input line. Tab completes a unique
@@ -73,9 +78,12 @@ forms. Changing line history size does not reenable disabled history. EXEC
 `terminal` overrides last for that session; a new login uses the saved line
 settings. `show line vty 4` also reports the configured defaults of an idle line.
 
+## Local accounts and privilege
+
 Local accounts accept `user admin priv 15 password 0 TEXT` and
 `username admin privilege 15 secret 0 TEXT`. Both hash the plaintext input;
-passwords may contain 1..256 characters. Use `security passwords min-length 12` to enforce a minimum on newly configured passwords. Use `username NAME ?` or
+passwords may contain 1..256 characters. Use `security passwords min-length 12`
+to enforce a minimum on newly configured passwords. Use `username NAME ?` or
 `username NAME privilege 15 ?` to see the available account settings.
 `show version` includes the source-build identifier of the running image.
 
@@ -88,6 +96,8 @@ Without an enable secret, the physical console can return from `disable` to
 `enable` without a password. SSH requires a configured enable secret to raise
 privilege. `enable LEVEL` and `disable LEVEL` select a privilege level; disable
 cannot raise it. `no enable secret` removes the configured secret.
+
+## File management
 
 `dir ?` lists mounted filesystem prefixes alongside the filename placeholder.
 `dir fl?` lists matching prefixes and retains the partial input. Use `cd data0:`
@@ -112,6 +122,8 @@ including overwrite confirmation, while still requesting missing information.
 settings, save the policy with `write memory` to retain it after reload. Ctrl-C
 cancels a pending file dialog.
 
+## Reload the appliance
+
 `reload` asks whether to save modified running configuration, then asks for
 confirmation. Return confirms; Ctrl-C cancels. `reload in 10 maintenance` schedules
 a reload ten minutes ahead; `reload at 23:30` uses the next occurrence of that
@@ -119,6 +131,8 @@ time. An explicit date can follow the time in either day/month or month/day
 order. `show reload` displays the pending request and `reload cancel` cancels it.
 Schedules survive a management-service restart and expire on machine reboot.
 Image authentication remains mandatory during every boot.
+
+## Apply and import configuration
 
 Network and runtime changes stop the configuration service's consumers,
 apply the new state, then wait for readiness. Failed apply attempts to restore
@@ -303,7 +317,9 @@ Sources: [Kata release](https://github.com/kata-containers/kata-containers/relea
 
 ## Storage and recovery
 
-Online datastore maintenance uses kernel APIs:
+### Online datastore maintenance
+
+Use privilege 15 to start or cancel maintenance on the mounted datastore:
 
 ```
 ctr# request storage datastore data0 scrub start
@@ -320,7 +336,12 @@ ctr# request storage datastore data0 snapshot delete before-change confirm befor
 Scrub and balance return control to the console while management tracks the
 operation. Results are saved on the datastore. Snapshots are read-only filesystem
 snapshots; they do not coordinate application-level transactions inside containers.
-These commands do not launch `btrfs` or other filesystem utilities.
+
+### Initialize blank disks
+
+This procedure creates a Btrfs RAID1 datastore on two unused disks. Identify
+the actual devices with `show storage disks`; `vdb` and `vdc` are examples.
+Formatting is destructive and requires explicit confirmation.
 
 ```
 ctr# show storage disks
@@ -404,10 +425,10 @@ sources also accept this namespace. Container argv, environment values, and
 container-side paths are preserved verbatim.
 Browser actions print a link for the operator to open on their workstation.
 
-This catalog describes the linked client surface. Runtime prerequisites still
-apply: manager-only Swarm operations require a manager, devices must exist, and
-plugin/provider implementations must be installed and supported. Catalog
-coverage is not a claim that every external provider has been qualified.
+Runtime prerequisites apply to the linked client catalog: manager-only Swarm
+operations require a manager, referenced devices must exist, and providers must
+be installed and supported. External provider integrations require separate
+qualification; see [Native services](docs/native-services.md#backend-dependencies-and-restrictions).
 
 ## Extended persistent configuration
 

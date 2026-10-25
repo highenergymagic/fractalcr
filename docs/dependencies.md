@@ -1,6 +1,18 @@
 # Dependency maintenance
 
-Updates are explicit source changes. Discovery runs independently of builds:
+Dependency updates are reviewed source changes. Builds use pinned inputs;
+discovery reports available updates without changing the build automatically.
+
+## Prerequisites
+
+Use a recursive integration checkout and the Linux build environment described
+in [Building from source](building.md). Keep component repositories clean before
+updating pins, and retain the upstream signatures and checksums for review.
+
+## Discover and update archive inputs
+
+Run discovery before selecting an update. Replace version and hash placeholders
+with the reviewed values:
 
 ```sh
 python3 tools/dependencies.py discover --output out/dependency-report.json
@@ -29,8 +41,13 @@ maintainer key. Never import and trust a key solely because the same server
 offered it next to the download. Kernel.org distinguishes its checksum autosigner
 from developer signatures in its [verification guide](https://kernel.org/signature.html).
 
-For OE updates, change the relevant revisions in `os/sources.json` to the reviewed
+## Update OpenEmbedded metadata
+
+Change the relevant revisions in `os/sources.json` to the reviewed
 branch heads in the report; all layers must remain on the compatible series.
+
+## Update Go and Rust dependencies
+
 For Go updates, edit `go.mod` through a reviewed dependency PR, run `vendor-go`,
 then commit `go.mod`, `go.sum` and `vendor` together. Dependabot opens Go and
 Actions updates. Component gitlinks are updated explicitly after integration
@@ -50,6 +67,8 @@ Review OSV results against the selected Linux feature tree; a whole-workspace
 lockfile includes packages that may not be built. The exact compiler is a pinned
 upstream binary build input and is not independently source-bootstrapped here.
 
+## Review kernel and runtime inputs
+
 The CIP kernel additionally carries stable security backports recorded in
 `boot/kernel/security/kernel-security.json`, mirrored in the OE kernel recipe.
 Verify the derived patch bodies against the downloaded upstream `.xz` updates
@@ -62,14 +81,21 @@ Kata updates also need guest kernel/image filename review in the OE recipe;
 blind version replacement would be unsafe. Builder snapshot changes are explicit
 updates to `boot/debian.sources`, followed by builder and image qualification.
 
+## Scheduled discovery
+
 The scheduled GitHub discovery workflow publishes a downloadable report. It has
 no signing credentials, cannot write component repos and does not auto-merge.
 This lets updates arrive automatically for review without making the meaning of
 a source revision change every time it is built.
 
-Before promoting a dependency change: review release/security notes and source
-provenance, run unit and negative signature tests, rebuild both images, compare
-reproducibility results, then run boot/recovery, AAA, Docker/Kata and Swarm cases
-affected by the change. Record both fixed CVEs and outstanding findings. An
-update available is not itself proof of a vulnerability, and a clean scanner
-result is not proof of security.
+## Verify an update
+
+1. Review release notes, security advisories, and source provenance.
+2. Run unit and negative image-signature tests.
+3. Rebuild ROMMON and the system image, then compare reproducibility results.
+4. Run the affected boot/recovery, AAA, Docker/Kata, and Swarm tests.
+5. Record fixed CVEs, unresolved findings, and the tested image hashes before
+   promoting the component revisions into the integration repository.
+
+Evaluate advisories against the shipped code and configuration. Scanner results
+are one input to that review, not a substitute for it.

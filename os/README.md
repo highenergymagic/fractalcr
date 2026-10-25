@@ -93,7 +93,7 @@ The build uses persistent Docker caches and source-built container tools.
 `tools/qualify-management.py` runs serial, AAA/SSH and no-RTC tests on Linux KVM.
 `os/tests/qemu-physical.py` tests emulated USB/AHCI/NVMe paths and setup.
 The [Swarm test](docs/swarm-qualification.md) and
-[container qualification record](docs/cli-and-container-qualification.md) cover
+[firmware qualification guide](docs/cli-and-container-qualification.md) cover
 additional runtime scenarios. Results are bound to exact image hashes; emulated
 tests do not certify physical hardware. Generated `validation.md` and JSON
 reports live in exported artifact directories, not in the source tree.

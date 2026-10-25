@@ -5,7 +5,7 @@ Docker, Git, Python 3.11+ with the `cryptography` package, and Bash are required
 On Debian/Ubuntu, `python3-cryptography` supplies that package for the host-side
 tooling tests. Allow at least 16 GiB RAM and
 200 GiB free disk for a comfortable OE build. Run commands from the integration
-checkout root. No maintainer machine is required. Builds create development keys
+checkout root. Builds create development keys
 in Docker volumes; retain those volumes to preserve your signing identity.
 
 ## Build on Linux
@@ -31,8 +31,7 @@ This runs in the foreground. Volumes `fractalcr-boot-work` and
 Use PowerShell 7, Python 3.11+, Git and OpenSSH. Configure key-based SSH to a
 Linux Docker host with passwordless `doas`; verify
 `ssh YOUR_BUILD_HOST 'doas -n docker info'` first. Replace `YOUR_BUILD_HOST` with
-an SSH alias or `user@hostname`. The default alias `carbon` is a maintainer-local
-name, not a service provided by this project.
+an SSH alias or `user@hostname`. Always specify `-BuildHost` to select your host.
 
 ```powershell
 .\tools\remote-build.ps1 -BuildHost YOUR_BUILD_HOST
@@ -49,10 +48,10 @@ remembered. `-Stage boot` or `-Stage os` selects one component;
 
 ## Export build artifacts
 
-Windows export copies artifacts to `out/carbon/boot` and `out/carbon/os` even
-when another host was selected. These are generated local paths, not source
-files. Export overwrites artifacts there; use a separate `-ArtifactDirectory`
-for an interactive VM.
+Windows export prints the local destination for each component. The destination
+is fixed by the wrapper and does not depend on `-BuildHost`. Subsequent exports
+overwrite files there. Copy the exported set to a separate directory and select
+that directory with the VM launcher's `-ArtifactDirectory` parameter.
 
 After a local Linux build/test finishes, export system artifacts from its volume.
 Run in Bash with direct Docker access:
@@ -79,18 +78,17 @@ and SHA-256 values live in `boot/sources.json`; the OE kernel recipe must agree.
 Upstream layers use exact Git revisions. Go builds use the checked-in vendor
 tree without network module resolution. Source-fetch caches reject dirty OE
 repositories and unexpected remote URLs. Archive updates invalidate extracted
-source and incompatible compiler outputs. Existing unmarked archive caches are
-rebuilt once when adopting the new cache scheme.
+source and incompatible compiler outputs. Archive caches without provenance
+markers are rebuilt.
 
-ROMMON builds its musl compiler/libc through Buildroot rather than importing the
-old Bootlin toolchain. This makes Buildroot's maintained libc security patches
-part of the image. Toolchain configuration and security override changes
+ROMMON builds its musl compiler/libc through Buildroot, including its maintained
+libc security patches. Toolchain configuration and security override changes
 invalidate incompatible rootfs/compiler/kernel outputs; downloads and signing
 keys survive that invalidation. OpenSSL 3.5.9 is pinned separately because the
 Buildroot release predates that security update.
 Extracted source is checked against its authenticated archive before reuse,
 including unexpected files. Buildroot package downloads live outside the source
-tree and survive source upgrades; old in-source download caches migrate once.
+tree and survive source upgrades.
 
 The builder base is pinned by registry digest. Debian package resolution uses
 the October 20, 2026 snapshot with signed APT metadata. The minimal base lacks a
@@ -99,7 +97,8 @@ package-hash verification; subsequent requests use HTTPS. Snapshot expiration
 checking is disabled intentionally, but signature checking remains mandatory.
 The firmware Python wheel is hash-locked; its dependencies come from the same
 APT snapshot, and `pip check` verifies compatibility. The OS builder receives
-the just-built boot builder's immutable local image ID.
+a content-derived local tag for the boot builder; the wrapper verifies that
+this tag resolves to the recorded image ID before starting the OS build.
 
 `tools/build-inputs.py` records source hashes, public trust fingerprints, installed
 builder package versions and builder identity. `tools/reproduce.sh` forces two
@@ -110,7 +109,7 @@ IDs: package scripts, layer metadata and image creation timestamps can vary.
 
 For stronger release evidence, run on two independent fresh builders, retain
 source archives and downloads, compare unsigned outputs, and investigate every
-difference. Compose, Buildx, BuildKit, CNI helpers and the Kata Go runtime now
+difference. Compose, Buildx, BuildKit, CNI helpers and the Kata Go runtime
 compile from pinned source using the Go 1.26.10 toolchain. Reviewed dependency
 patches and deterministic vendor archives are checked into the OE layer; module
 downloads and automatic toolchain selection are disabled during compilation.
@@ -147,6 +146,7 @@ report for a stripped guest is not approval to release it.
 Do not publish builder volumes, whole artifact directories, interactive disk
 images or firmware variable stores. Development keys live in build volumes.
 See [release policy](releases.md) for the public artifact allowlist.
+
 ## GitHub Actions build cache
 
 The release workflow restores ROMMON sources, downloads, compiler and kernel

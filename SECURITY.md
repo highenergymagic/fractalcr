@@ -17,7 +17,7 @@ disposable VMs. Physical access and privilege 15 are trusted administration;
 workload escape, unauthenticated SSH access, lower-privilege escalation and
 unsigned boot are security boundaries.
 
-GitHub-hosted jobs test source. They have no access to carbon, sascha, Docker
-sockets on those hosts, or release keys. Public component checkouts need no deploy keys. Never supply signing keys to
-fork PR workflows, use pull_request_target to execute PR code, or register the
-existing build hosts as general untrusted self-hosted runners.
+CI uses isolated workers and public component checkouts. Production signing
+credentials must remain outside CI. Never supply signing keys to fork workflows,
+execute pull-request code through `pull_request_target`, or give untrusted
+contributions access to privileged build hosts.

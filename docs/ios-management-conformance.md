@@ -1,12 +1,10 @@
-# IOS management conformance
+# Management command conformance
 
-The reference baseline is an ISR 4331 running **IOS XE 17.12**, as selected by
-the project owner. The ISR 4000 IOS XE 17 guide and Cisco's consolidated
-command references supply the documented behavior. Cisco's consolidated
-references also contain commands for other chassis, storage implementations,
-and releases. Those entries are not evidence that every listed option is an
-ISR 4331 feature. Hardware identity and measurements must describe the actual
-FractalCR machine, not a fictional Cisco router.
+FractalCR uses IOS XE 17.12 documentation for ISR 4000 management conventions.
+This reference maps implemented behavior to its checks and lists differences.
+The command references also include other Cisco platforms; their platform-specific
+options do not imply support in FractalCR. Hardware identity and measurements
+describe the actual appliance.
 
 ## References
 
@@ -40,9 +38,9 @@ Consulted 2026-10-24:
 - [IP Addressing Services command reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipaddr/command/ipaddr-cr-book.pdf): primary and secondary IPv4 addresses and subnet masks.
 - [ISR 4000 IOS XE 17 software installation](https://www.cisco.com/c/en/us/td/docs/routers/access/isr4400/software/configuration/xe-17/isr4400-sw-config-xe-17/installing_the_software.html): platform boot and filesystem context.
 
-## Implemented and exercised in this change
+## Implementation and test coverage
 
-| Area | Behavior | Evidence |
+| Area | Behavior | Verification |
 | --- | --- | --- |
 | Context help | Word-boundary filesystem placeholder and mounted prefixes; partial filesystem help preserves the typed prefix; unique Tab completion | `TestIOSFilesystemHelpAndReloadGrammar`; `qemu-ios-workflow.py` |
 | Privilege | Console enable without a configured secret; remote sessions require a secret; explicit levels; disable never raises privilege; removable enable secret; cancel an enable challenge; configuration commands reach the configuration transaction | `TestIOSEnableConsoleAndVTY`; `TestIOSEnableDispatchDoesNotConsumeConfiguration`; serial/SSH AAA workflow |
@@ -78,105 +76,46 @@ Consulted 2026-10-24:
 | Directory time | Configured timezone and the summer-time offset at each file's timestamp, for file, directory and all-filesystem listings | `TestDirectoryUsesConfiguredClockAtFileTimestamp` |
 | Calendar policy | `ntp update-calendar`, `no` and `default` forms; disabled by default; NTP synchronization independent of RTC update policy; time configuration restarts only time-sync and rolls back on failure | Time-service and CLI policy tests; serial policy/save/reboot qualification |
 | Calendar EXEC privilege | `clock read-calendar` and `clock update-calendar` available at user EXEC; arbitrary date/time setting remains privileged | `TestClockEXECReachesNativeOperations` |
-| NVRAM clock fallback | `clock save interval 8..24` and its documented numbered `no` form; unavailable with a hardware calendar; persist only NTP update timestamps, enforce intervals across service restarts, restore before networking once per boot without rewinding a newer clock | `TestClockSaveIntervalGrammarAndPersistence`; `TestTrackingReferenceRequiresNetworkTime`; `TestSavedClockIntervalAndAuthority`; `TestSavedClockRestoresOnceBeforeNetworking`; `TestSavedClockDevicePolicyAndFailures`; three-cold-boot no-RTC KVM component qualification passed; the release gate now requires it |
-| Startup display | Documented missing-file response and `Using ... out of ... bytes` header; byte count comes from the same validated saved-file read; capacity is the enforced 256 KiB configuration slot; sanitized read failures | `TestStartupConfigurationOutputAndFailures`; iteration 17 serial qualification |
-| Numbered configuration | `show running-config linenum`, numbered configuration lines below the unnumbered size header, output filtering after numbering, delegated visibility and file-access gates | `TestRunningConfigurationLineNumbers`; documented Configuration Fundamentals sample; iteration 17 serial qualification |
-| Legacy secret import | Type 5 user and per-level enable secret import, native MD5-crypt verification, bounded canonical encoding and constant-time comparison; plaintext configuration continues to generate type 9 | `TestType5IndependentVectors` using independent OpenSSL vectors; `TestIOSSecretImportAndAlgorithms`; iteration 17 console/SSH authentication qualification |
+| NVRAM clock fallback | `clock save interval 8..24` and its documented numbered `no` form; unavailable with a hardware calendar; persist only NTP update timestamps, enforce intervals across service restarts, restore before networking once per boot without rewinding a newer clock | `TestClockSaveIntervalGrammarAndPersistence`; `TestTrackingReferenceRequiresNetworkTime`; `TestSavedClockIntervalAndAuthority`; `TestSavedClockRestoresOnceBeforeNetworking`; `TestSavedClockDevicePolicyAndFailures`; three-cold-boot no-RTC KVM qualification in the release gate |
+| Startup display | Documented missing-file response and `Using ... out of ... bytes` header; byte count comes from the same validated saved-file read; capacity is the enforced 256 KiB configuration slot; sanitized read failures | `TestStartupConfigurationOutputAndFailures`; serial qualification |
+| Numbered configuration | `show running-config linenum`, numbered configuration lines below the unnumbered size header, output filtering after numbering, delegated visibility and file-access gates | `TestRunningConfigurationLineNumbers`; documented Configuration Fundamentals sample; serial qualification |
+| Legacy secret import | Type 5 user and per-level enable secret import, native MD5-crypt verification, bounded canonical encoding and constant-time comparison; plaintext configuration continues to generate type 9 | `TestType5IndependentVectors` using independent OpenSSL vectors; `TestIOSSecretImportAndAlgorithms`; console/SSH authentication qualification |
 | Line usage | Authenticated uses counted per physical/virtual line; retained across management restart; reset on a full machine boot | `TestLineCountersSurviveManagementRestart`; console/SSH restart qualification |
 | Interface selection | Selected interface detail, description, and IP brief display; configured descriptions and observed link state; administrative shutdown forces protocol down | Interface display/dispatch tests; serial qualification |
-| File display | Native `more`, configuration aliases, contextual filesystem help, format selection, output filters, privilege checks, rooted regular-file reads, bounded decompression and terminal control handling | `TestMoreConfigurationAliasesAndPolicy`; `TestMoreNativeConfinementAndWorkingDirectory`; `TestFormatsAndTerminalSafety`; `TestCompressedIntegrityAndLimits`; iteration 19 serial qualification |
-| Interface configuration display | `show running-config interface` with joined or separated type/index and optional `linenum`; selected-port output, delegated visibility and file-access gates; `(config-if)#` prompt | `TestInterfaceRunningConfiguration`; configuration replay tests; iteration 19 serial qualification |
-| Interactive pager | `/` searches remaining output, `+` includes matching lines, `-` excludes them; first filter remains active while later searches are allowed; complete lines span API/log chunks; EOF and Ctrl-C/Z/^ stop output; exact-width lines do not acquire a spurious row | `os/tests/test-pager.c` with ASan/UBSan; native service compiler checks; iteration 19 serial qualification |
+| File display | Native `more`, configuration aliases, contextual filesystem help, format selection, output filters, privilege checks, rooted regular-file reads, bounded decompression and terminal control handling | `TestMoreConfigurationAliasesAndPolicy`; `TestMoreNativeConfinementAndWorkingDirectory`; `TestFormatsAndTerminalSafety`; `TestCompressedIntegrityAndLimits`; serial qualification |
+| Interface configuration display | `show running-config interface` with joined or separated type/index and optional `linenum`; selected-port output, delegated visibility and file-access gates; `(config-if)#` prompt | `TestInterfaceRunningConfiguration`; configuration replay tests; serial qualification |
+| Interactive pager | `/` searches remaining output, `+` includes matching lines, `-` excludes them; first filter remains active while later searches are allowed; complete lines span API/log chunks; EOF and Ctrl-C/Z/^ stop output; exact-width lines do not acquire a spurious row | `os/tests/test-pager.c` with ASan/UBSan; native service compiler checks; serial qualification |
 | Persistent line terminals | Console/VTY `history`, `history size`, `editing`, `length`, and `no`/`default` forms; independent VTY ranges; line history-size changes do not reenable disabled history; new sessions inherit saved defaults while unrelated edits preserve session overrides; canonical `line con`, single-VTY display and omitted default timeout | `TestLineTerminalPersistenceAndDefaults`; `TestLineTerminalValidationAndClone`; `TestLineTerminalPolicyAndSessionOverrides`; `TestLineTerminalDelegatedDisplay`; new-image serial qualification pending |
 | Word editing | Escape-D cuts the next word into the delete buffer; Escape-C/U/L capitalize, uppercase and lowercase the remaining word; upper/lowercase key variants and leading spaces are handled | `os/tests/test-line-editor.c` with ASan/UBSan; new-image serial qualification pending |
 | Configuration files | CLI-text running/startup exports, local-file merge into running configuration, validated startup replacement, legacy JSON import, original-policy authorization throughout parsing, rooted bounded regular-file reads | `TestConfigurationImportIsStagedAndRoundTrips`; `TestConfigurationImportUsesOriginalAuthorization`; `TestConfigurationCopiesExportCLIAndImportObjects`; `TestConfigurationImportFileConfinement`; new-image serial qualification pending |
 | Calendar authority | `clock calendar-valid`, `no` and `default`; persistent hardware-calendar authority, NTP precedence, no promotion of a stopped NVRAM timestamp; command hidden/rejected without an RTC | `TestCalendarAuthorityConfiguration`; `TestCalendarAuthoritySourceSelection`; new-image serial qualification pending. This implements clock authority/display policy; NTP server distribution is still outstanding. |
-| Reload during engine initialization | Defer engine termination until API readiness, retaining providers; keep the original startup deadline and bounded forced cleanup; do not modify Docker's source or network database | Native supervisor and dependency-graph fault tests passed. Iteration 20 USB qualification reproduced a conflicting default bridge after reload during startup; the fix awaits five-cycle image qualification. |
+| Reload during engine initialization | Defer engine termination until API readiness, retaining providers; keep the original startup deadline and bounded forced cleanup; preserve Engine state | Native supervisor and dependency-graph fault tests; five-cycle image qualification pending for the startup/reload issue. See [Release status](development-status.md). |
 
-Test names identify executable evidence, not a declaration of complete IOS
-compatibility. The VM report identifies the exact tested system image hash.
-These checks compare documented behavior with FractalCR tests. They do not run
-the same command transcript against a licensed ISR 4331 IOS XE instance, and
-therefore do not establish byte-for-byte prompt/output equivalence. Differences
-between Cisco platforms and releases mean that a future device transcript must
-identify its precise 17.12 maintenance release before serving as that oracle.
+Test names identify source checks. Release qualification reports identify the
+exact tested image. Comparison against a physical ISR 4331 transcript has not
+been completed; byte-for-byte output equivalence is not established. A device
+comparison must identify the exact IOS XE 17.12 maintenance release.
 
-The iteration 17 serial, AAA and USB reports bind to system image SHA-256
-`48bec8954e673b2bd97db325588cda0675864ebca352555b39322148fb17e669`
-and source build
-`a272f0e1cb1fe82abc070979a42581bb311955958313d9b5dfec2e0aaef5773c`.
-The iteration 19 serial, AAA and USB reports bind to system image SHA-256
-`de8ec345832836828e95dfda5cfb4757fae9045843ee1ef8d2375bebd5a0450c`
-and source build
-`6ea4b41208329db702e3393c79486f4278946da391a434488a47840345017191`.
-Its management gate also passed the no-RTC clock-restoration component test
-against that build's kernel. These reports contain 75 checks in total. Later
-implementations marked pending are not covered by those reports.
+## Restrictions and output differences
 
-## Platform boundaries and outstanding differences
+| Area | Restriction or difference |
+| --- | --- |
+| Reload verification | `/noverify`, pre-reload `/verify`, and `warm` are rejected. ROMMON authenticates every system image; only cold reload is supported. |
+| File deletion | Deletion immediately unlinks a file. There are no legacy flash deleted-file records for `/all` to display. |
+| Network file access | System CLI copy and output redirection use local volumes. Network copy protocols are unavailable; ROMMON provides TFTP recovery separately. |
+| Output limits | Redirection accepts at most 1 MiB per response; append accepts an existing file up to 64 MiB. `more` limits both reads and decompression to 256 KiB. |
+| Configuration import | CLI-text exports and legacy JSON imports are supported. Imports validate the complete input before applying it atomically. Durable startup storage is JSON. Invalid input does not produce IOS-style partial application. |
+| File display and pager | ASCII, hex/text, gzip/zlib, and EBCDIC code page 037 are supported. Other compression formats and remote URLs are unavailable. Exact ISR binary-dump spacing, invalid-pattern diagnostics, and active-filter replacement diagnostics are unverified. |
+| Authentication | Local AAA is supported. RADIUS, TACACS+, CLI views, password types 6/14, and automatic conversion of imported type 5 secrets to type 14 are unavailable. |
+| Command privileges | Parser modes and native workload operations support delegation. Per-option grants inside workload clients are unavailable. Exact ISR formatting after partial privilege-group resets requires device comparison. |
+| Reload persistence and output | Scheduled reloads survive management restart, but not a machine reboot. Warning cadence and reload-history output are not fully matched to ISR output. |
+| Terminal and interface displays | `show users summary`, additional terminal settings, and additional interface counter/display variants remain incomplete. See the CLI reference for available commands. |
+| Time services | NTP client synchronization and optional hardware-calendar updates are supported. The complete IOS NTP command family, including serving authoritative calendar time to clients, is unavailable. Restored NVRAM time displays `*` and `Time source is NVRAM`; exact ISR equivalence is unverified. |
+| Daylight-saving transitions | Reload scheduling arithmetic is tested. The reference does not define repeated-hour selection or skipped-hour diagnostics; their exact output requires a device transcript. |
+| Appliance extensions | Workload, datastore-array, Kata, Compose, BuildKit, and Swarm commands are FractalCR extensions. |
 
-This is **not yet an exhaustive, byte-for-byte IOS conformance certification**.
-The following differences must remain visible in engineering documentation;
-they must not be hidden behind accepted no-op keywords:
-
-- ROMMON image signatures remain mandatory. `/noverify` is unavailable.
-  Pre-reload `/verify` and `warm` are also rejected; verification happens in
-  ROMMON, and the platform currently implements cold reload only.
-- The storage uses immediate unlink, not the deleted-file records of legacy
-  linear flash. `/all` has no additional deleted entries on these filesystems.
-- Network copy protocols remain unimplemented. Output redirection currently
-  supports local writable volumes, with a 1 MiB response limit and a 64 MiB
-  existing-file limit for append. Configuration exports now contain CLI text;
-  durable startup storage remains the appliance JSON model. Imports validate
-  the whole input before applying it once. This atomic error behavior is an
-  appliance policy, not a claim to match IOS partial application of invalid
-  configuration files.
-  Native `more` now exposes local-file reads, configuration aliases, ASCII,
-  hex/text, gzip/zlib decompression and EBCDIC code page 037 display. Remote
-  URLs, additional compressed formats and exact ISR
-  binary-dump spacing still require qualification or implementation. Reads and
-  decompression are bounded at 256 KiB and reject oversized files explicitly.
-  Pager search/filter behavior now has executable tests; exact ISR diagnostics
-  for invalid patterns and attempts to replace an active filter remain unverified.
-- Local AAA is not all IOS AAA: CLI views,
-  additional Cisco password encodings (including type 6/14),
-  and additional line/login settings need separate implementation and
-  conformance work.
-  Type 5 imports now authenticate and persist, but automatic conversion to
-  convoluted type 9 (`$14$`) is not implemented; imported type 5 remains type 5.
-  External RADIUS/TACACS+ services remain outside the documented
-  [local AAA scope](../os/docs/aaa-and-management.md); they are not implemented.
-  Configurable privileges now cover the appliance parser modes and native
-  workload operation paths. The documented `all` example is matched. Exact ISR
-  formatting after partial group resets, including default ancestors and
-  argument-node exceptions, still needs comparison with a device transcript;
-  per-option privilege overrides inside native workload clients are not exposed.
-- Reload warning cadence and reload-history output have not been fully matched.
-  Scheduled reloads are not retained across a complete machine reboot.
-- Remaining `show users` variants, interface counters/variants, NTP command
-  options, and terminal editor/history edge cases still need a
-  command-by-command comparison. Existing support is not proof of parity.
-  Concrete gaps include `show users summary`;
-  additional line/terminal settings and their corresponding display fields;
-  and the complete NTP family, including distribution of authoritative calendar
-  time to network clients. The NVRAM fallback now has
-  native persistence and restoration tests and a three-cold-boot KVM test with
-  the CMOS driver disabled. That component test used source build
-  `ee686b427839a5ec502c82a48b45b4165b6e054528d191ab257377b7ae5db378` and
-  verified NTP persistence, refusal to persist manual time, and restoration
-  before networking. It bypassed firmware boot and is not an authentication
-  test. The exact ISR display of restored, non-authoritative time remains unverified.
-  The implementation reports `*` and `Time source is NVRAM`; this must not be
-  treated as a documented byte-for-byte ISR output match.
-  Periodic hardware calendar synchronization
-  is implemented by `ntp update-calendar`.
-  Generic clock and NTP
-  support does not imply support for every IOS clock/NTP command.
-  The references do not specify the choice between repeated local times or
-  the diagnostic for a skipped local time: those two reload outputs remain
-  pending a device transcript even though transition arithmetic is tested.
-- FractalCR workload, storage-array, Kata, Compose, BuildKit and Swarm commands
-  are appliance extensions, not IOS commands.
+For supported command procedures, see the [CLI reference](../os/CLI.md) and
+[Local AAA](../os/docs/aaa-and-management.md).
 
 ## Running the checks
 

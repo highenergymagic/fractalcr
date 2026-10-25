@@ -33,13 +33,14 @@ Decommissioning follows [Docker's demote-before-leave procedure](https://docs.do
 Service removal is asynchronous. Before removing overlay networks or leaving
 the swarm, the harness waits until every node reports that the removed
 services' task containers are gone, with a bounded deadline.
-An earlier stress run that force-removed a manager from a multi-manager cluster
-returned `context deadline exceeded`. Passing the normal decommissioning test
-does not qualify that forced-removal path; its failed evidence is retained.
+Forced removal of a manager from a multi-manager cluster is not qualified.
+Use the demote-before-leave procedure while quorum is available.
 After abrupt host loss, the service summary can include last-reported Running
 states for orphaned tasks. Failover assertions therefore require current desired
 task placements on live nodes and successful traffic, rather than trusting only
 the aggregate replica count.
+
+## Run the qualification
 
 Run directly on a Linux KVM host with QEMU, OVMF and the Python test dependencies:
 The script creates disposable VMs and needs sufficient storage for their disks.
@@ -48,6 +49,8 @@ Use a new output directory.
 ```
 python3 os/tests/qemu-swarm.py --artifacts /path/to/images --output /path/to/new-test-directory
 ```
+
+## Interpret the results
 
 The result records both image hashes, each completed check and ESP packet count.
 The three `overlay-only-*.pcap` files preserve the encrypted test phase before

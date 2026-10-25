@@ -9,11 +9,10 @@ may invoke their own internal helpers. Do not fork or rewrite upstream daemon
 code solely to remove those calls. The appliance's user-facing operations must
 use APIs rather than utility execution and command-output parsing.
 
-## Implemented in the current development sources
+## Service interfaces
 
 - ROMMON recovery uses IPv4 interface/route ioctls, UDP TFTP and ICMP sockets.
-  It has no executable helper calls. Buildroot disables BusyBox; incremental
-  image assembly removes the previous BusyBox binary and applet links.
+  Buildroot disables BusyBox in the recovery image.
 - TFTP enforces its transfer size/deadline, pins the server transfer endpoint,
   handles duplicate blocks and block-number rollover, and acknowledges final
   retransmissions. Received images still require the existing authentication.
@@ -22,8 +21,8 @@ use APIs rather than utility execution and command-output parsing.
 - The configuration service calls Prepare directly. BuildKit readiness uses
   its gRPC worker inventory instead of buildctl.
 - DHCP uses typed packets and leases in the networking service. Discovery,
-  unicast renewal, broadcast rebinding, expiry and cancellation replace the
-  external udhcpc process and its environment-variable hook.
+  unicast renewal, broadcast rebinding, expiry, and cancellation are handled
+  within the service.
 - Debug-container ownership and deletion use typed Engine records.
 - Engine inventory and normal container/network operations use HTTP API data;
   networking uses netlink; time monitoring uses Chrony's binary local protocol.
@@ -53,7 +52,7 @@ use APIs rather than utility execution and command-output parsing.
 - Supervisors use explicit execv/execl paths, with no PATH lookup or implicit
   command-interpreter fallback.
 
-## Backend helpers and remaining CLI integration
+## Backend dependencies and restrictions
 
 - BuildKit's daemon-side Git helper and Docker Swarm/overlay's iptables helpers
   are permitted internal implementation details. Preserve their dependencies.
@@ -71,24 +70,21 @@ BusyBox remains available to backend implementations;
 its presence does not add a CLI entry point. ROMMON's native recovery remains
 independent of BusyBox.
 
-## Validation
+## Verification
 
-The following describes historical implementation tests on a Linux build host. The management/CLI/config suites
-pass with the race detector. Native ROMMON tests pass for empty and exact-block
-transfers, duplicates, error responses, final-ACK retransmissions and 16-bit
-block rollover, plus loopback ICMP. ROMMON compiles with its musl toolchain;
-platform and manager compile with warnings treated as errors. DHCP discovery
-and renewal pass a real UDP fixture test without changing host interfaces.
-Native Git and Engine stream integration tests pass with executable creation
-blocked. Compose lifecycle, Buildx builds, Compose Bake and BuildKit-only secret
-mounts passed against the build host's Engine. Storage tests format only disposable
-regular-file fixtures, reject overwrite and malformed protocol messages, and
-verify the execution guard. Real block-device provisioning still needs VM tests.
-The native container transport reached a real BuildKit v0.34.1 worker under the
-exec guard. Native SSH tests verify stream-local-only requests, half-close,
-known-host mismatch rejection, private-key permissions and cancellation cleanup.
+Run the Linux application tests and native service checks described in
+[Contributing](../../CONTRIBUTING.md). Coverage includes:
 
-These are source-level and protocol checks, not a qualification of every image.
-See [current status](../../docs/development-status.md) and the
-[image qualification record](cli-and-container-qualification.md) for image-bound
-evidence. Internal candidate labels are not release versions.
+- TFTP empty and exact-block transfers, duplicates, errors, final acknowledgement
+  retransmission, and 16-bit block rollover; loopback ICMP.
+- DHCP discovery and renewal through a UDP fixture without changing host interfaces.
+- Git publication and Engine stream framing with executable creation blocked.
+- Disposable storage formatting, overwrite rejection, malformed protocol messages,
+  and execution-guard enforcement.
+- SSH stream-local requests, half-close, host-key mismatch, private-key permissions,
+  and cancellation cleanup.
+
+Protocol and source checks must be followed by [firmware qualification](cli-and-container-qualification.md)
+against the selected signed image. Real block-device provisioning, workload
+lifecycles, and native client integration require image-level tests. Consult
+[Release status](../../docs/development-status.md) for outstanding qualification.
