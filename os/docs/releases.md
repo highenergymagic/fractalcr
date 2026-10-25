@@ -17,9 +17,10 @@ private key in an image.
 ### Prerequisites
 
 - An x86-64 UEFI machine with a serial console and supported storage/network devices.
-- A USB drive at least as large as the uncompressed image. The release workflow
-  defaults to 16 GiB; use a nominal 32 GB or larger drive. Manual media defaults
-  to 7 GiB. Check the supplied image manifest for the actual size.
+- A USB drive at least as large as the 2 GiB uncompressed boot image; use a
+  nominal 4 GB or larger drive. Check the supplied image manifest for its size.
+- At least one separate, unused disk for data0. Setup refuses partitioned disks;
+  back up and prepare the intended data disk before installation.
 - A disk-imaging application and a backup of any data on the destination drive.
 
 ### Procedure
@@ -32,10 +33,13 @@ private key in an image.
    `usb-secureboot.img.gz` instead and enroll its accompanying firmware certificate
    in the target machine's firmware trust store.
 4. Connect the serial console at 115200 8N1, select UEFI USB boot, and power on.
-5. Complete the serial setup dialog to configure accounts and management networking.
+5. Complete the serial setup dialog. Select a separate data disk and type
+   `INITIALIZE` to format it, then configure accounts and management networking.
 
 The image contains a 1 GiB FAT32 EFI System Partition with the loader and signed
-system image, followed by a Btrfs datastore. The development trust anchor is
+system image. It contains no datastore. The USB provides `bootflash:`; `data0:`
+resides on separate disks and holds configuration and container data. The USB
+must remain attached for subsequent boots. The development trust anchor is
 specific to the build. Keep the matching ROMMON and system image together.
 
 ### Verification

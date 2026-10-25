@@ -15,7 +15,7 @@ p.add_argument("--extended", action="store_true", help="require CLI, full client
 p.add_argument("--tcg", action="store_true", help="require additional core TCG results under artifacts/tcg")
 p.add_argument("--management", action="store_true", help="require serial/SSH AAA and physical password recovery")
 p.add_argument("--swarm", action="store_true", help="require isolated three-node Swarm failure qualification")
-p.add_argument("--physical", action="store_true", help="require single-disk USB, NVMe and AHCI setup/network/time qualification")
+p.add_argument("--physical", action="store_true", help="require separate boot/data disk USB, NVMe and AHCI setup/network/time qualification")
 a = p.parse_args()
 art = a.artifacts
 hashes = {name: hashlib.sha256((art / name).read_bytes()).hexdigest()

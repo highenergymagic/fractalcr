@@ -1,7 +1,7 @@
 param(
     [string]$BuildHost = 'carbon',
     [ValidateSet('required','optional')][string]$FirmwarePolicy = 'required',
-    [ValidateRange(2048,1048576)][int]$SizeMiB = 7168,
+    [ValidateRange(2048,1048576)][int]$SizeMiB = 2048,
     [switch]$LoaderOnly,
     [string]$OutputDirectory
 )

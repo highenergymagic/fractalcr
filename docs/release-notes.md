@@ -10,9 +10,11 @@ development signed and intended for evaluation and hardware qualification.
 | `usb-secureboot.img.gz` | Physical hardware with the included firmware certificate enrolled |
 
 Verify `SHA256SUMS`, then decompress your image. Write the USB image to an entire
-drive (32 GB or larger); writing it erases the destination. Select x86-64 UEFI
+drive (4 GB or larger); writing it erases the destination. Select x86-64 UEFI
 boot and connect a **115200 baud, 8N1 serial console**. A monitor and keyboard
-are not supported. First boot offers an interactive setup dialog.
+are not supported. The USB contains bootflash only. Attach a separate unused
+disk for data0; first boot offers a dialog to select and initialize that disk,
+then configure management networking and administrator access.
 
 For the hypervisor image, use UEFI with Secure Boot disabled, a serial console,
 at least 4 GiB RAM, and a network adapter. Setup can be interactive or provisioned

@@ -2,7 +2,7 @@
 """Create a new GPT image file for USB/SATA/NVMe. Never open a block device.
 
 An ESP contains the removable-media EFI loader and optional authenticated OS.
-A second, empty Btrfs partition is the single-disk datastore. No credentials,
+Only --with-datastore adds a Btrfs partition for single-disk hypervisors. No credentials,
 startup configuration, containers, or host identities are copied into the image.
 """
 import argparse
@@ -45,7 +45,8 @@ def main():
     p.add_argument('--efi', type=Path, required=True)
     p.add_argument('--system', type=Path, help='Omit for loader-only recovery media')
     p.add_argument('--output', type=Path, required=True)
-    p.add_argument('--size-mib', type=int, default=7168)
+    p.add_argument('--size-mib', type=int, default=2048)
+    p.add_argument('--with-datastore', action='store_true', help='Add data0 for single-disk hypervisor deployment')
     p.add_argument('--firmware-policy', choices=['required', 'optional'], default='required')
     a = p.parse_args()
     if not 2048 <= a.size_mib <= 1048576:
@@ -75,10 +76,12 @@ def main():
         env = root/'rommon.env1'
         env.write_bytes(b'FCR-ENV-1 1 '+hashlib.sha256(body).hexdigest().encode()+b'\n'+body)
         subprocess.run(['mcopy','-i',str(esp),str(env),'::/rommon.env1'],check=True)
-        with data.open('wb') as f: f.truncate((data_last-data_first+1)*SECTOR)
-        subprocess.run(['mkfs.btrfs','-L','FRDATA','-d','single','-m','dup',str(data)],check=True)
-        entries = (entry(ESP,esp_first,esp_last,'FRFLASH') +
-                   entry(LINUX,data_first,data_last,'FRDATA')).ljust(128*128,b'\0')
+        entries = entry(ESP,esp_first,esp_last,'FRFLASH')
+        if a.with_datastore:
+            with data.open('wb') as f: f.truncate((data_last-data_first+1)*SECTOR)
+            subprocess.run(['mkfs.btrfs','-L','FRDATA','-d','single','-m','dup',str(data)],check=True)
+            entries += entry(LINUX,data_first,data_last,'FRDATA')
+        entries = entries.ljust(128*128,b'\0')
         crc, identity = zlib.crc32(entries), uuid.uuid4()
         mbr=bytearray(SECTOR)
         mbr[446:462]=struct.pack('<B3sB3sII',0,b'\0\2\0',0xee,b'\xff\xff\xff',1,min(sectors-1,0xffffffff))
@@ -86,13 +89,14 @@ def main():
         out.write(mbr)
         out.write(header(1,sectors-1,sectors,2,identity,crc)); out.write(entries)
         out.seek(esp_first*SECTOR); sparse_copy(esp,out)
-        out.seek(data_first*SECTOR); sparse_copy(data,out)
+        if a.with_datastore:
+            out.seek(data_first*SECTOR); sparse_copy(data,out)
         out.seek((sectors-33)*SECTOR); out.write(entries)
         out.write(header(sectors-1,1,sectors,sectors-33,identity,crc))
         out.truncate(sectors*SECTOR); out.flush(); os.fsync(out.fileno())
     manifest = {'format':'GPT raw disk', 'size_bytes':sectors*SECTOR,
                 'firmware_policy':a.firmware_policy,'console':'ttyS0,115200n8',
-                'data':'empty Btrfs single; no startup-config',
+                'data':'empty Btrfs single; no startup-config' if a.with_datastore else 'external disks; no datastore on boot media',
                 'inputs':{p.name:hashlib.file_digest(p.open('rb'),'sha256').hexdigest()
                           for p in (a.efi,a.system) if p}}
     a.output.with_suffix(a.output.suffix+'.json').write_text(json.dumps(manifest,indent=2)+'\n')

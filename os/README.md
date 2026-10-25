@@ -12,7 +12,7 @@ integration checkout root, not this directory.
 ## Requirements
 
 - x86-64 UEFI and a serial console on the first UART, 115200 baud, 8N1.
-- A datastore; prepared media supplies a single-device Btrfs filesystem.
+- Separate data disks for USB installations; the hypervisor image includes its datastore.
 - At least 4 GiB RAM for the standard evaluation VM, plus workload memory.
 - A supported network adapter for registry access and remote management.
 - Working KVM for Kata; nested virtualization if FractalCR itself runs in a VM.
@@ -29,19 +29,20 @@ After building both ROMMON and the OS on your SSH build host:
 .\tools\make-media.ps1 -BuildHost YOUR_BUILD_HOST -FirmwarePolicy optional
 # With this build's certificate enrolled in firmware:
 .\tools\make-media.ps1 -BuildHost YOUR_BUILD_HOST -FirmwarePolicy required
-# Recovery loader and blank datastore, without a system image:
+# Recovery loader only, without a system image or datastore:
 .\tools\make-media.ps1 -BuildHost YOUR_BUILD_HOST -LoaderOnly -FirmwarePolicy optional
 ```
 
 These commands create image files on your build host and export them under
-`out/media`. The manual-media default is 7 GiB (use an 8 GB or larger device).
-Release-workflow media uses a different, larger default; consult its manifest
-and [deployment guide](docs/releases.md). `-SizeMiB` changes manual media size.
+`out/media`. The boot-media default is 2 GiB (use a 4 GB or larger device).
+Consult its manifest and [deployment guide](docs/releases.md).
+`-SizeMiB` changes boot-media size without adding a datastore.
 
 Write the decompressed `.img` to the **entire destination device** with a disk
 image writer. This replaces its partition table and data. It contains an EFI
 System Partition with `EFI/BOOT/BOOTX64.EFI`, ROMMON settings and `system.bin`,
-plus an empty Btrfs datastore. Loader-only media omits `system.bin` and requires
+with no datastore. Serial setup initializes data0 on a separate unused disk.
+Loader-only media omits `system.bin` and requires
 [recovery transfer](https://github.com/highenergymagic/fractalcr-rommon/blob/main/README.md). No accounts, host keys or containers are
 preconfigured. Larger disks do not automatically expand the image's partitions.
 

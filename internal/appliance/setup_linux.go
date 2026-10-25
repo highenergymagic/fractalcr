@@ -5,6 +5,8 @@ import (
 	"fractalcr/internal/cli"
 	"fractalcr/internal/config"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -15,10 +17,54 @@ type setupDialog struct {
 	candidate       config.Config
 	nic, user, disk string
 	ports           func() []platformPort
+	disks           func() []string
 }
 
 func newSetup(c config.Config) *setupDialog {
-	return &setupDialog{stage: "begin", candidate: c.Clone(), base: string(c.JSON()), ports: platformPorts}
+	return &setupDialog{stage: "begin", candidate: c.Clone(), base: string(c.JSON()), ports: platformPorts, disks: func() []string { return setupDisks("/sys/class/block") }}
+}
+
+// Setup offers only writable, unused whole disks without partitions. This
+// excludes bootflash's parent disk, even when its filesystem is not mounted.
+func setupDisks(root string) []string {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	var result []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if !config.Disk.MatchString(name) {
+			continue
+		}
+		path := filepath.Join(root, name)
+		ro, err := os.ReadFile(filepath.Join(path, "ro"))
+		if err != nil || strings.TrimSpace(string(ro)) != "0" {
+			continue
+		}
+		holders, err := os.ReadDir(filepath.Join(path, "holders"))
+		if err != nil || len(holders) != 0 {
+			continue
+		}
+		children, err := os.ReadDir(path)
+		if err != nil {
+			continue
+		}
+		partitioned := false
+		for _, child := range children {
+			if _, err := os.Stat(filepath.Join(path, child.Name(), "partition")); err == nil {
+				partitioned = true
+				break
+			}
+		}
+		if _, err := os.Stat(filepath.Join(path, "partition")); !os.IsNotExist(err) {
+			continue
+		}
+		if !partitioned {
+			result = append(result, name)
+		}
+	}
+	return result
 }
 func (s *setupDialog) prompt() reply {
 	prompts := map[string]string{
@@ -49,12 +95,18 @@ func (s *setupDialog) answer(input string, session *cli.Session) reply {
 		if checkDatastore() != nil {
 			s.stage = "disk"
 			r := s.prompt()
-			r.Output, _ = disks()
+			r.Output = "Available data disks (boot media and partitioned disks excluded):\n" + strings.Join(s.disks(), "\n")
 			return r
 		}
 		s.stage = "hostname"
 	case "disk":
-		if !config.Disk.MatchString(value) {
+		available := false
+		for _, disk := range s.disks() {
+			if disk == value {
+				available = true
+			}
+		}
+		if !available {
 			return fail(fmt.Errorf("select an unused whole disk from the list"))
 		}
 		s.disk = value

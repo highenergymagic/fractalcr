@@ -4,8 +4,50 @@ import (
 	"fractalcr/internal/cli"
 	"fractalcr/internal/config"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 )
+
+func TestSetupExcludesBootAndPartitionedDisks(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"sda", "vda", "nvme0n1", "sdb"} {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Join(path, "holders"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(path, "ro"), []byte("0\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for disk, part := range map[string]string{"sda": "sda1", "nvme0n1": "nvme0n1p1"} {
+		path := filepath.Join(root, disk, part)
+		if err := os.MkdirAll(path, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(path, "partition"), []byte("1\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "sdb", "ro"), []byte("1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	eligible := setupDisks(root)
+	if len(eligible) != 1 || eligible[0] != "vda" {
+		t.Fatal(eligible)
+	}
+	c := config.Default()
+	s := newSetup(c)
+	s.stage = "disk"
+	s.disks = func() []string { return setupDisks(root) }
+	session := &cli.Session{Running: c, Candidate: c.Clone()}
+	if r := s.answer("sda", session); r.Error == "" || s.stage != "disk" {
+		t.Fatal(r)
+	}
+	if r := s.answer("vda", session); r.Error != "" || s.stage != "erase" {
+		t.Fatal(r)
+	}
+}
 
 func TestSetupStagesAndCancel(t *testing.T) {
 	old := checkDatastore

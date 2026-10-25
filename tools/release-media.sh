@@ -13,12 +13,17 @@ for policy in required optional; do
     if [[ "$policy" == required ]]; then name=usb-secureboot; fi
     raw="$out/$name.img"
     python3 "$src/os/tools/make-appliance.py" --efi "$art/rommon.efi" --system "$art/system.bin" \
-        --output "$raw" --size-mib 16384 --firmware-policy "$policy"
+        --output "$raw" --size-mib 2048 --firmware-policy "$policy"
     sfdisk --verify "$raw"
     if [[ "$policy" == optional ]]; then
-        qemu-img convert -f raw -O qcow2 -o compat=1.1,lazy_refcounts=off "$raw" "$out/hv.qcow2"
+        hvraw="$out/hv.img"
+        python3 "$src/os/tools/make-appliance.py" --efi "$art/rommon.efi" --system "$art/system.bin" \
+            --output "$hvraw" --size-mib 16384 --firmware-policy optional --with-datastore
+        sfdisk --verify "$hvraw"
+        qemu-img convert -f raw -O qcow2 -o compat=1.1,lazy_refcounts=off "$hvraw" "$out/hv.qcow2"
         qemu-img check -f qcow2 "$out/hv.qcow2"
-        qemu-img compare -f raw -F qcow2 "$raw" "$out/hv.qcow2"
+        qemu-img compare -f raw -F qcow2 "$hvraw" "$out/hv.qcow2"
+        rm "$hvraw" "$hvraw.json"
         gzip -n -1 "$out/hv.qcow2"
     fi
     gzip -n -1 "$raw"

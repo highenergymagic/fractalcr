@@ -87,7 +87,9 @@ Press RETURN when requested. On an empty datastore, setup asks for a hostname,
 management interface, DHCP or static addressing, optional NTP, and an
 administrator account. Choose the management port from the discovered list;
 interface names depend on the machine. Review and save the configuration.
-Prepared media already contains a datastore and does not need formatting.
+The prepared VM disks already contain a datastore and do not need formatting.
+USB boot media has no datastore: setup first asks you to select and initialize
+a separate unused data disk.
 
 Use a unique password; there is no default login. `setup` restarts the dialog
 from privileged physical-console EXEC. After setup:

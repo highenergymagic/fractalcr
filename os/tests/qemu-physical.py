@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Single-disk EFI boot, serial setup, DHCP, NIC roles, Docker networks, NTP.
+"""Separate boot/data disk EFI boot, serial setup, DHCP, NIC roles, Docker networks, NTP.
 
 Run with a loopback NTP fixture listening on the QEMU host UDP 123. This tests
 emulated device paths; it does not claim qualification of a physical motherboard.
@@ -25,6 +25,8 @@ src=Path(__file__).resolve().parents[2]
 art=a.artifacts.resolve()
 name='physical-'+a.transport+'-'+a.policy
 image=art/(name+'.img')
+data=art/(name+'-data.img')
+with data.open('xb') as disk: disk.truncate(4*1024**3)
 variables=art/(name+'.vars.fd')
 result={'case':name,'passed':False,'checks':[], 'system_sha256':hashlib.sha256((art/'system.bin').read_bytes()).hexdigest(),'rommon_sha256':hashlib.sha256((art/'rommon.efi').read_bytes()).hexdigest()}
 subprocess.run(['python3',str(src/'os/tools/make-appliance.py'),'--efi',str(art/'rommon.efi'),'--system',str(art/'system.bin'),'--output',str(image),'--size-mib','4096','--firmware-policy',a.policy],check=True)
@@ -46,6 +48,7 @@ def boot():
           '-drive',f'if=pflash,format=raw,unit=0,readonly=on,file={art / "OVMF_CODE_4M.secboot.fd"}',
           '-drive',f'if=pflash,format=raw,unit=1,file={variables}',
           '-drive',f'if=none,id=system,format=raw,file={image}',
+          '-drive',f'if=virtio,format=raw,file={data}',
           '-netdev',f'user,id=management,hostfwd=tcp:127.0.0.1:{management_port}-:22','-device','virtio-net-pci,netdev=management',
           '-netdev',f'user,id=container,net=192.0.2.0/24,hostfwd=tcp:127.0.0.1:{container_port}-:22','-device','e1000e,netdev=container',
           '-display','none','-serial','stdio','-monitor','none','-no-reboot']
@@ -71,6 +74,8 @@ def login():
 try:
     child=boot()
     answer('Enter initial configuration dialog? [yes/no]: ','yes')
+    answer("Data disk (or 'abort'): ",'vda')
+    answer('Type INITIALIZE to format the selected unused disk: ','INITIALIZE')
     answer('Host name [ctr]: ','steel')
     answer('Management interface: ','eth0')
     answer('IP address/prefix or dhcp [dhcp]: ','dhcp')
@@ -80,7 +85,7 @@ try:
     answer('Apply and save this configuration? [yes/no]: ','yes')
     child.expect_exact('Configuration applied and saved. Authenticate to continue.')
     login()
-    check('single '+a.transport+' disk booted through EFI/ROMMON and saved serial setup with local AAA')
+    check(a.transport+' boot disk and separate data disk initialized through serial setup with local AAA')
     for _ in range(30):
         output=command('show ip interface brief')
         if re.search(r'\s10\.0\.2\.15\s',output): break
