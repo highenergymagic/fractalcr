@@ -12,8 +12,8 @@ in Docker volumes; retain those volumes to preserve your signing identity.
 
 The default wrapper uses passwordless `doas` for Docker. Use
 `FCR_DOCKER_DIRECT=1` if your account already has Docker access. `all All` builds
-and tests ROMMON before the system image. First builds can take hours. An image
-that compiled successfully is not necessarily qualified.
+and tests ROMMON before the system image. First builds can take hours. Image
+qualification runs after compilation.
 
 ```sh
 # Linux with ordinary Docker group access:
@@ -23,8 +23,8 @@ bash tools/build.sh all All
 ```
 
 This runs in the foreground. Volumes `fractalcr-boot-work` and
-`fractalcr-os-work` retain downloads and outputs. Job status is under
-`~/FractalCR-build`. Do not overlap builds against these volumes.
+`fractalcr-os-work` retain downloads and outputs. The job files are under
+`~/FractalCR-build`; each work volume supports one build at a time.
 
 ## Build over SSH from Windows
 
@@ -107,9 +107,12 @@ dependency compiler caches: it is not a clean-room rebuild of the entire
 toolchain. Fixed builder inputs also do not imply byte-identical Docker image
 IDs: package scripts, layer metadata and image creation timestamps can vary.
 
-For stronger release evidence, run on two independent fresh builders, retain
-source archives and downloads, compare unsigned outputs, and investigate every
-difference. Compose, Buildx, BuildKit, CNI helpers and the Kata Go runtime
+Independent reproducibility assessment uses two fresh builders and compares
+unsigned outputs from the same source and toolchain inputs.
+
+### Container runtime inputs
+
+Compose, Buildx, BuildKit, CNI helpers and the Kata Go runtime
 compile from pinned source using the Go 1.26.10 toolchain. Reviewed dependency
 patches and deterministic vendor archives are checked into the OE layer; module
 downloads and automatic toolchain selection are disabled during compilation.
@@ -117,15 +120,20 @@ Cloud Hypervisor and virtiofsd also build from pinned source with frozen Cargo
 lockfiles, vendor archives and the checksum-pinned Rust 1.99.1 build toolchain.
 Cargo cannot access registries or update dependencies during the build. The
 selected Linux dependency trees are included with the image for review.
-Kata's guest kernel/rootfs and BuildKit's cross-CPU QEMU helpers still enter
-through hash-pinned release bundles. Their independent
-source reproduction remains a release gate. The OE public sstate mirror is another trusted build input. A
-source-only audit build must disable that mirror and use a fresh sstate cache.
+Kata's guest kernel/rootfs and BuildKit's cross-CPU QEMU helpers use hash-pinned
+upstream release bundles. Their independent source reproduction is outstanding.
+The OE public shared-state mirror supplies previously built task outputs. To
+rebuild those tasks from source, disable the mirror and use a fresh shared-state
+cache.
+
+### Source snapshots
 
 The Windows development snapshot normalizes text line endings, preserves binary
 inputs and records each file's SHA-256 in `workspace-manifest.json`. It rejects
 links and private signing material. This snapshot includes working-tree edits;
 release archives use `tools/source-archive.py` and require clean committed source.
+
+## Package inventory and image scanning
 
 OE emits package SPDX documents with source identities, kernel configuration
 and package options. Per-file source enumeration is disabled; complete source
@@ -139,9 +147,9 @@ Kata guest separately, pins the scanner downloads, records the vulnerability
 database identity and explicitly reports missing package metadata. Where the
 Kata guest lacks `os-release`, consistent embedded ELF package notes identify
 the Azure Linux 3 advisory feed; the selected feed and evidence are recorded.
-Source-version findings must be reconciled against OE's recorded backports;
-the scanner does not automatically suppress them. A zero-match
-report for a stripped guest is not approval to release it.
+The scanner reports source-version findings alongside OE's recorded backports
+for review. Missing package metadata reduces scan coverage; the report records
+that limitation even when no advisories match.
 
 Build volumes contain development signing keys; interactive disks and firmware
 variable stores contain generated machine state. The release workflow packages

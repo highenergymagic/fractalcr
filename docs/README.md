@@ -1,9 +1,20 @@
 # Documentation
 
-Begin with [getting started](getting-started.md). Commands run from the root of a
-recursive integration checkout unless stated otherwise. `ctr#` denotes appliance
-EXEC mode, `(config...)#` configuration mode, and `rommon N >` the recovery monitor.
-Do not type prompt prefixes. Replace uppercase placeholders such as `BUILD_HOST`.
+To install a downloaded image, start with [Image deployment](../os/docs/releases.md).
+To build and run an evaluation VM from source, start with [Getting started](getting-started.md).
+
+## Command conventions
+
+| Example | Where it runs |
+| --- | --- |
+| `ctr# show version` | Appliance EXEC prompt; `ctr` is the configured hostname |
+| `ctr(config)# hostname edge01` | Appliance configuration mode |
+| `rommon 1 > dev` | ROM Monitor recovery prompt |
+| PowerShell, Bash, Python, Docker, and Git examples | Build or provisioning workstation, as identified by the procedure |
+
+Enter the text after the prompt. Replace uppercase placeholders such as
+`BUILD_HOST` and example paths with your own values. Repository build commands
+run from the root of a recursive integration checkout unless stated otherwise.
 
 ## Operate an appliance
 
@@ -45,7 +56,7 @@ to another build.
 
 Security and distribution references:
 
-- [Security assessment](security-review.md)
+- [Security controls and assessment](security-review.md)
 - [Recovery architecture](https://github.com/highenergymagic/fractalcr-rommon/blob/main/docs/isr4331-research.md)
 - [Upstream source trust](https://github.com/highenergymagic/fractalcr-rommon/blob/main/upstream-trust/README.md)
 - [Go advisory dispositions](../tools/security/go-findings.md)

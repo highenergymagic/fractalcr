@@ -18,9 +18,8 @@ use a Linux KVM host for nested Kata tests. The console is serial-only.
 
 Clone recursively as shown in the [project README](../README.md), then follow
 [building](building.md). That guide covers local Linux and Windows-to-Linux SSH
-builds. This source checkout does not include images. Check the
-[releases page](https://github.com/highenergymagic/fractalcr/releases) for any
-separately published prereleases; this guide does not assume one is available.
+builds. Downloadable images are listed separately on the
+[releases page](https://github.com/highenergymagic/fractalcr/releases).
 
 ## 2. Prepare a blank VM
 

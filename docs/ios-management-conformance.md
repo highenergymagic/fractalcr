@@ -40,6 +40,12 @@ Consulted 2026-10-24:
 
 ## Implementation and test coverage
 
+This table is a contributor reference. Named Go tests are in `internal/cli`
+unless another package or path is shown. Console and SSH image tests are in
+`os/tests/qemu-ios-workflow.py` and `os/tests/qemu-aaa.py`; the management
+qualification tool runs them against a signed image. A pending image result
+means the source check exists but image-level verification is incomplete.
+
 | Area | Behavior | Verification |
 | --- | --- | --- |
 | Context help | Word-boundary filesystem placeholder and mounted prefixes; partial filesystem help preserves the typed prefix; unique Tab completion | `TestIOSFilesystemHelpAndReloadGrammar`; `qemu-ios-workflow.py` |
@@ -137,7 +143,6 @@ complete reboot, not just direct Go calls.
 prepares disposable launcher disks and runs the serial, console/SSH AAA and
 no-RTC clock-restoration suites sequentially on KVM. Its result binds the console
 reports to the signed image hash and the clock report to the exact kernel and
-source identity. The development-release workflow requires this gate and publishes its
-report as `management-qualification.json`; it fails rather than skipping the
-checks when its runner lacks KVM. Test disks and private SSH material are not
+source identity. The development-release workflow publishes this result as
+`management-qualification.json`. These tests require KVM. Test disks and private SSH material are not
 included in release assets or failure diagnostics.

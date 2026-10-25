@@ -58,14 +58,15 @@ console connection, and image hashes.
 
 ## Interpret results
 
-Require `passed: true`, all expected checks, and hashes matching the artifacts
-to be distributed. Preserve failed results separately. Do not reuse an earlier
-image's report for rebuilt or newly signed firmware.
+A successful report contains `passed: true`, the completed checks, and hashes
+matching the tested artifacts. Rebuilding or signing produces a new artifact
+identity and a separate qualification result.
 
-A completed source test does not establish image behavior. Likewise, successful
-VM tests do not establish hardware compatibility, sustained throughput, or
-power-loss resilience. Test report directories may contain private test keys and
-populated disks; publish only the explicit release-artifact allowlist.
+Source tests cover individual functions and protocols. VM tests cover the
+specified boot and runtime scenarios. Physical hardware, sustained throughput,
+and power-loss behavior require tests on the intended equipment. Generated test
+directories include disposable disks and test credentials; release packaging
+selects the distributable reports separately.
 
 ## Runtime restrictions
 
@@ -73,9 +74,9 @@ Docker runtime policy applies to Docker-created containers, including Compose
 workloads without an explicit override. Standalone BuildKit uses its own OCI
 worker and requires separate isolation qualification.
 
-Kata factory tests must launch a new workload after a measured delay and compare
-its wall clock with the host. Restored guests must not retain the template's
-creation time. Application bind mounts and volumes use fresh Kata VMs with
+Kata factory tests launch a new workload after a measured delay and compare
+its wall clock with the host. The expected time is the restore time, not the
+template creation time. Application bind mounts and volumes use fresh Kata VMs with
 virtio-fs. Live archive/copy and commit operations on block-backed Kata containers
 are rejected by the linked client.
 
