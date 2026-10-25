@@ -82,14 +82,83 @@ jobs:
           fi
           df -h .
           test -c /dev/kvm || { echo 'KVM is required for release qualification.' >&2; exit 1; }
+      - name: Restore rommon build cache
+        id: cache-rommon
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ${{ runner.temp }}/firmware-work/boot/sources
+            ${{ runner.temp }}/firmware-work/boot/downloads
+            ${{ runner.temp }}/firmware-work/boot/build/rommon-root
+            ${{ runner.temp }}/firmware-work/boot/build/kernel-rommon
+            ${{ runner.temp }}/firmware-work/boot/build/kernel-witness
+          key: ${{ runner.os }}-${{ runner.arch }}-rommon-v1-${{ hashFiles('boot/Dockerfile', 'boot/debian.sources', 'boot/requirements.txt', 'boot/sources.json', 'boot/buildroot/configs/*', 'boot/kernel/*.config', 'boot/tools/sources.py', 'boot/tools/kernel-security.py') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-rommon-v1-${{ hashFiles('boot/Dockerfile', 'boot/debian.sources', 'boot/requirements.txt', 'boot/sources.json', 'boot/buildroot/configs/*', 'boot/kernel/*.config', 'boot/tools/sources.py', 'boot/tools/kernel-security.py') }}-
+      - name: Restore system build cache
+        id: cache-system
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ${{ runner.temp }}/firmware-work/os/downloads
+            ${{ runner.temp }}/firmware-work/os/sstate-cache
+          key: ${{ runner.os }}-${{ runner.arch }}-system-v1-${{ hashFiles('boot/Dockerfile', 'boot/debian.sources', 'boot/requirements.txt', 'os/Dockerfile', 'os/sources.json', 'os/tools/setup.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-system-v1-${{ hashFiles('boot/Dockerfile', 'boot/debian.sources', 'boot/requirements.txt', 'os/Dockerfile', 'os/sources.json', 'os/tools/setup.sh') }}-
+      - name: Attach cached work directories to build volumes
+        run: |
+          # Only the explicit paths above are cached. Keys, signed images,
+          # qualification disks/logs and live datastores never enter the cache.
+          for stage in boot os; do
+            work="$RUNNER_TEMP/firmware-work/$stage"
+            mkdir -p "$work"
+            # Cache extraction uses the runner UID; BitBake runs as UID 1000.
+            if [[ "$stage" == os ]]; then sudo chown -R 1000:1000 "$work"; fi
+            volume="fractalcr-$stage-work"
+            docker volume create --driver local --opt type=none --opt o=bind --opt "device=$work" "$volume"
+            test "$(docker volume inspect --format '{{ index .Options "device" }}' "$volume")" = "$work"
+          done
       - name: Build and qualify ROMMON
+        id: build-rommon
         env:
           FCR_DOCKER_DIRECT: '1'
         run: bash tools/build.sh boot All
+      - name: Make public ROMMON cache files readable by the cache action
+        if: ${{ !cancelled() && steps.build-rommon.outcome != 'skipped' && steps.build-rommon.outcome != '' }}
+        run: |
+          for path in sources downloads build/rommon-root build/kernel-rommon build/kernel-witness; do
+            directory="$RUNNER_TEMP/firmware-work/boot/$path"
+            if [[ -d "$directory" ]]; then sudo chmod -R a+rX "$directory"; fi
+          done
+      - name: Save rommon build cache, including completed work after failure
+        if: ${{ !cancelled() && steps.build-rommon.outcome != 'skipped' && steps.build-rommon.outcome != '' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ${{ runner.temp }}/firmware-work/boot/sources
+            ${{ runner.temp }}/firmware-work/boot/downloads
+            ${{ runner.temp }}/firmware-work/boot/build/rommon-root
+            ${{ runner.temp }}/firmware-work/boot/build/kernel-rommon
+            ${{ runner.temp }}/firmware-work/boot/build/kernel-witness
+          key: ${{ steps.cache-rommon.outputs.cache-primary-key }}
       - name: Build and qualify system image
+        id: build-system
         env:
           FCR_DOCKER_DIRECT: '1'
         run: bash tools/build.sh os All
+      - name: Make public system cache files readable by the cache action
+        if: ${{ !cancelled() && steps.build-system.outcome != 'skipped' && steps.build-system.outcome != '' }}
+        run: |
+          for path in downloads sstate-cache; do
+            directory="$RUNNER_TEMP/firmware-work/os/$path"
+            if [[ -d "$directory" ]]; then sudo chmod -R a+rX "$directory"; fi
+          done
+      - name: Save system build cache, including completed work after failure
+        if: ${{ !cancelled() && steps.build-system.outcome != 'skipped' && steps.build-system.outcome != '' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ${{ runner.temp }}/firmware-work/os/downloads
+            ${{ runner.temp }}/firmware-work/os/sstate-cache
+          key: ${{ steps.cache-system.outputs.cache-primary-key }}
       - name: Package USB and hypervisor images
         run: |
           mkdir -p release-stage

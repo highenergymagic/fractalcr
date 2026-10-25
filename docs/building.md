@@ -147,3 +147,18 @@ report for a stripped guest is not approval to release it.
 Do not publish builder volumes, whole artifact directories, interactive disk
 images or firmware variable stores. Development keys live in build volumes.
 See [release policy](releases.md) for the public artifact allowlist.
+## GitHub Actions build cache
+
+The release workflow restores ROMMON sources, downloads, compiler and kernel
+outputs, plus OpenEmbedded downloads and shared-state task outputs. Compatibility
+keys include builder recipes and dependency inputs; the existing build systems
+also invalidate changed sources/configuration and regenerate embedded trust data.
+Signing keys, signed release artifacts, qualification logs/disks and datastores
+are excluded. Qualification runs on every build, including cache hits.
+
+Caches are saved after each firmware stage even when that stage's tests fail.
+The first run using the workflow must populate them; subsequent compatible runs
+can reuse them. GitHub may evict caches, so a cache miss remains a supported cold
+build. Cache paths are an explicit allowlist: do not replace them with a whole
+work-volume cache. No cache storage allowance or billing limit is raised by this
+workflow.
