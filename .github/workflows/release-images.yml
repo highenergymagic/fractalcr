@@ -59,6 +59,13 @@ jobs:
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
         run: |
+          # Separate checkout actions fetch exact gitlink revisions, but do not
+          # register them as initialized submodules in the parent Git config.
+          git submodule init
+          if git submodule status --recursive | grep -Eq '^[-+U]'; then
+            echo 'Component checkouts do not match integration pins.' >&2
+            exit 1
+          fi
           args=()
           if [[ "$REF_TYPE" == tag ]]; then args+=(--tag "$REF_NAME"); fi
           python3 tools/version-metadata.py --output /tmp/fractal-release.h "${args[@]}"
@@ -74,6 +81,7 @@ jobs:
             docker image prune -af
           fi
           df -h .
+          test -c /dev/kvm || { echo 'KVM is required for release qualification.' >&2; exit 1; }
       - name: Build and qualify pinned firmware
         env:
           FCR_DOCKER_DIRECT: '1'
