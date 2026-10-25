@@ -85,6 +85,9 @@ jobs:
       - name: Restore rommon build cache
         id: cache-rommon
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        env:
+          # Non-root tar otherwise applies umask to authenticated source modes.
+          TAR_OPTIONS: --same-permissions
         with:
           path: |
             ${{ runner.temp }}/firmware-work/boot/sources
@@ -92,11 +95,14 @@ jobs:
             ${{ runner.temp }}/firmware-work/boot/build/rommon-root
             ${{ runner.temp }}/firmware-work/boot/build/kernel-rommon
             ${{ runner.temp }}/firmware-work/boot/build/kernel-witness
-          key: ${{ runner.os }}-${{ runner.arch }}-rommon-v2-${{ hashFiles('boot/Dockerfile', 'boot/debian.sources', 'boot/requirements.txt', 'boot/sources.json', 'boot/buildroot/configs/*', 'boot/kernel/*.config', 'boot/tools/sources.py', 'boot/tools/kernel-security.py') }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: ${{ runner.os }}-${{ runner.arch }}-rommon-v2-${{ hashFiles('boot/Dockerfile', 'boot/debian.sources', 'boot/requirements.txt', 'boot/sources.json', 'boot/buildroot/configs/*', 'boot/kernel/*.config', 'boot/tools/sources.py', 'boot/tools/kernel-security.py') }}-
+          key: ${{ runner.os }}-${{ runner.arch }}-rommon-v3-${{ hashFiles('boot/Dockerfile', 'boot/debian.sources', 'boot/requirements.txt', 'boot/sources.json', 'boot/buildroot/configs/*', 'boot/kernel/*.config', 'boot/tools/sources.py', 'boot/tools/kernel-security.py') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-rommon-v3-${{ hashFiles('boot/Dockerfile', 'boot/debian.sources', 'boot/requirements.txt', 'boot/sources.json', 'boot/buildroot/configs/*', 'boot/kernel/*.config', 'boot/tools/sources.py', 'boot/tools/kernel-security.py') }}-
       - name: Restore system build cache
         id: cache-system
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        env:
+          # Non-root tar otherwise applies umask to authenticated source modes.
+          TAR_OPTIONS: --same-permissions
         with:
           path: |
             ${{ runner.temp }}/firmware-work/os/downloads
