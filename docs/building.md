@@ -143,9 +143,9 @@ Source-version findings must be reconciled against OE's recorded backports;
 the scanner does not automatically suppress them. A zero-match
 report for a stripped guest is not approval to release it.
 
-Do not publish builder volumes, whole artifact directories, interactive disk
-images or firmware variable stores. Development keys live in build volumes.
-See [release policy](releases.md) for the public artifact allowlist.
+Build volumes contain development signing keys; interactive disks and firmware
+variable stores contain generated machine state. The release workflow packages
+its downloadable assets separately. See [Publishing releases](publishing.md).
 
 ## GitHub Actions build cache
 
@@ -159,6 +159,6 @@ are excluded. Qualification runs on every build, including cache hits.
 Caches are saved after each firmware stage even when that stage's tests fail.
 The first run using the workflow must populate them; subsequent compatible runs
 can reuse them. GitHub may evict caches, so a cache miss remains a supported cold
-build. Cache paths are an explicit allowlist: do not replace them with a whole
-work-volume cache. No cache storage allowance or billing limit is raised by this
-workflow.
+build. Only the listed dependency and compiler directories enter the cache;
+build keys and VM state remain outside it. Cache storage uses the repository's
+configured allowance.

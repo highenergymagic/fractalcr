@@ -22,14 +22,13 @@ Use [private vulnerability reporting](../SECURITY.md) for security findings.
 Ordinary bugs can be reported through the integration repository's issue tracker.
 Include the source revision or image hash and sanitized reproduction details.
 
-## Publication controls
+## Source and build artifacts
 
-Source and release reviews must check for credentials, private signing material,
-customer data, and generated datastore or firmware-variable images. Upstream
-test fixtures must be distinguished from deployment credentials and verified
-against pinned upstream sources before any exception is accepted.
+The source archive contains tracked files from the integration repository and
+its pinned components. CI caches retain selected dependency and compiler outputs.
+Signing keys, datastore images, and firmware-variable stores are excluded from
+the source archive and cache paths.
 
-CI uses public component checkouts. Development build caches contain explicitly
-selected dependency and compiler outputs; keys and deployment state are excluded.
-The [release policy](releases.md) defines the assets and qualification required
-for firmware publication.
+Build volumes and VM test directories contain generated machine state and may
+contain private test credentials. The firmware release package selects its
+downloadable assets separately; see [Publishing development releases](publishing.md).

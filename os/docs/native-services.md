@@ -1,13 +1,9 @@
 # Native appliance services
 
-Runtime management must use kernel interfaces, linked library APIs, or typed
-service requests. Formatting human-readable output belongs at the CLI boundary.
-Do not introduce command-output parsing or executable utility adapters.
-Starting a supervised daemon or an explicit container workload is a service
-lifecycle operation. Backend implementations, including Docker and BuildKit,
-may invoke their own internal helpers. Do not fork or rewrite upstream daemon
-code solely to remove those calls. The appliance's user-facing operations must
-use APIs rather than utility execution and command-output parsing.
+The management layer exchanges structured data through kernel interfaces,
+linked libraries, and service APIs. The CLI formats the responses for display.
+Supervised daemons and container workloads run as separate processes; Docker
+and BuildKit also use backend helpers for some operations.
 
 ## Service interfaces
 
@@ -54,17 +50,15 @@ use APIs rather than utility execution and command-output parsing.
 
 ## Backend dependencies and restrictions
 
-- BuildKit's daemon-side Git helper and Docker Swarm/overlay's iptables helpers
-  are permitted internal implementation details. Preserve their dependencies.
+- BuildKit uses a daemon-side Git helper. Docker Swarm and overlay networking
+  depend on iptables helpers included in the system image.
 - Advanced workload dependencies contain credential-helper, SSH proxy/jump,
   provider/plugin and model-runner executable paths. Linking the upstream CLI
-  does not itself remove those paths. They need native adapters and coverage.
-  An exec denial is a safeguard, not a completed implementation of that feature.
+  does not make those paths available through the appliance. Integrations that
+  require executable helpers are unsupported until they have native adapters.
 - The interactive workload frontend still uses an appliance-owned process
-  entry point. A streaming service protocol must preserve terminal ownership,
-  authorization, cancellation and backpressure when replacing it.
-- Keep backend helper dependencies in the system image without exposing a host
-  shell or a general-purpose utility execution command through the appliance CLI.
+  entry point that handles terminal ownership, authorization, cancellation,
+  and stream backpressure.
 
 BusyBox remains available to backend implementations;
 its presence does not add a CLI entry point. ROMMON's native recovery remains
@@ -84,7 +78,7 @@ Run the Linux application tests and native service checks described in
 - SSH stream-local requests, half-close, host-key mismatch, private-key permissions,
   and cancellation cleanup.
 
-Protocol and source checks must be followed by [firmware qualification](cli-and-container-qualification.md)
-against the selected signed image. Real block-device provisioning, workload
-lifecycles, and native client integration require image-level tests. Consult
+The [Firmware qualification](cli-and-container-qualification.md) procedures test
+block-device provisioning, workload lifecycles, and native client integration
+against the selected signed image. Consult
 [Release status](../../docs/development-status.md) for outstanding qualification.

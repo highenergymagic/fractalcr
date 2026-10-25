@@ -26,14 +26,14 @@ and [troubleshooting](https://github.com/highenergymagic/fractalcr/blob/main/doc
 cover operation and recovery.
 
 CI checks USB boot, NoCloud provisioning and console/SSH management before
-publishing. The included reports record what passed; they do not qualify your
-physical motherboard. See [known limitations](https://github.com/highenergymagic/fractalcr/blob/main/docs/development-status.md)
+publishing. The included reports describe the tested images and VM scenarios.
+For physical hardware status, see [known limitations](https://github.com/highenergymagic/fractalcr/blob/main/docs/development-status.md)
 and [release policy](https://github.com/highenergymagic/fractalcr/blob/main/docs/releases.md).
 
 Each ephemeral build generates development signing keys. Keep the matching
 ROMMON, system image and public trust files together when upgrading. Image
 authentication remains mandatory even with firmware Secure Boot disabled.
-Private signing keys are never included. `release-manifest.json` identifies the
+Downloads contain public trust files only. `release-manifest.json` identifies the
 source commit and asset hashes; `source.tar.gz` includes pinned component sources.
 
 Fractal Microsystems — Copyright (c) 2025–2026.

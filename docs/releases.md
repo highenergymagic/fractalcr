@@ -1,60 +1,70 @@
-# Software signing and release policy
+# Software releases and image signing
 
-This guide describes development-image trust and the requirements for publishing
-FractalCR firmware. For installation, see [Image deployment](../os/docs/releases.md).
+FractalCR development releases are published on the
+[GitHub releases page](https://github.com/highenergymagic/fractalcr/releases).
+Each release contains installation images, checksums, source, and test reports.
+See [Image deployment](../os/docs/releases.md) for installation instructions and
+[Release status](development-status.md) for known issues.
 
-## Development images
+## Downloads
 
-GitHub releases contain development-signed images. Each ephemeral build creates
-a firmware key and an image-signing key. Distribute the matching `rommon.efi`,
-`system.bin`, `firmware.crt`, and `release.pub` together. Private keys are excluded
-from release assets and CI caches.
+| File | Description |
+| --- | --- |
+| `usb.img.gz` | Whole-disk image for physical hardware with firmware Secure Boot disabled |
+| `usb-secureboot.img.gz` | Whole-disk image for hardware with the release's firmware certificate enrolled |
+| `hv.qcow2.gz` | Standalone hypervisor disk containing bootflash and the datastore |
+| `nocloud-examples.tar.gz` | Example seed files for initial SSH-key provisioning |
+| `SHA256SUMS` | Checksums for the release assets |
+| `release-manifest.json` | Source revision and artifact inventory |
+| `source.tar.gz` | Source archive including the pinned component repositories |
 
-UEFI verifies ROMMON when Secure Boot is enabled. ROMMON always verifies the
-system image. Disabling firmware Secure Boot does not disable system-image
-authentication; it removes firmware authentication of ROMMON itself.
+The release also supplies public signing certificates, package and advisory
+metadata, and qualification reports. The reports identify the image hashes and
+the checks performed on those images. GitHub's automatically generated source
+ZIP omits the component repositories; use `source.tar.gz` for a complete checkout.
 
-## Operator-managed signing
+## Development signing
 
-Operators can build with their own public trust bundle and sign the resulting
-images on a separate signing workstation. The
-[key-management guide](https://github.com/highenergymagic/fractalcr-rommon/blob/main/docs/release-key-management.md)
-provides procedures for key creation, encrypted storage, offline signing,
-verification, rotation, and revocation. Keep private keys and passphrases off
-build workers and source-control services.
+The release workflow generates a new development signing identity for each
+build. ROMMON contains the public keys needed to authenticate its matching
+system image. Private signing keys are not included in downloads.
 
-## Release contents
+With Secure Boot enabled, UEFI verifies ROMMON's EFI signature. ROMMON then
+verifies the system image before starting it. With Secure Boot disabled,
+ROMMON continues to verify the system image, but firmware no longer
+authenticates ROMMON.
 
-Each release must identify the integration revision, component revisions,
-dependency inputs, builder identity, image hashes, public trust, and qualification
-results. Include the recursive source archive, package inventory, license
-materials, SBOM, and advisory metadata. GitHub's automatic source ZIP omits
-component repositories; use the supplied `source.tar.gz`.
+## Installing and upgrading
 
-Only publish the exact images covered by the qualification reports. A rebuild
-or a change of signing key produces different artifacts and requires new tests.
-The release workflow runs on demand and on version tags. It publishes a
-development prerelease only after the required image tests pass.
+Compare the downloaded image's SHA-256 with its entry in `SHA256SUMS`, then
+follow the [USB or hypervisor installation procedure](../os/docs/releases.md).
+Checksums detect download corruption; image signatures are checked during boot.
 
-## Verification
+Use the ROMMON, system image, and public trust files from the same release.
+Because each development build has a new signing identity, an older ROMMON
+normally rejects a system image from a newer build. Upgrading therefore includes
+both ROMMON and the system image. Secure Boot installations also need the new
+firmware certificate enrolled.
 
-1. Compare downloaded files with `SHA256SUMS` before installation.
-2. Inspect `release-manifest.json` for the source revision and artifact inventory.
-3. Inspect the USB, hypervisor, and management qualification reports for passed
-   checks and matching image hashes.
-4. Verify that ROMMON and the system image use the trust bundle intended for
-   the target appliance.
+Updates do not provide automatic A/B recovery after a power interruption. Keep
+a working image and external recovery media available during an upgrade.
+ROMMON's [recovery procedures](https://github.com/highenergymagic/fractalcr-rommon/blob/main/README.md#usb-recovery)
+cover USB and TFTP image recovery.
 
-Checksums detect changed files; the embedded signatures authenticate firmware.
-A Git tag alone does not provide an independent cryptographic source signature.
+## Using your own signing identity
 
-## Restrictions
+Custom builds can use an operator-managed signing identity. The build worker
+receives public trust material; a separate signing workstation holds the private
+keys and signs the completed artifacts. The [key-management guide](https://github.com/highenergymagic/fractalcr-rommon/blob/main/docs/release-key-management.md)
+covers key creation, encrypted storage, offline signing, verification, rotation,
+and revocation.
 
-- ROMMON enforces a signed security epoch against its embedded minimum. Retiring
-  an epoch requires an updated ROMMON and revocation of the old firmware signer.
-  The minimum does not advance automatically after each boot.
-- Power-loss-qualified A/B installation is not implemented. Retain a working
-  image and external recovery media when updating.
-- Production acceptance requires hardware qualification, independent security
-  review, complete advisory and license disposition, and reproducibility evidence.
-  See [Release status and restrictions](development-status.md).
+ROMMON enforces a minimum signed security epoch set when it is built. Images
+within the same accepted epoch remain interchangeable. Raising the minimum
+requires a new ROMMON; retiring the old ROMMON also requires revoking its
+firmware signer. The minimum does not advance automatically during normal boot.
+
+## Release maintainers
+
+See [Publishing development releases](publishing.md) for runner requirements,
+manual builds, and version-tag publication.

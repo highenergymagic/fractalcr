@@ -29,7 +29,8 @@ Do not type prompt prefixes. Replace uppercase placeholders such as `BUILD_HOST`
 | Understand native API integration | [Native services](../os/docs/native-services.md) |
 | Understand the supervisor | [Service implementation](https://github.com/highenergymagic/fractalcr-supervisor/blob/main/README.md) |
 | Understand image authentication | [Image format](https://github.com/highenergymagic/fractalcr-rommon/blob/main/FORMAT.md) |
-| Sign releases or rotate keys | [Release policy](releases.md), [key management](https://github.com/highenergymagic/fractalcr-rommon/blob/main/docs/release-key-management.md) |
+| Publish development images | [Publishing releases](publishing.md) |
+| Sign releases or rotate keys | [Image signing](releases.md), [key management](https://github.com/highenergymagic/fractalcr-rommon/blob/main/docs/release-key-management.md) |
 
 ## Release status and qualification
 
