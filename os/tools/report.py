@@ -79,7 +79,7 @@ assert (art / "supervisor-tests.log").read_text().count("PASS ") == 8
 assert (art / "service-graph-tests.log").read_text().count("PASS ") == 7
 assert (art / "control-tests.log").read_text().count("PASS ") == 3
 assert (art / "health-tests.log").read_text().count("PASS ") == 3
-assert (art / "line-editor-tests.log").read_text().count("PASS ") == 10
+assert (art / "line-editor-tests.log").read_text().count("PASS ") == 11
 assert "PASS syslog delivery" in (art / "syslog-tests.log").read_text()
 lines += ["", "Supervisor fault tests: PASS (`supervisor-tests.log`).",
           "Dependency lifecycle tests: PASS (`service-graph-tests.log`).",
