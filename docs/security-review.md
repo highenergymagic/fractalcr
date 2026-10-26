@@ -86,6 +86,10 @@ and scan procedures are in [Building from source](building.md).
 
 ## Open assessment items
 
+The [October 2026 custom-code review](custom-code-security-audit.md) records a
+corrected console memory-safety defect, SSH teardown hardening, test results, and
+the remaining review scope. It does not close the independent-review requirement.
+
 | Area | Status |
 | --- | --- |
 | Kernel peer network namespaces | CVE-2026-31692 remains unresolved for the selected 6.12 implementation. Its peer-creation path differs from the upstream fix; runtime qualification is outstanding. |

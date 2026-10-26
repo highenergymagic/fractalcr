@@ -67,5 +67,18 @@ int main(void) {
     editor_feed(&e,16);assert(!strcmp(e.line,"second"));
     assert(editor_feed(&e,16)==EDIT_BELL);
     puts("PASS increasing history size cannot resurrect commands evicted from a smaller buffer");
+    editor_init(&e);
+    type("longer"); editor_feed(&e,21);
+    type("x"); editor_feed(&e,21);
+    for(unsigned i=0;i<LINE_CAPACITY-2;i++) editor_feed(&e,'a');
+    editor_feed(&e,25);
+    assert(e.length==LINE_CAPACITY-1);
+    for(unsigned i=0;i<10;i++) {
+        editor_feed(&e,27);
+        assert(editor_feed(&e,'y')==EDIT_BELL);
+        assert(e.length==LINE_CAPACITY-1 && e.cursor==e.length);
+        assert(e.line[e.length-1]=='x' && e.line[e.length]==0);
+    }
+    puts("PASS oversized yank replacement leaves the line and kill-ring selection unchanged");
     return 0;
 }

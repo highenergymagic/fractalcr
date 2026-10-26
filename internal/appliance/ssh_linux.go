@@ -344,12 +344,25 @@ func handleSSHSession(conn net.Conn, channel ssh.Channel, requests <-chan *ssh.R
 			}()
 			cmd.Wait()
 			terminal.Close()
-			<-done
+			drainSSHOutput(conn, done, 5*time.Second)
 			syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
 			return
 		default:
 			request.Reply(false, nil)
 		}
+	}
+}
+
+// A client can stop updating its SSH channel window. Once the console exits,
+// give pending output a bounded drain period, then close the transport so its
+// blocked channel writer cannot retain the VTY indefinitely.
+func drainSSHOutput(conn net.Conn, done <-chan struct{}, timeout time.Duration) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		conn.Close()
 	}
 }
