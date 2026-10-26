@@ -5,6 +5,7 @@ import gzip
 import hashlib
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import pexpect
@@ -67,11 +68,16 @@ try:
                 child.sendline('yes');child.expect_exact('Username: ')
                 child.sendline('admin');child.expect_exact('Password: ')
                 child.sendline('USB-qualification-592!');child.expect_exact('ctr# ')
-                child.sendline('terminal length 0');child.expect_exact('ctr# ')
-                child.sendline('show storage');child.expect_exact('ctr# ')
-                assert 'Datastore data0 is online' in child.before,child.before
-                child.sendline('show version');child.expect_exact('ctr# ')
-                assert 'Fractal Microsystems' in child.before and 'bootflash:system.bin' in child.before,child.before
+                def command(line):
+                    child.sendline(line)
+                    child.expect(re.escape(line) + r'\r+\n')
+                    child.expect_exact('ctr# ')
+                    return child.before
+                command('terminal length 0')
+                storage=command('show storage')
+                assert 'Datastore data0 is online' in storage,storage
+                version=command('show version')
+                assert 'Fractal Microsystems' in version and 'bootflash:system.bin' in version,version
                 result['checks'].append(f'{policy}: boot-only USB has one FRFLASH partition; setup rejects the USB and initializes data0 on a separate blank disk; administrator configuration is saved')
                 print('PASS '+result['checks'][-1],flush=True)
             finally:
