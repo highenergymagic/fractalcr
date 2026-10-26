@@ -9,6 +9,7 @@ int main(int argc,char **argv)
  struct request bad={.magic=MAGIC,.version=1,.operation=2,.profile=1,.count=1};
  strcpy(bad.disks[0],"sda");assert(validate(&bad)==1);
  bad.profile=0;strcpy(bad.disks[0],"../../dev/sda");assert(validate(&bad)==1);
+ bad.operation=3;assert(validate(&bad)==1);
  memset(bad.disks[0],'a',64);assert(validate(&bad)==1);
  assert(!deny_exec());
  char *forbidden[]={"/bin/true",NULL};

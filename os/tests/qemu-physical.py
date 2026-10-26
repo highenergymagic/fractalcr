@@ -74,8 +74,9 @@ def login():
 try:
     child=boot()
     answer('Enter initial configuration dialog? [yes/no]: ','yes')
-    answer("Data disk (or 'abort'): ",'vda')
-    answer('Type INITIALIZE to format the selected unused disk: ','INITIALIZE')
+    answer("Data disk(s), comma-separated (or 'abort'): ",'vda')
+    answer('Datastore layout [single/raid1]: ','single')
+    answer('Type ERASE vda to destroy selected disk contents and initialize data0: ','ERASE vda')
     answer('Host name [ctr]: ','steel')
     answer('Management interface: ','eth0')
     answer('IP address/prefix or dhcp [dhcp]: ','dhcp')

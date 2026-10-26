@@ -196,21 +196,24 @@ func Operations(w []string, c config.Config) (string, error) {
 	return "", fmt.Errorf("unknown command or invalid arguments; enter ? for help")
 }
 
-func disks() (string, error) {
-	entries, err := os.ReadDir("/sys/class/block")
+func disks() (string, error) { return diskInventory("/sys/class/block") }
+
+func diskInventory(root string) (string, error) {
+	entries, err := os.ReadDir(root)
 	if err != nil {
 		return "", err
 	}
+	status := setupDiskStatus(root)
 	var b strings.Builder
-	b.WriteString("Disk             Sectors (512 bytes)  Read-only\n")
+	b.WriteString("Disk             Sectors (512 bytes)  Read-only  Setup status\n")
 	for _, e := range entries {
 		n := e.Name()
 		if !config.Disk.MatchString(n) {
 			continue
 		}
-		size, _ := os.ReadFile("/sys/class/block/" + n + "/size")
-		ro, _ := os.ReadFile("/sys/class/block/" + n + "/ro")
-		fmt.Fprintf(&b, "%-16s %-20s %s\n", n, strings.TrimSpace(string(size)), strings.TrimSpace(string(ro)))
+		size, _ := os.ReadFile(filepath.Join(root, n, "size"))
+		ro, _ := os.ReadFile(filepath.Join(root, n, "ro"))
+		fmt.Fprintf(&b, "%-16s %-20s %-10s %s\n", n, strings.TrimSpace(string(size)), strings.TrimSpace(string(ro)), status[n])
 	}
 	return b.String(), nil
 }
@@ -218,6 +221,10 @@ func disks() (string, error) {
 func resources() (string, error) { return resourceStatus() }
 
 func formatDatastore(name string, c config.Config) (string, error) {
+	return initializeDatastore(name, c, false)
+}
+
+func initializeDatastore(name string, c config.Config, erase bool) (string, error) {
 	if name != "data0" {
 		return "", fmt.Errorf("only datastore data0 is supported")
 	}
@@ -264,6 +271,10 @@ func formatDatastore(name string, c config.Config) (string, error) {
 		if _, err = os.Stat("/sys/class/block/" + n + "/partition"); !os.IsNotExist(err) {
 			return "", fmt.Errorf("partitions cannot be initialized")
 		}
+		physical, err := filepath.EvalSymlinks("/sys/class/block/" + n)
+		if err != nil || strings.Contains(filepath.ToSlash(physical), "/usb") {
+			return "", fmt.Errorf("USB media cannot be used for data0")
+		}
 		descendants, err := filepath.Glob("/sys/class/block/" + n + "*")
 		if err != nil {
 			return "", err
@@ -283,7 +294,11 @@ func formatDatastore(name string, c config.Config) (string, error) {
 		// No -f: mkfs refuses existing filesystems and partition tables.
 		members = append(members, n)
 	}
-	err = storageRequest(2, d.Preset, members)
+	operation := uint32(2)
+	if erase {
+		operation = 3
+	}
+	err = storageRequest(operation, d.Preset, members)
 	if err != nil {
 		return "", err
 	}

@@ -6,10 +6,11 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-func TestSetupExcludesBootAndPartitionedDisks(t *testing.T) {
+func TestSetupOffersPartitionedNonUSBDiskWithExplicitErase(t *testing.T) {
 	root := t.TempDir()
 	for _, name := range []string{"sda", "vda", "nvme0n1", "sdb"} {
 		path := filepath.Join(root, name)
@@ -29,23 +30,54 @@ func TestSetupExcludesBootAndPartitionedDisks(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	usb := filepath.Join(t.TempDir(), "usb", "sdc")
+	if err := os.MkdirAll(filepath.Join(usb, "holders"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(usb, "ro"), []byte("0\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(usb, filepath.Join(root, "sdc")); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(root, "sdb", "ro"), []byte("1\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	eligible := setupDisks(root)
-	if len(eligible) != 1 || eligible[0] != "vda" {
+	if len(eligible) != 3 || eligible[0] != "nvme0n1" || eligible[1] != "sda" || eligible[2] != "vda" {
 		t.Fatal(eligible)
+	}
+	status := setupDiskStatus(root)
+	if status["sda"] != "requires erase (partitions: sda1)" || status["sdb"] != "read-only" || status["sdc"] != "USB media (not available for data0)" {
+		t.Fatal(status)
+	}
+	inventory, err := diskInventory(root)
+	if err != nil || !strings.Contains(inventory, "sda1") || !strings.Contains(inventory, "USB media") {
+		t.Fatal(inventory, err)
 	}
 	c := config.Default()
 	s := newSetup(c)
 	s.stage = "disk"
 	s.disks = func() []string { return setupDisks(root) }
+	s.diskStatus = func() map[string]string { return setupDiskStatus(root) }
 	session := &cli.Session{Running: c, Candidate: c.Clone()}
-	if r := s.answer("sda", session); r.Error == "" || s.stage != "disk" {
+	if r := s.answer("sdb", session); r.Error == "" || s.stage != "disk" {
 		t.Fatal(r)
 	}
-	if r := s.answer("vda", session); r.Error != "" || s.stage != "erase" {
+	if r := s.answer("sda,sda", session); r.Error == "" || s.stage != "disk" {
 		t.Fatal(r)
+	}
+	if r := s.answer("sda,vda", session); r.Error != "" || s.stage != "profile" {
+		t.Fatal(r)
+	}
+	if r := s.answer("raid1", session); r.Error != "" || s.stage != "erase" {
+		t.Fatal(r)
+	}
+	if r := s.answer("ERASE sda", session); r.Error == "" || s.stage != "erase" {
+		t.Fatal(r)
+	}
+	if s.prompt().Prompt != "Type ERASE sda,vda to destroy selected disk contents and initialize data0: " {
+		t.Fatal(s.prompt())
 	}
 }
 

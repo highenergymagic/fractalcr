@@ -19,6 +19,7 @@ try:
     check(struct.pack('<IIIII',0x46535431,1,2,0,0)+bytes(16*64))
     check(struct.pack('<IIIII',0x46535431,1,2,1,1)+b'sda'+bytes(16*64-3))
     check(struct.pack('<IIIII',0x46535431,1,2,0,1)+b'../sda'+bytes(16*64-6))
+    check(struct.pack('<IIIII',0x46535431,1,3,0,1)+b'../sda'+bytes(16*64-6))
     check(struct.pack('<IIIII',0x46535431,1,2,0,1)+b'x'*(16*64))
     check(bytes(2048))
     print('STORAGE_PROTOCOL_INVALID_REQUESTS_REJECTED')

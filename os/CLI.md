@@ -30,9 +30,12 @@ before applying and saving. `abort` leaves the dialog; disk initialization,
 when explicitly requested, is a separate irreversible operation.
 
 Prepared single-disk media already has an empty Btrfs datastore. With separate
-blank data storage, setup lists disks and requires `INITIALIZE` for the selected
-whole disk. Existing filesystems, partition tables, mounted disks and disks in
-use are refused. Setup never silently erases an existing installation.
+data storage, setup lists writable non-USB whole disks, including disks with
+existing partitions. Select one or more disks, then choose `single` (no
+redundancy) or `raid1` (two or more mirrored disks). Setup names every selected
+disk and requires an exact `ERASE disk1,disk2` confirmation before destroying
+its partitions and filesystems. Mounted disks, disks in use, and boot media
+remain unavailable. Back up any data you need before confirming the erase.
 
 ```
 ctr# configure terminal

@@ -7,69 +7,111 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
 
 type setupDialog struct {
-	stage           string
-	base            string
-	candidate       config.Config
-	nic, user, disk string
-	ports           func() []platformPort
-	disks           func() []string
+	stage              string
+	base               string
+	candidate          config.Config
+	nic, user, profile string
+	selected           []string
+	ports              func() []platformPort
+	disks              func() []string
+	diskStatus         func() map[string]string
 }
 
 func newSetup(c config.Config) *setupDialog {
-	return &setupDialog{stage: "begin", candidate: c.Clone(), base: string(c.JSON()), ports: platformPorts, disks: func() []string { return setupDisks("/sys/class/block") }}
+	return &setupDialog{stage: "begin", candidate: c.Clone(), base: string(c.JSON()), ports: platformPorts,
+		disks:      func() []string { return setupDisks("/sys/class/block") },
+		diskStatus: func() map[string]string { return setupDiskStatus("/sys/class/block") }}
 }
 
-// Setup offers only writable, unused whole disks without partitions. This
-// excludes bootflash's parent disk, even when its filesystem is not mounted.
-func setupDisks(root string) []string {
+// Setup excludes USB media and disks in use. Partitioned non-USB disks may be
+// selected only for an explicitly confirmed erase; the storage service checks
+// bootflash identity and mounts again immediately before destructive work.
+func setupDiskStatus(root string) map[string]string {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil
 	}
-	var result []string
+	result := make(map[string]string)
 	for _, entry := range entries {
 		name := entry.Name()
 		if !config.Disk.MatchString(name) {
 			continue
 		}
 		path := filepath.Join(root, name)
+		physical, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			result[name] = "cannot identify device"
+			continue
+		}
+		if strings.Contains(filepath.ToSlash(physical), "/usb") {
+			result[name] = "USB media (not available for data0)"
+			continue
+		}
 		ro, err := os.ReadFile(filepath.Join(path, "ro"))
-		if err != nil || strings.TrimSpace(string(ro)) != "0" {
+		if err != nil {
+			result[name] = "cannot inspect read-only state"
+			continue
+		}
+		if strings.TrimSpace(string(ro)) != "0" {
+			result[name] = "read-only"
 			continue
 		}
 		holders, err := os.ReadDir(filepath.Join(path, "holders"))
-		if err != nil || len(holders) != 0 {
+		if err != nil {
+			result[name] = "cannot inspect holders"
+			continue
+		}
+		if len(holders) != 0 {
+			result[name] = "in use by another block device"
 			continue
 		}
 		children, err := os.ReadDir(path)
 		if err != nil {
+			result[name] = "cannot inspect partitions"
 			continue
 		}
-		partitioned := false
+		var partitions []string
 		for _, child := range children {
 			if _, err := os.Stat(filepath.Join(path, child.Name(), "partition")); err == nil {
-				partitioned = true
-				break
+				partitions = append(partitions, child.Name())
 			}
 		}
 		if _, err := os.Stat(filepath.Join(path, "partition")); !os.IsNotExist(err) {
+			result[name] = "not a whole disk"
 			continue
 		}
-		if !partitioned {
-			result = append(result, name)
+		if len(partitions) != 0 {
+			result[name] = "requires erase (partitions: " + strings.Join(partitions, ", ") + ")"
+		} else {
+			result[name] = "candidate"
 		}
 	}
 	return result
 }
+
+func setupDisks(root string) []string {
+	status := setupDiskStatus(root)
+	var result []string
+	for name, reason := range status {
+		if reason == "candidate" || strings.HasPrefix(reason, "requires erase") {
+			result = append(result, name)
+		}
+	}
+	sort.Strings(result)
+	return result
+}
 func (s *setupDialog) prompt() reply {
 	prompts := map[string]string{
-		"begin": "Enter initial configuration dialog? [yes/no]: ",
-		"disk":  "Data disk (or 'abort'): ", "erase": "Type INITIALIZE to format the selected unused disk: ",
+		"begin":    "Enter initial configuration dialog? [yes/no]: ",
+		"disk":     "Data disk(s), comma-separated (or 'abort'): ",
+		"profile":  "Datastore layout [single/raid1]: ",
+		"erase":    "Type ERASE " + strings.Join(s.selected, ",") + " to destroy selected disk contents and initialize data0: ",
 		"hostname": "Host name [ctr]: ", "interface": "Management interface: ",
 		"address": "IP address/prefix or dhcp [dhcp]: ", "gateway": "Default gateway [none]: ", "dns": "DNS server [none]: ",
 		"ntp": "NTP server (address or hostname; blank disables): ", "user": "Administrator username [admin]: ",
@@ -95,32 +137,61 @@ func (s *setupDialog) answer(input string, session *cli.Session) reply {
 		if checkDatastore() != nil {
 			s.stage = "disk"
 			r := s.prompt()
-			r.Output = "Available data disks (boot media and partitioned disks excluded):\n" + strings.Join(s.disks(), "\n")
+			available := s.disks()
+			r.Output = "Data disks available for initialization (USB media excluded):\n"
+			if len(available) == 0 {
+				r.Output += "  none\n"
+			}
+			status := s.diskStatus()
+			for _, disk := range available {
+				r.Output += "  " + disk + ": " + status[disk] + "\n"
+			}
+			r.Output += "Existing partitions on selected disks will be destroyed only after explicit confirmation.\n" +
+				"single has no redundancy; raid1 mirrors across two or more disks."
 			return r
 		}
 		s.stage = "hostname"
 	case "disk":
-		available := false
+		choices := make(map[string]bool)
 		for _, disk := range s.disks() {
-			if disk == value {
-				available = true
+			choices[disk] = true
+		}
+		selected := strings.Split(value, ",")
+		if len(selected) == 0 || len(selected) > 16 {
+			return fail(fmt.Errorf("select 1 to 16 listed disks"))
+		}
+		seen := make(map[string]bool)
+		for i, disk := range selected {
+			selected[i] = strings.TrimSpace(disk)
+			if !choices[selected[i]] || seen[selected[i]] {
+				return fail(fmt.Errorf("select distinct data disks from the list"))
 			}
+			seen[selected[i]] = true
 		}
-		if !available {
-			return fail(fmt.Errorf("select an unused whole disk from the list"))
+		s.selected = selected
+		s.stage = "profile"
+		r := s.prompt()
+		r.Output = "Selected for data0: " + strings.Join(selected, ", ") + ". All existing data on these disks will be destroyed after confirmation."
+		return r
+	case "profile":
+		if value != "single" && value != "raid1" {
+			return fail(fmt.Errorf("enter single or raid1"))
 		}
-		s.disk = value
+		if value == "raid1" && len(s.selected) < 2 {
+			return fail(fmt.Errorf("raid1 requires at least two disks"))
+		}
+		s.profile = value
 		s.stage = "erase"
 		r := s.prompt()
-		r.Output = "Selected /dev/" + value + " for data0. Existing filesystems and partition tables will be refused."
+		r.Output = "Layout: " + value + ". This operation destroys partitions and filesystems on " + strings.Join(s.selected, ", ") + "."
 		return r
 	case "erase":
-		if value != "INITIALIZE" {
-			return fail(fmt.Errorf("enter INITIALIZE or abort"))
+		if value != "ERASE "+strings.Join(s.selected, ",") {
+			return fail(fmt.Errorf("enter the exact ERASE confirmation or abort"))
 		}
 		c := config.Default()
-		c.Datastores["data0"] = config.Datastore{Filesystem: "btrfs", Preset: "single", Disks: []string{s.disk}}
-		if _, e := formatDatastore("data0", c); e != nil {
+		c.Datastores["data0"] = config.Datastore{Filesystem: "btrfs", Preset: s.profile, Disks: append([]string(nil), s.selected...)}
+		if _, e := initializeDatastore("data0", c, true); e != nil {
 			return fail(e)
 		}
 		deadline := time.Now().Add(15 * time.Second)

@@ -33,8 +33,10 @@ private key in an image.
    `usb-secureboot.img.gz` instead and enroll its accompanying firmware certificate
    in the target machine's firmware trust store.
 4. Connect the serial console at 115200 8N1, select UEFI USB boot, and power on.
-5. Complete the serial setup dialog. Select a separate data disk and type
-   `INITIALIZE` to format it, then configure accounts and management networking.
+5. Complete the serial setup dialog. Select one or more non-USB data disks,
+   choose `single` or `raid1`, and type the exact `ERASE` confirmation shown for
+   those disks. This destroys their existing partitions and filesystems. Then
+   configure accounts and management networking.
 
 The image contains a 1 GiB FAT32 EFI System Partition with the loader and signed
 system image. It contains no datastore. The USB provides `bootflash:`; `data0:`

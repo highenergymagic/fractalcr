@@ -237,6 +237,7 @@ jobs:
             release-stage/usb-test/required.log
             release-stage/usb-test/optional.log
             release-stage/usb-test/server-adapters.log
+            release-stage/usb-test/raid1.log
             release-stage/usb-test/result.json
             release-stage/management-test/result.json
             release-stage/management-test/ios/serial.log
