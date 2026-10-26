@@ -71,9 +71,11 @@ upstream binary build input and is not independently source-bootstrapped here.
 
 The CIP kernel additionally carries stable security backports recorded in
 `boot/kernel/security/kernel-security.json`, mirrored in the OE kernel recipe.
-Verify the derived patch bodies against the downloaded upstream `.xz` updates
-with `tools/security/verify-kernel-backports.py`. The base version remains visible;
-these are distribution backports, not an official newer CIP release. A kernel
+Verify the derived stable patch bodies against the downloaded upstream `.xz`
+updates with `tools/security/verify-kernel-backports.py`. The manifest also
+records the source and SHA-256 of the separately reviewed 6.12 backport for
+CVE-2026-31692. The base version remains visible; these are distribution
+backports, not an official newer CIP release. A kernel
 pin update must review or retire this patch series and update both copies. The
 build rejects a mismatched base or hash. ROMMON applies updates to a fresh copy
 of archive-verified source, preserving the original cache for validation.

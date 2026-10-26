@@ -90,9 +90,21 @@ The [October 2026 custom-code review](custom-code-security-audit.md) records a
 corrected console memory-safety defect, SSH teardown hardening, test results, and
 the remaining review scope. It does not close the independent-review requirement.
 
+For CVE-2026-31692, an isolated KVM test first reproduced unauthorized veth
+peer creation in the VM host network namespace on the unpatched 6.12.112-cip33
+image. The administrator-only debug service supplied test tools; the process
+performing the operation ran as UID 65534 with all host capabilities dropped
+and entered its own user and network namespaces. The signed
+`6.12.112-cip33-security2-fractalcr` image built with the
+[6.12 backport](../os/meta-fractal/recipes-kernel/linux/files/CVE-2026-31692-peer-netns.patch)
+returned `Operation not permitted` for the same operation, created no host
+interface, and still allowed a privileged control operation. This demonstrates
+the kernel boundary and its repair; it does not establish reachability from a
+default Docker container.
+
 | Area | Status |
 | --- | --- |
-| Kernel peer network namespaces | CVE-2026-31692 remains unresolved for the selected 6.12 implementation. Its peer-creation path differs from the upstream fix; runtime qualification is outstanding. |
+| Kernel peer network namespaces | The hash-pinned CVE-2026-31692 backport passed source, build, and KVM regression checks. Qualification of the distributed release images remains pending. |
 | Guest inventory | Stripped Kata guest metadata limits package-level advisory coverage. |
 | Imported binaries | Kata guest kernel/rootfs and BuildKit cross-CPU QEMU helpers are hash-pinned upstream bundles. Independent source reproduction is outstanding. |
 | Updated runtime dependencies | Source-built VMM and runtime updates require qualification in the resulting firmware image. |

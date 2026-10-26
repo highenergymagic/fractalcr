@@ -119,7 +119,7 @@ The following work remains:
 * Review of the optional debug image's mutable registry tag and stronger isolation
   of pre-authentication SSH connections from the configured VTY allocation.
 * Hardware firmware, kernel filesystem drivers, cryptographic libraries, and
-  third-party dependency auditing. In particular, the unresolved kernel and
+  third-party dependency auditing. Kernel backport qualification and the
   guest-security items in [Security review](security-review.md) remain open.
 
 ## Reproducing host checks

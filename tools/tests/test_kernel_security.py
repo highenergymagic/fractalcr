@@ -29,6 +29,11 @@ class KernelSecurityTests(unittest.TestCase):
             text = gzip.decompress(packed).decode()
             for excluded in entry['excluded_files']:
                 self.assertNotIn('diff --git a/'+excluded+' b/'+excluded+'\n', text)
+        for entry in manifest['backports']:
+            patch = (boot/entry['file']).read_bytes()
+            self.assertEqual(hashlib.sha256(patch).hexdigest(), entry['sha256'])
+            self.assertEqual(patch, (layer/entry['file']).read_bytes())
+            self.assertIn('https://', entry['reference_url'])
 
     @unittest.skipUnless(shutil.which('patch'), 'GNU patch required')
     def test_recreate_patched_tree_and_reject_corrupt_update(self):
@@ -55,3 +60,25 @@ class KernelSecurityTests(unittest.TestCase):
             patch.write_bytes(b'bad')
             with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
                 security.prepare(work, updates)
+
+    @unittest.skipUnless(shutil.which('patch'), 'GNU patch required')
+    def test_plain_backport_applies_after_stable_updates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            source = work/'sources/linux'
+            source.mkdir(parents=True)
+            (source/'file').write_bytes(b'old\n')
+            (source/'Makefile').write_text('VERSION = 6\nPATCHLEVEL = 12\nSUBLEVEL = 112\n')
+            (source/'localversion-cip').write_text('-cip33\n')
+            updates = work/'updates'
+            updates.mkdir()
+            stable = gzip.compress(b'--- a/file\n+++ b/file\n@@ -1 +1 @@\n-old\n+intermediate\n')
+            backport = b'--- a/file\n+++ b/file\n@@ -1 +1 @@\n-intermediate\n+fixed\n'
+            (updates/'stable.patch.gz').write_bytes(stable)
+            (updates/'backport.patch').write_bytes(backport)
+            (updates/'kernel-security.json').write_text(json.dumps({
+                'base': '6.12.112-cip33',
+                'patches': [{'file': 'stable.patch.gz', 'sha256': hashlib.sha256(stable).hexdigest()}],
+                'backports': [{'file': 'backport.patch', 'sha256': hashlib.sha256(backport).hexdigest()}],
+            }))
+            self.assertEqual((security.prepare(work, updates)/'file').read_bytes(), b'fixed\n')
