@@ -12,6 +12,8 @@ appliance prompt unless a host or ROMMON is specified.
 | `% Firmware trust is unavailable` | Expected with optional firmware policy and Secure Boot disabled. System signatures remain mandatory. |
 | Signature verification fails | Use matching ROMMON, system image and trust files from the same signing identity. |
 | Setup does not start | Startup configuration may already exist. Use blank prepared media for a new installation, or `setup` from a privileged physical console. |
+| Setup lists no data disks | The USB is boot media and cannot be selected for `data0:`. Check that a separate disk is attached, writable, and has no partitions. A hardware RAID controller must expose a configured virtual disk; its individual member disks may not appear to the operating system. |
+| `show version` reports no physical network interfaces | Check that the onboard or add-in NIC is enabled in firmware. Record the adapter model or PCI ID if a supported driver does not detect it. |
 | SSH cannot connect | Check management address/route, AAA, credentials and VTY transport policy. With Windows user networking, request `-SshPort 2222` and connect to localhost port 2222. |
 | Changes disappear after reboot | `end` does not save. Confirm `write memory` succeeds. Candidate changes also require `commit` first. |
 | Changed definition does not change a container | Definitions and runtime objects have separate lifecycles. Plan explicit recreation after preserving required data. |
@@ -23,6 +25,7 @@ appliance prompt unless a host or ROMMON is specified.
 show platform software service
 show logging configuration
 show logging networking
+show logging datastore
 show logging container-engine
 show storage datastore data0
 ```

@@ -12,6 +12,21 @@ containers run without virtualization extensions. Kata requires KVM; virtualized
 installations also require nested virtualization. Physical hardware support must
 be verified on the intended motherboard, storage controller, and network adapter.
 
+The built-in storage drivers include AHCI, NVMe, MegaRAID SAS (including PERC
+H310/H710-class controllers), LSI Fusion SAS, MPT3SAS, MPI3MR, Intel C600
+SAS, AACRAID, HPSA, SmartPQI, and virtio SCSI. Network drivers include Broadcom `tg3`, `bnx2`,
+`bnx2x`, and `bnxt`; Intel `e1000e`, `igb`, `igc`, `ixgbe`, and `i40e`; Mellanox
+`mlx4`/`mlx5`; and `ena`, `vmxnet3`, and virtio network devices. Kernel
+configuration and emulated-device tests check selected paths. Individual card
+models require physical-hardware qualification.
+
+Dell's [PowerEdge R420 technical guide](https://i.dell.com/sites/csdocuments/Shared-Content_data-Sheets_Documents/ja/jp/Dell-PowerEdge-R420Technical-Guide.pdf)
+lists a Broadcom 5720 onboard NIC, Broadcom 5719 and 57810S add-in options,
+and PERC H310/H710/H710P storage options. On PERC hardware RAID, configure a
+virtual disk in the controller firmware before running setup; the system
+selects the virtual disk, not its member drives. The boot USB is excluded
+from datastore selection.
+
 ## Known startup and reload issue
 
 Reloading during Docker initialization after a networking restart can leave a

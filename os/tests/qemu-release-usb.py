@@ -20,7 +20,11 @@ art,images,out=a.artifacts.resolve(),a.images.resolve(),a.output.resolve()
 out.mkdir(parents=True,exist_ok=False)
 result={'passed':False,'images':{},'checks':[]}
 try:
-    for policy in ('required','optional'):
+    # Exercise a server RAID virtual disk and paravirtual NIC as well as the
+    # virtio baseline. The USB must never become a datastore candidate.
+    for policy,adapter in (('required','virtio'),('optional','virtio'),
+                           ('optional','megasas-gen2')):
+        case = policy if adapter == 'virtio' else 'server-adapters'
         matches=list(images.glob('usb-secureboot.img.gz' if policy=='required' else 'usb.img.gz'))
         assert len(matches)==1,matches
         compressed=matches[0]
@@ -31,10 +35,10 @@ try:
                 if chunk.count(0)==len(chunk): target.seek(len(chunk),1)
                 else: target.write(chunk)
             target.truncate()
-        variables=out/(policy+'.vars.fd')
+        variables=out/(case+'.vars.fd')
         table=json.loads(subprocess.check_output(['sfdisk','--json',str(raw)]))['partitiontable']['partitions']
         assert len(table)==1 and table[0]['name']=='FRFLASH',table
-        data=out/(policy+'-data.img')
+        data=out/(case+'-data.img')
         with data.open('xb') as disk: disk.truncate(4*1024**3)
         shutil.copy(art/('OVMF_VARS-trusted.fd' if policy=='required' else 'OVMF_VARS-unenrolled.fd'),variables)
         args=['-machine','q35,smm=on','-accel',a.accel,'-cpu','host' if a.accel=='kvm' else 'core2duo','-m','4096','-smp','2',
@@ -43,10 +47,18 @@ try:
               '-drive',f'if=pflash,format=raw,unit=1,file={variables}',
               '-drive',f'if=none,id=system,format=raw,file={raw}',
               '-device','qemu-xhci','-device','usb-storage,drive=system,bootindex=0',
-              '-drive',f'if=virtio,format=raw,file={data}',
-              '-nic','user,model=virtio-net-pci','-display','none','-serial','stdio','-monitor','none','-no-reboot']
+              '-display','none','-serial','stdio','-monitor','none','-no-reboot']
+        if adapter == 'virtio':
+            args += ['-drive',f'if=virtio,format=raw,file={data}',
+                     '-nic','user,model=virtio-net-pci']
+        else:
+            args += ['-drive',f'if=none,id=data,format=raw,file={data}',
+                     '-device','megasas-gen2,id=scsi0',
+                     '-device','scsi-hd,drive=data,bus=scsi0.0',
+                     '-netdev','user,id=management',
+                     '-device','vmxnet3,netdev=management']
         child=None
-        with (out/(policy+'.log')).open('w') as log:
+        with (out/(case+'.log')).open('w') as log:
             try:
                 child=pexpect.spawn('qemu-system-x86_64',args,encoding='utf-8',timeout=600 if a.accel=='tcg' else 300)
                 child.logfile_read=log
@@ -54,10 +66,18 @@ try:
                 child.expect_exact('Press RETURN to get started!');child.sendline('')
                 child.expect_exact('Enter initial configuration dialog? [yes/no]: ')
                 child.sendline('yes');child.expect_exact("Data disk (or 'abort'): ")
-                assert 'vda' in child.before and '\nsda\r' not in child.before,child.before
-                child.sendline('sda');child.expect_exact("Data disk (or 'abort'): ")
+                if adapter == 'virtio':
+                    expected_disk = 'vda'
+                    assert re.search(r'(?m)^vda\r*$',child.before),child.before
+                    rejected_disk = 'sda'
+                else:
+                    candidates = re.findall(r'(?m)^(sd[a-z])\r*$',child.before)
+                    assert len(candidates) == 1,candidates
+                    expected_disk = candidates[0]
+                    rejected_disk = 'sdb' if expected_disk == 'sda' else 'sda'
+                child.sendline(rejected_disk);child.expect_exact("Data disk (or 'abort'): ")
                 assert 'select an unused whole disk from the list' in child.before,child.before
-                child.sendline('vda');child.expect_exact('Type INITIALIZE to format the selected unused disk: ')
+                child.sendline(expected_disk);child.expect_exact('Type INITIALIZE to format the selected unused disk: ')
                 child.sendline('INITIALIZE');child.expect_exact('Host name [ctr]: ')
                 child.sendline('ctr');child.expect_exact('Management interface: ')
                 child.sendline('eth0');child.expect_exact('IP address/prefix or dhcp [dhcp]: ')
@@ -78,7 +98,9 @@ try:
                 assert 'Datastore data0 is online' in storage,storage
                 version=command('show version')
                 assert 'Fractal Microsystems' in version and 'bootflash:system.bin' in version,version
-                result['checks'].append(f'{policy}: boot-only USB has one FRFLASH partition; setup rejects the USB and initializes data0 on a separate blank disk; administrator configuration is saved')
+                if adapter != 'virtio':
+                    assert '1 physical network interface' in version,version
+                result['checks'].append(f'{case}: boot-only USB has one FRFLASH partition; setup rejects the USB and initializes data0 on a separate {adapter} disk; management NIC and administrator configuration are available')
                 print('PASS '+result['checks'][-1],flush=True)
             finally:
                 if child is not None: child.terminate(force=True);child.close()
