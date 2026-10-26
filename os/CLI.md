@@ -88,7 +88,9 @@ Local accounts accept `user admin priv 15 password 0 TEXT` and
 passwords may contain 1..256 characters. Use `security passwords min-length 12`
 to enforce a minimum on newly configured passwords. Use `username NAME ?` or
 `username NAME privilege 15 ?` to see the available account settings.
-`show version` includes the source-build identifier of the running image.
+`show version` reports the running image, source-build identifier, platform
+identity, physical interface speed classes, and bootflash capacity. Use
+`show storage datastore data0` for datastore capacity and available space.
 
 `show running-config linenum` adds line numbers. Use
 `show running-config interface GigabitEthernet0` to display one port, or append

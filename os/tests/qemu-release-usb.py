@@ -116,8 +116,10 @@ try:
                 assert 'Datastore data0 is online' in storage,storage
                 version=command('show version')
                 assert 'Fractal Microsystems' in version and 'bootflash:system.bin' in version,version
+                assert re.search(r'\d+K bytes of flash memory at bootflash:\.',version),version
+                assert 'bytes of data0:' not in version,version
                 if adapter == 'megasas-gen2':
-                    assert '1 physical network interface' in version,version
+                    assert re.search(r'1 .*Ethernet interface',version),version
                 result['checks'].append(f'{case}: boot-only USB has one FRFLASH partition; setup rejects the USB and initializes data0 on separate {adapter} disk(s), erasing existing partition tables only after exact confirmation; management NIC and administrator configuration are available')
                 print('PASS '+result['checks'][-1],flush=True)
             finally:

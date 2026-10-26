@@ -57,6 +57,14 @@ func TestIOSHelpIsOneLevelAndWhitespaceSensitive(t *testing.T) {
 	if strings.Contains(root, "version") || strings.Contains(root, "hostname") || strings.Contains(root, "Use ?") {
 		t.Fatal(root)
 	}
+	for _, help := range []string{"Delete a file", "Create a directory", "Display a file", "Send IPv4 echo requests"} {
+		if !strings.Contains(root, help) {
+			t.Fatal(root)
+		}
+	}
+	if strings.Contains(root, "Configure delete") || strings.Contains(root, "Configure more") {
+		t.Fatal(root)
+	}
 	show := s.ContextHelp("show ")
 	if !strings.Contains(show, "version") || !strings.Contains(show, "platform") || strings.Contains(show, "software") || strings.Contains(show, "<cr>") {
 		t.Fatal(show)
