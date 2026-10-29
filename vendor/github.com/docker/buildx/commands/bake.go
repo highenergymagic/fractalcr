@@ -206,7 +206,7 @@ func runBake(ctx context.Context, dockerCli command.Cli, targets []string, in ba
 
 	makePrinter := func() error {
 		var err error
-		printer, err = progress.NewPrinter(ctx2, dockerCli.Err(), progressMode,
+		printer, err = progress.NewPrinter(ctx2, os.Stderr, progressMode,
 			progress.WithDesc(progressTextDesc, progressConsoleDesc),
 			progress.WithMetrics(mp, attributes),
 			progress.WithOnClose(func() {

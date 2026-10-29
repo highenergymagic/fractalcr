@@ -17,10 +17,12 @@
 package remote
 
 import (
+	"bufio"
+	"bytes"
 	"context"
- "fractalcr/pkg/gitapi"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -28,8 +30,10 @@ import (
 
 	"github.com/compose-spec/compose-go/v2/cli"
 	"github.com/compose-spec/compose-go/v2/loader"
+	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/cli/cli/command"
 	gitutil "github.com/moby/buildkit/frontend/dockerfile/dfgitutil"
+	"github.com/sirupsen/logrus"
 
 	"github.com/docker/compose/v5/pkg/api"
 )
@@ -166,13 +170,88 @@ func validateGitSubDir(base, subDir string) error {
 }
 
 func (g gitRemoteLoader) resolveGitRef(ctx context.Context, path string, ref *gitutil.GitRef) error {
- if commitSHA.MatchString(ref.Ref) {return nil}
- resolved,err:=gitapi.Resolve(ctx,ref.Remote,ref.Ref)
- if err==nil {ref.Ref=resolved}
- return err
+	if !commitSHA.MatchString(ref.Ref) {
+		cmd := exec.CommandContext(ctx, "git", "ls-remote", "--exit-code", ref.Remote, ref.Ref)
+		cmd.Env = g.gitCommandEnv()
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			if cmd.ProcessState.ExitCode() == 2 {
+				return fmt.Errorf("repository does not contain ref %s, output: %q: %w", path, string(out), err)
+			}
+			return fmt.Errorf("failed to access repository at %s:\n %s", ref.Remote, out)
+		}
+		if len(out) < 40 {
+			return fmt.Errorf("unexpected git command output: %q", string(out))
+		}
+		sha := string(out[:40])
+		if !commitSHA.MatchString(sha) {
+			return fmt.Errorf("invalid commit sha %q", sha)
+		}
+		ref.Ref = sha
+	}
+	return nil
 }
+
 func (g gitRemoteLoader) checkout(ctx context.Context, path string, ref *gitutil.GitRef) error {
- return gitapi.Checkout(ctx,path,ref.Remote,ref.Ref)
+	err := os.MkdirAll(path, 0o700)
+	if err != nil {
+		return err
+	}
+	err = exec.CommandContext(ctx, "git", "init", path).Run()
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.CommandContext(ctx, "git", "remote", "add", "origin", ref.Remote)
+	cmd.Dir = path
+	err = cmd.Run()
+	if err != nil {
+		return err
+	}
+
+	cmd = exec.CommandContext(ctx, "git", "fetch", "--depth=1", "origin", ref.Ref)
+	cmd.Env = g.gitCommandEnv()
+	cmd.Dir = path
+
+	err = g.run(cmd)
+	if err != nil {
+		return err
+	}
+
+	cmd = exec.CommandContext(ctx, "git", "checkout", ref.Ref)
+	cmd.Dir = path
+	err = cmd.Run()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (g gitRemoteLoader) run(cmd *exec.Cmd) error {
+	if logrus.IsLevelEnabled(logrus.DebugLevel) {
+		output, err := cmd.CombinedOutput()
+		scanner := bufio.NewScanner(bytes.NewBuffer(output))
+		for scanner.Scan() {
+			line := scanner.Text()
+			logrus.Debug(line)
+		}
+		return err
+	}
+	return cmd.Run()
+}
+
+func (g gitRemoteLoader) gitCommandEnv() []string {
+	env := types.NewMapping(os.Environ())
+	if env["GIT_TERMINAL_PROMPT"] == "" {
+		// Disable prompting for passwords by Git until user explicitly asks for it.
+		env["GIT_TERMINAL_PROMPT"] = "0"
+	}
+	if env["GIT_SSH"] == "" && env["GIT_SSH_COMMAND"] == "" {
+		// Disable any ssh connection pooling by Git and do not attempt to prompt the user.
+		env["GIT_SSH_COMMAND"] = "ssh -o ControlMaster=no -o BatchMode=yes"
+	}
+	v := env.Values()
+	return v
 }
 
 func findFile(names []string, pwd string) (string, error) {
