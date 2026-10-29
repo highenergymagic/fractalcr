@@ -28,29 +28,49 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
- "strconv"
- buildxcommands "github.com/docker/buildx/commands"
- cliflags "github.com/docker/cli/cli/flags"
 
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/containerd/console"
+	"github.com/containerd/errdefs"
+	"github.com/docker/cli/cli-plugins/manager"
 	"github.com/docker/cli/cli/command"
 	"github.com/docker/cli/cli/command/image/build"
 	"github.com/docker/cli/cli/streams"
 	"github.com/google/uuid"
 	"github.com/moby/buildkit/client"
 	gitutil "github.com/moby/buildkit/frontend/dockerfile/dfgitutil"
+	"github.com/moby/buildkit/util/progress/progressui"
+	"github.com/moby/moby/client/pkg/versions"
 	"github.com/sirupsen/logrus"
+	"github.com/spf13/cobra"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/docker/compose/v5/pkg/api"
 )
 
-func buildWithBake(dockerCli command.Cli) (bool,error) {
- if value:=os.Getenv("DOCKER_BUILDKIT");value!=""{return strconv.ParseBool(value)}
- return true,nil
+func buildWithBake(dockerCli command.Cli) (bool, error) {
+	enabled, err := dockerCli.BuildKitEnabled()
+	if err != nil {
+		return false, err
+	}
+	if !enabled {
+		return false, nil
+	}
+
+	_, err = manager.GetPlugin("buildx", dockerCli, &cobra.Command{})
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			logrus.Warnf("buildx Docker CLI plugin not found: falling back to the classic builder. " +
+				"BuildKit-only build features (multi-arch, secrets, ssh, additional contexts, ...) will not be available")
+			return false, nil
+		}
+		return false, err
+	}
+	return true, err
 }
 
 // We _could_ use bake.* types from github.com/docker/buildx but long term plan is to remove buildx as a dependency
@@ -110,6 +130,25 @@ type bakeBuild struct {
 }
 
 func (s *composeService) doBuildBake(ctx context.Context, project *types.Project, serviceToBeBuild types.Services, options api.BuildOptions) (map[string]string, error) {
+	eg := errgroup.Group{}
+	ch := make(chan *client.SolveStatus)
+	displayMode := progressui.DisplayMode(options.Progress)
+	if p, ok := os.LookupEnv("BUILDKIT_PROGRESS"); ok && displayMode == progressui.AutoMode {
+		displayMode = progressui.DisplayMode(p)
+	}
+	out := options.Out
+	if out == nil {
+		out = s.stdout()
+	}
+	display, err := progressui.NewDisplay(makeConsole(out), displayMode)
+	if err != nil {
+		return nil, err
+	}
+	eg.Go(func() error {
+		_, err := display.UpdateFrom(ctx, ch)
+		return err
+	})
+
 	bake := s.prepareBakeBuild(project, serviceToBeBuild, options)
 
 	cfgJSON, err := json.MarshalIndent(bake.cfg, "", "  ")
@@ -130,29 +169,56 @@ func (s *composeService) doBuildBake(ctx context.Context, project *types.Project
 		_ = os.Remove(metadataFile)
 	}()
 
- if s.dryRun {return s.dryRunBake(bake.cfg),nil}
- // The appliance links Bake directly. Its API client and streams stay in
- // this process; no plugin discovery, child process or parsed stderr exists.
- clientCLI,err:=command.NewDockerCli(command.WithAPIClient(s.dockerCli.Client()),
-  command.WithInputStream(io.NopCloser(bytes.NewReader(cfgJSON))),
-  command.WithOutputStream(s.stdout()),command.WithErrorStream(s.stderr()))
- if err!=nil{return nil,err}
- clientOptions:=cliflags.NewClientOptions()
- clientOptions.Hosts=[]string{s.dockerCli.DockerEndpoint().Host}
- if err=clientCLI.Initialize(clientOptions);err!=nil{return nil,err}
- previous:=map[string]*string{}
- defer func(){for key,value:=range previous{if value==nil{os.Unsetenv(key)}else{os.Setenv(key,*value)}}}()
- for _,entry:=range bake.secretsEnv{
-  key,value,ok:=strings.Cut(entry,"=");if !ok{continue}
-  if _,seen:=previous[key];!seen{if old,exists:=os.LookupEnv(key);exists{saved:=old;previous[key]=&saved}else{previous[key]=nil}}
-  if err=os.Setenv(key,value);err!=nil{return nil,err}
- }
- root:=buildxcommands.NewRootCmd("buildx",false,clientCLI)
- root.PersistentPreRunE=nil
- args:=bakeArgs(bake,metadataFile,options)
- if !options.Quiet {mode:=options.Progress;if mode==""{mode="auto"};args=append(args,"--progress="+mode)}
- root.SetArgs(args)
- if err=root.ExecuteContext(ctx);err!=nil{return nil,err}
+	buildx, err := s.getBuildxPlugin()
+	if err != nil {
+		return nil, err
+	}
+	args := bakeArgs(bake, metadataFile, options)
+	logrus.Debugf("Executing bake with args: %v", args)
+
+	if s.dryRun {
+		return s.dryRunBake(bake.cfg), nil
+	}
+	cmd := exec.CommandContext(ctx, buildx.Path, args...)
+
+	err = s.prepareShellOut(ctx, types.NewMapping(os.Environ()), cmd)
+	if err != nil {
+		return nil, err
+	}
+	endpoint, cleanup, err := s.propagateDockerEndpoint()
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	cmd.Env = append(cmd.Env, endpoint...)
+	cmd.Env = append(cmd.Env, bake.secretsEnv...)
+
+	cmd.Stdout = s.stdout()
+	cmd.Stdin = bytes.NewBuffer(cfgJSON)
+	pipe, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, err
+	}
+
+	err = cmd.Start()
+	if err != nil {
+		return nil, err
+	}
+	eg.Go(cmd.Wait)
+
+	errMessage, err := forwardBakeStatus(pipe, ch)
+	if err != nil {
+		return nil, err
+	}
+	close(ch) // stop build progress UI
+
+	err = eg.Wait()
+	if err != nil {
+		if len(errMessage) > 0 {
+			return nil, errors.New(strings.Join(errMessage, "\n"))
+		}
+		return nil, fmt.Errorf("failed to execute bake: %w", err)
+	}
 
 	return s.collectBakeResults(ctx, metadataFile, serviceToBeBuild, bake)
 }
@@ -406,6 +472,27 @@ func (s *composeService) collectBakeResults(ctx context.Context, metadataFile st
 	}
 
 	return results, nil
+}
+
+func (s *composeService) getBuildxPlugin() (*manager.Plugin, error) {
+	buildx, err := manager.GetPlugin("buildx", s.dockerCli, &cobra.Command{})
+	if err != nil {
+		return nil, err
+	}
+
+	if buildx.Err != nil {
+		return nil, buildx.Err
+	}
+
+	if buildx.Version == "" {
+		return nil, errors.New("failed to get version of buildx")
+	}
+
+	if versions.LessThan(buildx.Version[1:], buildxMinVersion) {
+		return nil, fmt.Errorf("compose build requires buildx %s or later", buildxMinVersion)
+	}
+
+	return buildx, nil
 }
 
 // makeConsole adapts the provided writer for buildkit's NewDisplay, which
