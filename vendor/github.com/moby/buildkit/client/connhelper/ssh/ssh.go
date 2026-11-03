@@ -6,7 +6,7 @@ import (
 	"net"
 	"net/url"
 
-	"fractalcr/pkg/sshstream"
+	"github.com/docker/cli/cli/connhelper/commandconn"
 	"github.com/moby/buildkit/client/connhelper"
 	"github.com/pkg/errors"
 )
@@ -23,9 +23,21 @@ func Helper(u *url.URL) (*connhelper.ConnectionHelper, error) {
 	}
 	return &connhelper.ConnectionHelper{
 		ContextDialer: func(ctx context.Context, addr string) (net.Conn, error) {
-            socket:=sp.Socket
-            if socket=="" || socket=="/"{socket="/run/buildkit/buildkitd.sock"}
-            return sshstream.Dial(ctx,sshstream.Endpoint{Host:sp.Host,Port:sp.Port,User:sp.User,Socket:socket})
+			args := []string{}
+			if sp.User != "" {
+				args = append(args, "-l", sp.User)
+			}
+			if sp.Port != "" {
+				args = append(args, "-p", sp.Port)
+			}
+			args = append(args, "--", sp.Host)
+			args = append(args, "buildctl")
+			if socket := sp.Socket; socket != "" {
+				args = append(args, "--addr", "unix://"+socket)
+			}
+			args = append(args, "dial-stdio")
+			// using background context because context remains active for the duration of the process, after dial has completed
+			return commandconn.New(context.Background(), "ssh", args...)
 		},
 	}, nil
 }
