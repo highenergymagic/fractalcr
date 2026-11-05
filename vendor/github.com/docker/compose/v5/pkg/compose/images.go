@@ -19,7 +19,6 @@ package compose
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +35,8 @@ import (
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/sirupsen/logrus"
 
+	"github.com/docker/compose/v5/internal/concurrency"
+	"github.com/docker/compose/v5/internal/naming"
 	"github.com/docker/compose/v5/pkg/api"
 )
 
@@ -43,19 +44,14 @@ func (s *composeService) Images(ctx context.Context, projectName string, options
 	projectName = strings.ToLower(projectName)
 	allContainers, err := s.apiClient().ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
-		Filters: projectFilter(projectName),
+		Filters: naming.ProjectFilter(projectName),
 	})
 	if err != nil {
 		return nil, err
 	}
 	var containers []container.Summary
 	if len(options.Services) > 0 {
-		// filter service containers
-		for _, ctr := range allContainers.Items {
-			if slices.Contains(options.Services, ctr.Labels[api.ServiceLabel]) {
-				containers = append(containers, ctr)
-			}
-		}
+		containers = naming.InServices(allContainers.Items, options.Services)
 	} else {
 		containers = allContainers.Items
 	}
@@ -70,7 +66,7 @@ func (s *composeService) Images(ctx context.Context, projectName string, options
 
 	summary := map[string]api.ImageSummary{}
 	var mux sync.Mutex
-	eg, ctx := newLimitedErrgroup(ctx, s.maxConcurrency)
+	eg, ctx := concurrency.NewErrgroup(ctx, s.maxConcurrency)
 	for _, ctr := range containers {
 		eg.Go(func() error {
 			img, err := s.containerImageSummary(ctx, ctr, withPlatform)
@@ -79,7 +75,7 @@ func (s *composeService) Images(ctx context.Context, projectName string, options
 			}
 			mux.Lock()
 			defer mux.Unlock()
-			summary[getCanonicalContainerName(ctr)] = img
+			summary[naming.CanonicalContainerName(ctr)] = img
 			return nil
 		})
 	}
@@ -163,7 +159,7 @@ func (s *composeService) inspectLocalImages(ctx context.Context, repoTags []stri
 	}
 	inspections := map[string]client.ImageInspectResult{}
 	l := sync.Mutex{}
-	eg, ctx := newLimitedErrgroup(ctx, s.maxConcurrency)
+	eg, ctx := concurrency.NewErrgroup(ctx, s.maxConcurrency)
 	for _, repoTag := range repoTags {
 		eg.Go(func() error {
 			inspect, err := s.apiClient().ImageInspect(ctx, repoTag, opts...)

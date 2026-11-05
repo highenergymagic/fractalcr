@@ -17,6 +17,7 @@
 package compose
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"sync"
@@ -30,6 +31,8 @@ import (
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 
+	"github.com/docker/compose/v5/internal/concurrency"
+	"github.com/docker/compose/v5/internal/naming"
 	"github.com/docker/compose/v5/pkg/api"
 	"github.com/docker/compose/v5/pkg/utils"
 )
@@ -55,9 +58,9 @@ func (s *composeService) Logs(
 	var limiter *semaphore.Weighted
 	if options.Follow {
 		eg, ctx = errgroup.WithContext(ctx)
-		limiter = newOptionalLimiter(s.maxConcurrency)
+		limiter = concurrency.NewLimiter(s.maxConcurrency)
 	} else {
-		eg, ctx = newLimitedErrgroup(ctx, s.maxConcurrency)
+		eg, ctx = concurrency.NewErrgroup(ctx, s.maxConcurrency)
 	}
 	for _, ctr := range containers {
 		eg.Go(func() error {
@@ -111,13 +114,13 @@ func (s *composeService) selectLogsContainers(ctx context.Context, projectName s
 // releasing the slot on error since no caller reaches doLogContainer (which
 // owns the slot from here on) in that case.
 func (s *composeService) inspectWithSlot(ctx context.Context, limiter *semaphore.Weighted, id string) (container.InspectResponse, error) {
-	if err := acquireSlot(ctx, limiter); err != nil {
+	if err := concurrency.Acquire(ctx, limiter); err != nil {
 		return container.InspectResponse{}, err
 	}
-	defer panicSafeReleaseSlot(limiter)
+	defer concurrency.PanicSafeRelease(limiter)
 	res, err := s.apiClient().ContainerInspect(ctx, id, client.ContainerInspectOptions{})
 	if err != nil {
-		releaseSlot(limiter)
+		concurrency.Release(limiter)
 		return container.InspectResponse{}, err
 	}
 	return res.Container, nil
@@ -130,9 +133,9 @@ func (s *composeService) logContainer(ctx context.Context, limiter *semaphore.We
 	if err != nil {
 		return err
 	}
-	err = s.doLogContainer(ctx, limiter, consumer, getContainerNameWithoutProject(ctr), res, options)
+	err = s.doLogContainer(ctx, limiter, consumer, naming.ContainerNameWithoutProject(ctr), res, options, nil)
 	if errdefs.IsNotImplemented(err) {
-		logrus.Warnf("Can't retrieve logs for %q: %s", getCanonicalContainerName(ctr), err.Error())
+		logrus.Warnf("Can't retrieve logs for %q: %s", naming.CanonicalContainerName(ctr), err.Error())
 		return nil
 	}
 	return err
@@ -149,6 +152,7 @@ func (s *composeService) followStartedContainersLogs(
 	options api.LogOptions,
 ) api.ContainerEventListener {
 	runEnds := newRunEndTracker()
+	cursors := newLogCursors()
 	return func(event api.ContainerEvent) {
 		runEnds.Observe(event)
 		if event.Type != api.ContainerEventStarted {
@@ -159,7 +163,13 @@ func (s *composeService) followStartedContainersLogs(
 		// it inside the goroutine below could (fast run), and the window
 		// would drop the whole run.
 		since := runEnds.Since(event.ID)
+		// Queued here, in event order, for the same reason.
+		turn := cursors.enter(event.ID)
 		eg.Go(func() error {
+			defer turn.end()
+			if err := turn.wait(ctx); err != nil {
+				return err
+			}
 			res, err := s.inspectWithSlot(ctx, limiter, event.ID)
 			if err != nil {
 				return err
@@ -174,7 +184,7 @@ func (s *composeService) followStartedContainersLogs(
 				Until:      options.Until,
 				Tail:       options.Tail,
 				Timestamps: options.Timestamps,
-			})
+			}, turn.cursor)
 			if errdefs.IsNotImplemented(err) {
 				// ignore
 				return nil
@@ -254,16 +264,36 @@ func logsSinceLastRun(ctr container.InspectResponse) string {
 
 // doLogContainer opens the container's log stream and copies it to consumer
 // until it ends. The caller must have already acquired limiter's slot (see
-// acquireSlot); it is released here right after ContainerLogs returns, so a
-// long-lived --follow stream never keeps blocking new connections or the
+// concurrency.Acquire); it is released here right after ContainerLogs returns,
+// so a long-lived --follow stream never keeps blocking new connections or the
 // monitor.
-func (s *composeService) doLogContainer(ctx context.Context, limiter *semaphore.Weighted, consumer api.LogConsumer, name string, ctr container.InspectResponse, options api.LogOptions) error {
-	// Scoped to a closure so panicSafeReleaseSlot's defer only guards the
-	// acquire-to-release window: releaseSlot below is unconditional once
+//
+// cur, when not nil, is the container's logCursor: the stream then starts after
+// the last line it relayed, and records the lines it relays. It is ignored for
+// TTY containers, whose unframed stream cannot carry the timestamps it needs.
+func (s *composeService) doLogContainer(
+	ctx context.Context,
+	limiter *semaphore.Weighted,
+	consumer api.LogConsumer,
+	name string,
+	ctr container.InspectResponse,
+	options api.LogOptions,
+	cur *logCursor,
+) error {
+	if cur != nil && ctr.Config.Tty {
+		cur = nil
+	}
+	keepTimestamps := options.Timestamps
+	if cur != nil {
+		options.Since = cur.since(options.Since)
+		options.Timestamps = true
+	}
+	// Scoped to a closure so concurrency.PanicSafeRelease's defer only guards the
+	// acquire-to-release window: concurrency.Release below is unconditional once
 	// ContainerLogs returns, so a panic during the copy loop that follows
 	// must not re-trigger it and release the same slot twice.
 	r, err := func() (io.ReadCloser, error) {
-		defer panicSafeReleaseSlot(limiter)
+		defer concurrency.PanicSafeRelease(limiter)
 		r, err := s.apiClient().ContainerLogs(ctx, ctr.ID, client.ContainerLogsOptions{
 			ShowStdout: true,
 			ShowStderr: true,
@@ -273,7 +303,7 @@ func (s *composeService) doLogContainer(ctx context.Context, limiter *semaphore.
 			Tail:       options.Tail,
 			Timestamps: options.Timestamps,
 		})
-		releaseSlot(limiter)
+		concurrency.Release(limiter)
 		return r, err
 	}()
 	if err != nil {
@@ -284,10 +314,124 @@ func (s *composeService) doLogContainer(ctx context.Context, limiter *semaphore.
 	w := utils.GetWriter(func(line string) {
 		consumer.Log(name, line)
 	})
-	if ctr.Config.Tty {
+	switch {
+	case ctr.Config.Tty:
 		_, err = io.Copy(w, r)
-	} else {
+	case cur != nil:
+		cw := &cursorWriter{cur: cur, keep: keepTimestamps, next: w}
+		_, err = stdcopy.StdCopy(cw, cw, r)
+	default:
 		_, err = stdcopy.StdCopy(w, w, r)
 	}
 	return err
+}
+
+// logCursors hands the successive log streams of a container over to each
+// other, so that a restarted container's lines are relayed exactly once.
+//
+// The log journal is shared by all the runs of a container, and a followed
+// stream has no upper bound: it ends with the run in progress when it opened.
+// Opened late, after the container restarted again (the restart delay is
+// 100ms, a loaded daemon or monitor easily takes longer), it returns the next
+// run's lines as well, which that run's own stream then returns a second time.
+// So the streams of a container run one at a time, in start-event order, each
+// starting right after the last line the previous ones relayed. Line
+// timestamps are the daemon's own, no clock of ours is involved.
+type logCursors struct {
+	mu sync.Mutex
+	by map[string]*logCursor
+}
+
+// logCursor is the position of a container's log relay.
+type logCursor struct {
+	tail chan struct{} // closed when the latest queued turn ends
+	last time.Time     // newest timestamp relayed; only read or written by the turn holder
+}
+
+// logTurn is one stream's place in line for its container's relay.
+type logTurn struct {
+	cursor *logCursor
+	prev   <-chan struct{}
+	done   chan struct{}
+	once   sync.Once
+}
+
+func newLogCursors() *logCursors {
+	return &logCursors{by: map[string]*logCursor{}}
+}
+
+// enter queues a stream for container id. Turns are granted in the order
+// enter is called: call it synchronously from the (ordered) event listener,
+// not from the goroutine that will stream.
+func (c *logCursors) enter(id string) *logTurn {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cur, ok := c.by[id]
+	if !ok {
+		first := make(chan struct{})
+		close(first)
+		cur = &logCursor{tail: first}
+		c.by[id] = cur
+	}
+	t := &logTurn{cursor: cur, prev: cur.tail, done: make(chan struct{})}
+	cur.tail = t.done
+	return t
+}
+
+// wait blocks until every earlier stream of the container has ended.
+func (t *logTurn) wait(ctx context.Context) error {
+	select {
+	case <-t.prev:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// end hands over to the next stream. Every turn must end, including those
+// that never got to stream; it is safe to call more than once.
+func (t *logTurn) end() {
+	t.once.Do(func() { close(t.done) })
+}
+
+// since returns where the next stream must start: right after the last line
+// already relayed, unless the anchor (RFC3339Nano, "" for none) is later, as it
+// is for a stream opened in time: it then starts as it always did.
+func (cur *logCursor) since(anchor string) string {
+	if cur.last.IsZero() {
+		return anchor
+	}
+	if t, err := time.Parse(time.RFC3339Nano, anchor); err == nil && t.After(cur.last) {
+		return anchor
+	}
+	return cur.last.Add(time.Nanosecond).UTC().Format(time.RFC3339Nano)
+}
+
+// cursorWriter records the timestamp of each log entry before relaying it. The
+// stream was opened with timestamps, which the daemon puts in front of every
+// entry (so also in the middle of a line longer than 16KiB, which it
+// splits); each Write of the demultiplexed stream is one entry. They are
+// removed unless keep, i.e. unless the caller asked for them.
+type cursorWriter struct {
+	cur  *logCursor
+	keep bool
+	next io.Writer
+}
+
+func (w *cursorWriter) Write(p []byte) (int, error) {
+	out := p
+	if ts, rest, ok := bytes.Cut(p, []byte{' '}); ok {
+		if t, err := time.Parse(time.RFC3339Nano, string(ts)); err == nil {
+			if t.After(w.cur.last) {
+				w.cur.last = t
+			}
+			if !w.keep {
+				out = rest
+			}
+		}
+	}
+	if _, err := w.next.Write(out); err != nil {
+		return 0, err
+	}
+	return len(p), nil
 }

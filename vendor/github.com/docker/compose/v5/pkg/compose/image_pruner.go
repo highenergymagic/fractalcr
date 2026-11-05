@@ -20,7 +20,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"sync"
 
 	"github.com/compose-spec/compose-go/v2/types"
@@ -31,22 +32,25 @@ import (
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/semaphore"
 
+	"github.com/docker/compose/v5/internal/concurrency"
+	"github.com/docker/compose/v5/internal/naming"
 	"github.com/docker/compose/v5/pkg/api"
 )
 
-// ImagePruneMode controls how aggressively images associated with the project
-// are removed from the engine.
-type ImagePruneMode string
+// ImagePruneMode aliases the pkg/api definition: the legal values of
+// DownOptions.Images belong to the SDK surface, kept aliased here for the
+// existing consumers of this package.
+type ImagePruneMode = api.ImagePruneMode
 
 const (
 	// ImagePruneNone indicates that no project images should be removed.
-	ImagePruneNone ImagePruneMode = ""
+	ImagePruneNone = api.ImagePruneNone
 	// ImagePruneLocal indicates that only images built locally by Compose
 	// should be removed.
-	ImagePruneLocal ImagePruneMode = "local"
+	ImagePruneLocal = api.ImagePruneLocal
 	// ImagePruneAll indicates that all project-associated images, including
 	// remote images should be removed.
-	ImagePruneAll ImagePruneMode = "all"
+	ImagePruneAll = api.ImagePruneAll
 )
 
 // ImagePruneOptions controls the behavior of image pruning.
@@ -98,7 +102,7 @@ func imageBelongsToKnownService(project *types.Project, removeOrphans bool, img 
 func (p *ImagePruner) ImagesToPrune(ctx context.Context, opts ImagePruneOptions) ([]string, error) {
 	if opts.Mode == ImagePruneNone {
 		return nil, nil
-	} else if opts.Mode != ImagePruneLocal && opts.Mode != ImagePruneAll {
+	} else if !opts.Mode.Valid() {
 		return nil, fmt.Errorf("unsupported image prune mode: %s", opts.Mode)
 	}
 	var images []string
@@ -161,7 +165,7 @@ func (p *ImagePruner) namedImages(ctx context.Context) ([]string, error) {
 // created from the project + service name.
 func (p *ImagePruner) labeledLocalImages(ctx context.Context) ([]image.Summary, error) {
 	res, err := p.client.ImageList(ctx, client.ImageListOptions{
-		Filters: projectFilter(p.project.Name).Add("dangling", "false"),
+		Filters: naming.ProjectFilter(p.project.Name).Add("dangling", "false"),
 	})
 	if err != nil {
 		return nil, err
@@ -187,7 +191,7 @@ func (s *composeService) removeImages(ctx context.Context, images []image.Summar
 	// as in removeTaggedImagesOp, a single image failure must not cancel the
 	// shared errgroup ctx, so fn always returns nil and collects into the
 	// buckets below instead.
-	_ = forEachWithLimiter(ctx, limiter, images, func(ctx context.Context, img image.Summary) error {
+	_ = concurrency.ForEach(ctx, limiter, images, func(ctx context.Context, img image.Summary) error {
 		if _, err := s.apiClient().ImageRemove(ctx, img.ID, client.ImageRemoveOptions{}); err != nil {
 			mu.Lock()
 			defer mu.Unlock()
@@ -220,7 +224,7 @@ func (s *composeService) removeImages(ctx context.Context, images []image.Summar
 // so the two don't drift apart.
 func (s *composeService) eligibleDanglingImages(ctx context.Context, projectName string, keep func(image.Summary) bool) ([]image.Summary, error) {
 	res, err := s.apiClient().ImageList(ctx, client.ImageListOptions{
-		Filters: projectFilter(projectName).Add("dangling", "true"),
+		Filters: naming.ProjectFilter(projectName).Add("dangling", "true"),
 	})
 	if err != nil {
 		return nil, err
@@ -243,7 +247,7 @@ func (s *composeService) removeDanglingImages(ctx context.Context, projectName s
 	if err != nil {
 		return nil, err
 	}
-	removed, _, err := s.removeImages(ctx, eligible, newOptionalLimiter(s.maxConcurrency))
+	removed, _, err := s.removeImages(ctx, eligible, concurrency.NewLimiter(s.maxConcurrency))
 	return removed, err
 }
 
@@ -278,7 +282,7 @@ func (p *ImagePruner) filterImagesByExistence(ctx context.Context, imageNames []
 	var mu sync.Mutex
 	var ret []string
 
-	err := forEachWithLimiter(ctx, p.limiter, imageNames, func(ctx context.Context, img string) error {
+	err := concurrency.ForEach(ctx, p.limiter, imageNames, func(ctx context.Context, img string) error {
 		_, err := p.client.ImageInspect(ctx, img)
 		if errdefs.IsNotFound(err) {
 			// err on the side of caution: only skip if we successfully
@@ -311,11 +315,6 @@ func normalizeAndDedupeImages(images []string) []string {
 		}
 		seen[img] = struct{}{}
 	}
-	ret := make([]string, 0, len(seen))
-	for v := range seen {
-		ret = append(ret, v)
-	}
 	// ensure a deterministic return result - the actual ordering is not useful
-	sort.Strings(ret)
-	return ret
+	return slices.Sorted(maps.Keys(seen))
 }
