@@ -20,7 +20,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -30,7 +32,6 @@ import (
 	xprogress "github.com/moby/buildkit/util/progress/progressui"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 
 	"github.com/docker/compose/v5/cmd/display"
 	"github.com/docker/compose/v5/cmd/formatter"
@@ -176,14 +177,7 @@ func upCommand(p *ProjectOptions, dockerCli command.Cli, backendOptions *Backend
 	flags.BoolVarP(&up.watch, "watch", "w", false, "Watch source code and rebuild/refresh containers when files are updated.")
 	flags.BoolVar(&up.navigationMenu, "menu", false, "Enable interactive shortcuts when running attached. Incompatible with --detach. Can also be enable/disable by setting COMPOSE_MENU environment var.")
 	flags.BoolVarP(&create.AssumeYes, "yes", "y", false, `Assume "yes" as answer to all prompts and run non-interactively`)
-	flags.SetNormalizeFunc(func(f *pflag.FlagSet, name string) pflag.NormalizedName {
-		// assumeYes was introduced by mistake as `--y`
-		if name == "y" {
-			logrus.Warn("--y is deprecated, please use --yes instead")
-			name = "yes"
-		}
-		return pflag.NormalizedName(name)
-	})
+	flags.SetNormalizeFunc(normalizeYesFlag)
 	return upCmd
 }
 
@@ -305,34 +299,10 @@ func runUp(
 	if !upOptions.Detach {
 		consumer = formatter.NewLogConsumer(ctx, dockerCli.Out(), dockerCli.Err(), !upOptions.noColor, !upOptions.noPrefix, upOptions.timestamp)
 
-		var attachSet utils.Set[string]
-		if len(upOptions.attach) != 0 {
-			// services are passed explicitly with --attach, verify they're valid and then use them as-is
-			attachSet = utils.NewSet(upOptions.attach...)
-			unexpectedSvcs := attachSet.Diff(utils.NewSet(project.ServiceNames()...))
-			if len(unexpectedSvcs) != 0 {
-				return fmt.Errorf("cannot attach to services not included in up: %s", strings.Join(unexpectedSvcs.Elements(), ", "))
-			}
-		} else {
-			// mark services being launched (and potentially their deps) for attach
-			// if they didn't opt-out via Compose YAML
-			attachSet = utils.NewSet[string]()
-			var dependencyOpt types.DependencyOption = types.IgnoreDependencies
-			if upOptions.attachDependencies {
-				dependencyOpt = types.IncludeDependencies
-			}
-			if err := project.ForEachService(services, func(serviceName string, s *types.ServiceConfig) error {
-				if s.Attach == nil || *s.Attach {
-					attachSet.Add(serviceName)
-				}
-				return nil
-			}, dependencyOpt); err != nil {
-				return err
-			}
+		attach, err = upOptions.attachedServices(project, services)
+		if err != nil {
+			return err
 		}
-		// filter out any services that have been explicitly marked for ignore with `--no-attach`
-		attachSet.RemoveAll(upOptions.noAttach...)
-		attach = attachSet.Elements()
 	}
 
 	var timeout time.Duration
@@ -356,6 +326,41 @@ func runUp(
 	})
 }
 
+// attachedServices returns the services whose logs `up` follows: the ones
+// passed explicitly with --attach, or else the services being launched (and
+// their dependencies with --attach-dependencies) that didn't opt out through
+// the Compose file, minus the ones excluded with --no-attach.
+func (opts upOptions) attachedServices(project *types.Project, services []string) ([]string, error) {
+	var attachSet utils.Set[string]
+	if len(opts.attach) != 0 {
+		// services are passed explicitly with --attach, verify they're valid and then use them as-is
+		attachSet = utils.NewSet(opts.attach...)
+		unexpectedSvcs := attachSet.Diff(utils.NewSet(project.ServiceNames()...))
+		if len(unexpectedSvcs) != 0 {
+			return nil, fmt.Errorf("cannot attach to services not included in up: %s", strings.Join(unexpectedSvcs.Elements(), ", "))
+		}
+	} else {
+		// mark services being launched (and potentially their deps) for attach
+		// if they didn't opt-out via Compose YAML
+		attachSet = utils.NewSet[string]()
+		var dependencyOpt types.DependencyOption = types.IgnoreDependencies
+		if opts.attachDependencies {
+			dependencyOpt = types.IncludeDependencies
+		}
+		if err := project.ForEachService(services, func(serviceName string, s *types.ServiceConfig) error {
+			if s.Attach == nil || *s.Attach {
+				attachSet.Add(serviceName)
+			}
+			return nil
+		}, dependencyOpt); err != nil {
+			return nil, err
+		}
+	}
+	// filter out any services that have been explicitly marked for ignore with `--no-attach`
+	attachSet.RemoveAll(opts.noAttach...)
+	return attachSet.Elements(), nil
+}
+
 // warnIgnoredJobs names the declared jobs up will not act on: manual jobs
 // wait for an explicit `compose run <job>` trigger.
 func warnIgnoredJobs(project *types.Project) {
@@ -363,11 +368,7 @@ func warnIgnoredJobs(project *types.Project) {
 	if len(jobs) == 0 {
 		return
 	}
-	names := make([]string, 0, len(jobs))
-	for name := range jobs {
-		names = append(names, name)
-	}
-	sort.Strings(names)
+	names := slices.Sorted(maps.Keys(jobs))
 	logrus.Warnf("jobs are not started by up; trigger them with `docker compose run`: %s", strings.Join(names, ", "))
 }
 
