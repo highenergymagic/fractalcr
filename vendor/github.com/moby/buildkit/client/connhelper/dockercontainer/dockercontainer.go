@@ -6,10 +6,7 @@ import (
 	"net"
 	"net/url"
 
-	"fractalcr/pkg/enginestream"
- "github.com/docker/cli/cli/command"
- cliflags "github.com/docker/cli/cli/flags"
- "os"
+	"github.com/docker/cli/cli/connhelper/commandconn"
 	"github.com/moby/buildkit/client/connhelper"
 	"github.com/pkg/errors"
 )
@@ -27,13 +24,12 @@ func Helper(u *url.URL) (*connhelper.ConnectionHelper, error) {
 	}
 	return &connhelper.ConnectionHelper{
 		ContextDialer: func(ctx context.Context, addr string) (net.Conn, error) {
-            cli,err:=command.NewDockerCli()
-            if err!=nil{return nil,err}
-            options:=cliflags.NewClientOptions()
-            options.Context=sp.Context
-            if err=cli.Initialize(options);err!=nil{return nil,err}
-            api:=cli.Client()
-            return enginestream.Dial(ctx,api,sp.Container,[]string{"buildctl","dial-stdio"},os.Stderr,func(){api.Close()})
+			ctxFlags := []string{}
+			if sp.Context != "" {
+				ctxFlags = append(ctxFlags, "--context="+sp.Context)
+			}
+			// using background context because context remains active for the duration of the process, after dial has completed
+			return commandconn.New(context.Background(), "docker", append(ctxFlags, []string{"exec", "-i", sp.Container, "buildctl", "dial-stdio"}...)...)
 		},
 	}, nil
 }
