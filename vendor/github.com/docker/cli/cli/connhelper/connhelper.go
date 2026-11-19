@@ -6,7 +6,6 @@ package connhelper
 
 import (
 	"context"
- "fractalcr/pkg/sshstream"
 	"fmt"
 	"net"
 	"net/url"
@@ -50,15 +49,24 @@ func getConnectionHelper(daemonURL string, sshFlags []string) (*ConnectionHelper
 		if err != nil {
 			return nil, fmt.Errorf("ssh host connection is not valid: %w", err)
 		}
-        if len(sshFlags)!=0 {return nil,fmt.Errorf("SSH command-line flags require native endpoint settings")}
-        socket:=sp.Path
-        if socket=="" || socket=="/"{socket="/var/run/docker.sock"}
-        return &ConnectionHelper{
-            Dialer:func(ctx context.Context,network,addr string)(net.Conn,error){
-                return sshstream.Dial(ctx,sshstream.Endpoint{Host:sp.Host,Port:sp.Port,User:sp.User,Socket:socket})
-            },
-            Host:"http://docker.example.com",
-        },nil
+		sshFlags = addSSHTimeout(sshFlags)
+		sshFlags = disablePseudoTerminalAllocation(sshFlags)
+
+		remoteCommand := []string{"docker", "system", "dial-stdio"}
+		socketPath := sp.Path
+		if strings.Trim(sp.Path, "/") != "" {
+			remoteCommand = []string{"docker", "--host=unix://" + socketPath, "system", "dial-stdio"}
+		}
+		sshArgs, err := sp.Command(sshFlags, remoteCommand...)
+		if err != nil {
+			return nil, err
+		}
+		return &ConnectionHelper{
+			Dialer: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return commandconn.New(ctx, "ssh", sshArgs...)
+			},
+			Host: "http://docker.example.com",
+		}, nil
 	}
 	// Future version may support plugins via ~/.docker/config.json. e.g. "dind"
 	// See docker/cli#889 for the previous discussion.

@@ -1,17 +1,21 @@
-// FractalCR serial-console adapter. The client receives a link; the appliance
-// never launches a desktop browser or a host command to open it.
 package browser
 
 import (
-	"fmt"
-	"net/url"
+	"os/exec"
+	"strings"
 )
 
-func openBrowser(link string) error {
-	parsed, err := url.Parse(link)
-	if err != nil || parsed.Scheme == "" {
-		return fmt.Errorf("Invalid browser link")
+func openBrowser(url string) error {
+	providers := []string{"xdg-open", "x-www-browser", "www-browser"}
+
+	// There are multiple possible providers to open a browser on linux
+	// One of them is xdg-open, another is x-www-browser, then there's www-browser, etc.
+	// Look for one that exists and run it
+	for _, provider := range providers {
+		if _, err := exec.LookPath(provider); err == nil {
+			return runCmd(provider, url)
+		}
 	}
-	_, err = fmt.Fprintln(Stdout, link)
-	return err
+
+	return &exec.Error{Name: strings.Join(providers, ","), Err: exec.ErrNotFound}
 }
